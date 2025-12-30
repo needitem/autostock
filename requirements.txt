@@ -7,3 +7,5 @@ requests>=2.31.0
 ta>=0.11.0
 lxml>=5.0.0
 html5lib>=1.1
+beautifulsoup4>=4.12.0
+finnhub-python>=2.4.0
