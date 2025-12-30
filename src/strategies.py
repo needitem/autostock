@@ -40,9 +40,10 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # 거래량 평균
     df["Volume_Avg"] = df["Volume"].rolling(window=20).mean()
     
-    # 52주 고가/저가
-    df["High_52w"] = high.rolling(window=252).max()
-    df["Low_52w"] = low.rolling(window=252).min()
+    # 52주 고가/저가 (데이터가 252일 미만이면 전체 기간 사용)
+    window_52w = min(252, len(df) - 1)
+    df["High_52w"] = high.rolling(window=window_52w).max()
+    df["Low_52w"] = low.rolling(window=window_52w).min()
     
     return df
 

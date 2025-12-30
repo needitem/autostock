@@ -5,7 +5,7 @@ from ta.trend import SMAIndicator
 from config import MARKET_INDICATOR
 
 
-def get_stock_data(symbol: str, period: str = "1y") -> pd.DataFrame:
+def get_stock_data(symbol: str, period: str = "15mo") -> pd.DataFrame:
     """개별 종목 데이터 가져오기"""
     try:
         ticker = yf.Ticker(symbol)
