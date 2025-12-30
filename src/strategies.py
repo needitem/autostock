@@ -254,7 +254,7 @@ def strategy_volume_surge(df: pd.DataFrame, symbol: str) -> dict | None:
 
 
 def analyze_risk_level(df: pd.DataFrame, symbol: str) -> dict:
-    """종목 위험도 분석"""
+    """종목 위험도 분석 (고점 + 하락 위험 모두 체크)"""
     latest = df.iloc[-1]
     
     price = latest["Close"]
@@ -269,6 +269,7 @@ def analyze_risk_level(df: pd.DataFrame, symbol: str) -> dict:
     warnings = []
     risk_score = 0  # 0~100, 높을수록 위험
     
+    # === 고점 위험 (과매수) ===
     # 1. RSI 과매수 체크
     if rsi >= 70:
         warnings.append(f"⚠️ RSI {rsi:.0f} 과매수 (70 이상)")
@@ -296,7 +297,7 @@ def analyze_risk_level(df: pd.DataFrame, symbol: str) -> dict:
         warnings.append(f"🟡 52주 고점권 ({position_52w:.0f}%)")
         risk_score += 10
     
-    # 4. 이동평균선 괴리율
+    # 4. 이동평균선 괴리율 (상방)
     ma50_gap = (price - ma50) / ma50 * 100 if ma50 > 0 else 0
     if ma50_gap >= 20:
         warnings.append(f"⚠️ 50일선 대비 +{ma50_gap:.0f}% (과열)")
@@ -315,10 +316,55 @@ def analyze_risk_level(df: pd.DataFrame, symbol: str) -> dict:
         warnings.append(f"🟡 5일간 +{change_5d:.0f}% 상승")
         risk_score += 5
     
+    # === 하락 위험 (추세 약세) ===
+    # 6. RSI 과매도
+    if rsi <= 30:
+        warnings.append(f"📉 RSI {rsi:.0f} 과매도 (바닥일 수도, 더 빠질 수도)")
+        risk_score += 15
+    elif rsi <= 40:
+        warnings.append(f"📉 RSI {rsi:.0f} 낮음 (약세)")
+        risk_score += 5
+    
+    # 7. 50일선 아래
+    if ma50_gap <= -20:
+        warnings.append(f"📉 50일선 대비 {ma50_gap:.0f}% (강한 하락)")
+        risk_score += 25
+    elif ma50_gap <= -10:
+        warnings.append(f"📉 50일선 대비 {ma50_gap:.0f}% (하락 추세)")
+        risk_score += 15
+    elif ma50_gap < 0:
+        warnings.append(f"📉 50일선 아래 ({ma50_gap:.0f}%)")
+        risk_score += 5
+    
+    # 8. 200일선 아래 (장기 하락)
+    ma200_gap = (price - ma200) / ma200 * 100 if ma200 > 0 else 0
+    if ma200_gap <= -20:
+        warnings.append(f"📉 200일선 대비 {ma200_gap:.0f}% (장기 약세)")
+        risk_score += 20
+    elif ma200_gap < 0:
+        warnings.append(f"📉 200일선 아래 (장기 추세 약세)")
+        risk_score += 10
+    
+    # 9. 최근 급락 (5일간)
+    if change_5d <= -15:
+        warnings.append(f"📉 5일간 {change_5d:.0f}% 급락")
+        risk_score += 20
+    elif change_5d <= -7:
+        warnings.append(f"📉 5일간 {change_5d:.0f}% 하락")
+        risk_score += 10
+    
+    # 10. 52주 저점 근접
+    if position_52w <= 10:
+        warnings.append(f"📉 52주 최저점 근접 ({position_52w:.0f}%)")
+        risk_score += 15
+    elif position_52w <= 20:
+        warnings.append(f"📉 52주 저점권 ({position_52w:.0f}%)")
+        risk_score += 5
+    
     # 위험 등급 결정
     if risk_score >= 50:
         risk_grade = "🔴 고위험"
-        recommendation = "매수 자제, 이미 많이 오름"
+        recommendation = "매수 자제, 변동성 큼"
     elif risk_score >= 30:
         risk_grade = "🟡 주의"
         recommendation = "분할 매수 권장, 손절 철저히"
