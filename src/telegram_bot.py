@@ -44,12 +44,12 @@ def save_chat_id(chat_id: str):
 
 def get_main_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 스캔", callback_data="scan"),
-         InlineKeyboardButton("📊 종목분석", callback_data="analyze_menu")],
-        [InlineKeyboardButton("📰 뉴스", callback_data="news_menu"),
-         InlineKeyboardButton("📅 일정", callback_data="calendar")],
-        [InlineKeyboardButton("📚 전략", callback_data="strategies"),
-         InlineKeyboardButton("⚠️ 위험도", callback_data="risk")],
+        [InlineKeyboardButton("🌟 추천", callback_data="recommend"),
+         InlineKeyboardButton("🔍 스캔", callback_data="scan")],
+        [InlineKeyboardButton("📊 종목분석", callback_data="analyze_menu"),
+         InlineKeyboardButton("📰 뉴스", callback_data="news_menu")],
+        [InlineKeyboardButton("📅 일정", callback_data="calendar"),
+         InlineKeyboardButton("📚 전략", callback_data="strategies")],
     ])
 
 
@@ -125,6 +125,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(report, parse_mode="HTML", reply_markup=get_back_keyboard())
         except Exception as e:
             await query.edit_message_text(f"스캔 실패: {e}", reply_markup=get_back_keyboard())
+    
+    elif data == "recommend":
+        await query.edit_message_text("🌟 추천 종목 분석 중... (1~2분 소요)")
+        try:
+            from analyzer import get_recommendations
+            result = get_recommendations()
+            report = format_recommendations(result)
+            await query.edit_message_text(report, parse_mode="HTML", reply_markup=get_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"추천 실패: {e}", reply_markup=get_back_keyboard())
     
     elif data == "analyze_menu":
         await query.edit_message_text("📊 분석할 종목 선택:", reply_markup=get_analyze_keyboard())
@@ -404,6 +414,33 @@ def format_daily_report(scan_result: dict) -> str:
     if not has_signals:
         report += "📭 오늘은 신호 없음\n\n"
     report += f"━━━━━━━━━━━━━━━━━━\n📌 스캔: {scan_result['total_scanned']}개"
+    return report
+
+
+def format_recommendations(result: dict) -> str:
+    recs = result["recommendations"]
+    
+    report = "🌟 <b>오늘의 추천 종목</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    report += "📋 <b>선정 기준:</b> 전략 매칭 + 위험도 30 이하\n\n"
+    
+    if not recs:
+        report += "😢 오늘은 조건에 맞는 종목이 없습니다.\n\n"
+        report += "💡 시장이 불안정하거나 대부분 고점권일 수 있어요."
+        return report
+    
+    for i, r in enumerate(recs, 1):
+        report += f"<b>{i}. {r['symbol']}</b> ${r['price']}\n"
+        report += f"   {r['risk_grade']} (위험도 {r['risk_score']})\n"
+        report += f"   📈 {', '.join(r['strategies'])}\n"
+        report += f"   RSI {r['rsi']} | 50일선 {r['ma50_gap']:+.1f}% | 5일 {r['change_5d']:+.1f}%\n\n"
+    
+    report += f"━━━━━━━━━━━━━━━━━━\n"
+    report += f"📌 분석: {result['total_analyzed']}개 중 {len(recs)}개 선정\n\n"
+    report += "💡 <b>투자 팁:</b>\n"
+    report += "• 한 종목에 몰빵 금지\n"
+    report += "• 분할 매수 권장\n"
+    report += "• 손절 -7% 철저히"
+    
     return report
 
 

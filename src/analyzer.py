@@ -88,3 +88,41 @@ def scan_all_stocks() -> dict:
         "strategy_results": strategy_results,
         "total_scanned": total_scanned,
     }
+
+
+def get_recommendations() -> dict:
+    """나스닥 100 중 매수 추천 종목 선별"""
+    recommendations = []
+    
+    # 병렬로 전체 분석
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(analyze_single_stock, symbol): symbol for symbol in NASDAQ_100}
+        
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                result = future.result()
+                if result and result["strategies_matched"]:
+                    # 전략 매칭 + 위험도 낮은 종목만
+                    if result["risk_score"] <= 30:
+                        recommendations.append({
+                            "symbol": symbol,
+                            "price": result["price"],
+                            "risk_score": result["risk_score"],
+                            "risk_grade": result["risk_grade"],
+                            "strategies": result["strategies_matched"],
+                            "rsi": result["rsi"],
+                            "ma50_gap": result["ma50_gap"],
+                            "change_5d": result["change_5d"],
+                        })
+            except:
+                pass
+    
+    # 위험도 낮은 순 + 전략 많은 순 정렬
+    recommendations.sort(key=lambda x: (x["risk_score"], -len(x["strategies"])))
+    
+    # 상위 10개만
+    return {
+        "recommendations": recommendations[:10],
+        "total_analyzed": len(NASDAQ_100),
+    }
