@@ -292,10 +292,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 포맷팅 함수들
 def format_analysis(r: dict) -> str:
-    text = f"📊 <b>{r['symbol']}</b>\n━━━━━━━━━━━━━━━━━━\n💰 ${r['price']}\n\n{r['risk_grade']} 위험도: {r['risk_score']}/100\n📝 {r['recommendation']}\n\n"
-    text += f"• RSI: {r['rsi']}\n• 볼린저: {r['bb_position']}%\n• 52주: {r['position_52w']}%\n• 50일선: {r['ma50_gap']:+.1f}%\n• 5일: {r['change_5d']:+.1f}%\n\n"
+    text = f"📊 <b>{r['symbol']}</b> ${r['price']}\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"⚠️ <b>위험도: {r['risk_score']}/100</b> (높을수록 위험)\n\n"
+    text += f"<b>지표:</b>\n"
+    text += f"• RSI: {r['rsi']} (30↓과매도 70↑과매수)\n"
+    text += f"• 볼린저: {r['bb_position']}% (0=하단 100=상단)\n"
+    text += f"• 52주: {r['position_52w']}% (0=저점 100=고점)\n"
+    text += f"• 50일선: {r['ma50_gap']:+.1f}% (+위 -아래)\n"
+    text += f"• 5일변화: {r['change_5d']:+.1f}%\n\n"
     if r['warnings']:
-        text += "<b>⚠️ 주의:</b>\n" + "\n".join(r['warnings']) + "\n\n"
+        text += "<b>⚠️ 경고:</b>\n" + "\n".join(r['warnings']) + "\n\n"
     if r['strategies_matched']:
         text += "<b>✅ 매칭:</b> " + ", ".join(r['strategies_matched'])
     else:
@@ -420,26 +426,20 @@ def format_daily_report(scan_result: dict) -> str:
 def format_recommendations(result: dict) -> str:
     recs = result["recommendations"]
     
-    report = "🌟 <b>오늘의 추천 종목</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    report += "📋 <b>선정 기준:</b> 전략 매칭 + 위험도 30 이하\n\n"
+    report = "🌟 <b>오늘의 추천</b>\n━━━━━━━━━━━━━━━━━━\n"
+    report += "위험도 0~100 (낮을수록 좋음)\n\n"
     
     if not recs:
-        report += "😢 오늘은 조건에 맞는 종목이 없습니다.\n\n"
-        report += "💡 시장이 불안정하거나 대부분 고점권일 수 있어요."
+        report += "😢 조건 맞는 종목 없음\n"
         return report
     
     for i, r in enumerate(recs, 1):
-        report += f"<b>{i}. {r['symbol']}</b> ${r['price']}\n"
-        report += f"   {r['risk_grade']} (위험도 {r['risk_score']})\n"
-        report += f"   📈 {', '.join(r['strategies'])}\n"
+        report += f"<b>{i}. {r['symbol']}</b> ${r['price']} ⚠️{r['risk_score']}\n"
+        report += f"   {', '.join(r['strategies'])}\n"
         report += f"   RSI {r['rsi']} | 50일선 {r['ma50_gap']:+.1f}% | 5일 {r['change_5d']:+.1f}%\n\n"
     
     report += f"━━━━━━━━━━━━━━━━━━\n"
-    report += f"📌 분석: {result['total_analyzed']}개 중 {len(recs)}개 선정\n\n"
-    report += "💡 <b>투자 팁:</b>\n"
-    report += "• 한 종목에 몰빵 금지\n"
-    report += "• 분할 매수 권장\n"
-    report += "• 손절 -7% 철저히"
+    report += f"📌 {result['total_analyzed']}개 중 {len(recs)}개 선정"
     
     return report
 
