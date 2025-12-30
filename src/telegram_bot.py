@@ -426,20 +426,19 @@ def format_daily_report(scan_result: dict) -> str:
 def format_recommendations(result: dict) -> str:
     recs = result["recommendations"]
     
-    report = "🌟 <b>오늘의 추천</b>\n━━━━━━━━━━━━━━━━━━\n"
-    report += "위험도 0~100 (낮을수록 좋음)\n\n"
+    report = "🌟 <b>추천 종목</b> (위험도 30 이하 + 전략 매칭)\n━━━━━━━━━━━━━━━━━━\n\n"
     
     if not recs:
         report += "😢 조건 맞는 종목 없음\n"
         return report
     
     for i, r in enumerate(recs, 1):
-        report += f"<b>{i}. {r['symbol']}</b> ${r['price']} ⚠️{r['risk_score']}\n"
-        report += f"   {', '.join(r['strategies'])}\n"
-        report += f"   RSI {r['rsi']} | 50일선 {r['ma50_gap']:+.1f}% | 5일 {r['change_5d']:+.1f}%\n\n"
+        strategies_short = ", ".join([s.split()[0] for s in r['strategies']])  # 이모지만
+        report += f"{i}. <b>{r['symbol']}</b> ${r['price']} ⚠️{r['risk_score']} | {strategies_short}\n"
     
-    report += f"━━━━━━━━━━━━━━━━━━\n"
-    report += f"📌 {result['total_analyzed']}개 중 {len(recs)}개 선정"
+    report += f"\n━━━━━━━━━━━━━━━━━━\n"
+    report += f"📌 {result['total_analyzed']}개 중 {len(recs)}개\n"
+    report += "위험도 0~100 (낮을수록 좋음)"
     
     return report
 

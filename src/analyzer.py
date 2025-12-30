@@ -121,8 +121,8 @@ def get_recommendations() -> dict:
     # 위험도 낮은 순 + 전략 많은 순 정렬
     recommendations.sort(key=lambda x: (x["risk_score"], -len(x["strategies"])))
     
-    # 상위 10개만
+    # 전부 반환
     return {
-        "recommendations": recommendations[:10],
+        "recommendations": recommendations,
         "total_analyzed": len(NASDAQ_100),
     }
