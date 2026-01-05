@@ -389,24 +389,24 @@ if __name__ == "__main__":
     # 사용법 출력
     if len(sys.argv) > 1 and sys.argv[1] in ["--help", "-h"]:
         print("""
-사용법: python groq_analyzer.py [옵션] [모델]
+사용법: python openrouter_analyzer.py [옵션] [모델]
 
 옵션:
   --quick       빠른 스캔 (AI 없이, 데이터 기반)
   --help, -h    도움말
 
-모델 (기본값: deepseek-r1):
-  deepseek-r1      DeepSeek R1 70B (가장 똑똑, 추론/수학 최강)
+모델 (기본값: llama4-maverick):
   llama4-maverick  Llama 4 Maverick (최신)
   llama4-scout     Llama 4 Scout (빠름)
   llama3.3-70b     Llama 3.3 70B
-  qwen-qwq         Qwen QwQ 32B (추론)
+  gemini-flash     Gemini 2.0 Flash
+  deepseek-v3      DeepSeek V3
 
 예시:
-  python groq_analyzer.py                    # DeepSeek R1로 분석
-  python groq_analyzer.py deepseek-r1        # DeepSeek R1로 분석
-  python groq_analyzer.py llama4-maverick    # Llama 4로 분석
-  python groq_analyzer.py --quick            # 빠른 스캔 (AI 없이)
+  python openrouter_analyzer.py                    # Llama 4로 분석
+  python openrouter_analyzer.py llama4-maverick    # Llama 4로 분석
+  python openrouter_analyzer.py gemini-flash       # Gemini로 분석
+  python openrouter_analyzer.py --quick            # 빠른 스캔 (AI 없이)
 """)
         sys.exit(0)
     

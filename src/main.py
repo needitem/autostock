@@ -29,7 +29,7 @@ def run_ai_recommendation():
     print(f"[{datetime.now()}] AI 추천 분석 시작...")
     
     try:
-        from groq_analyzer import run_full_analysis
+        from openrouter_analyzer import run_full_analysis
         result = run_full_analysis()
         
         if "error" in result:

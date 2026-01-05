@@ -1,6 +1,6 @@
 """
 ai_analyzer.py 테스트
-- Groq AI 분석 기능
+- OpenRouter AI 분석 기능
 """
 import sys
 import os
@@ -34,7 +34,7 @@ class TestAnalyzeNewsWithAI:
         result = analyze_news_with_ai("AAPL", None)
         assert "error" in result
     
-    @patch('ai_analyzer.GROQ_API_KEY', None)
+    @patch('ai_analyzer.OPENROUTER_API_KEY', None)
     def test_no_api_key_returns_error(self):
         """API 키 없으면 에러 반환"""
         news = [{"headline": "Test news"}]
@@ -58,7 +58,7 @@ class TestAnalyzeStockWithAI:
         result = analyze_stock_with_ai("AAPL", stock_data)
         assert isinstance(result, dict)
     
-    @patch('ai_analyzer.GROQ_API_KEY', None)
+    @patch('ai_analyzer.OPENROUTER_API_KEY', None)
     def test_no_api_key_returns_error(self):
         """API 키 없으면 에러 반환"""
         stock_data = {"price": 150.0}
@@ -106,7 +106,7 @@ class TestGetMarketSentiment:
         result = get_market_sentiment(news, fear_greed)
         assert isinstance(result, dict)
     
-    @patch('ai_analyzer.GROQ_API_KEY', None)
+    @patch('ai_analyzer.OPENROUTER_API_KEY', None)
     def test_no_api_key_returns_error(self):
         """API 키 없으면 에러 반환"""
         news = [{"headline": "Test"}]
@@ -117,29 +117,29 @@ class TestGetMarketSentiment:
 class TestAIAnalyzerIntegration:
     """AI 분석기 통합 테스트"""
     
-    @patch('ai_analyzer._call_groq')
-    def test_analyze_news_calls_groq(self, mock_groq):
-        """뉴스 분석이 Groq를 호출하는지"""
-        mock_groq.return_value = "AI 분석 결과"
+    @patch('ai_analyzer._call_ai')
+    def test_analyze_news_calls_ai(self, mock_ai):
+        """뉴스 분석이 AI를 호출하는지"""
+        mock_ai.return_value = "AI 분석 결과"
         news = [{"headline": "Test news"}]
         
-        with patch('ai_analyzer.GROQ_API_KEY', 'test_key'):
+        with patch('ai_analyzer.OPENROUTER_API_KEY', 'test_key'):
             result = analyze_news_with_ai("AAPL", news)
         
         if "analysis" in result:
-            mock_groq.assert_called_once()
+            mock_ai.assert_called_once()
     
-    @patch('ai_analyzer._call_groq')
-    def test_analyze_stock_calls_groq(self, mock_groq):
-        """종목 분석이 Groq를 호출하는지"""
-        mock_groq.return_value = "AI 분석 결과"
+    @patch('ai_analyzer._call_ai')
+    def test_analyze_stock_calls_ai(self, mock_ai):
+        """종목 분석이 AI를 호출하는지"""
+        mock_ai.return_value = "AI 분석 결과"
         stock_data = {"price": 150.0}
         
-        with patch('ai_analyzer.GROQ_API_KEY', 'test_key'):
+        with patch('ai_analyzer.OPENROUTER_API_KEY', 'test_key'):
             result = analyze_stock_with_ai("AAPL", stock_data)
         
         if "analysis" in result:
-            mock_groq.assert_called_once()
+            mock_ai.assert_called_once()
 
 
 if __name__ == "__main__":

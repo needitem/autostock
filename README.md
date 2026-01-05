@@ -5,7 +5,7 @@
 ## 🚀 주요 기능
 
 ### 🤖 AI 매수/매도 추천
-- **Groq AI** (Llama 4 Maverick) 기반 종합 분석
+- **OpenRouter API** (Llama 4 Maverick) 기반 종합 분석
 - 나스닥 100 전체 종목 자동 분석
 - 매일 저녁 11시 텔레그램 자동 알림
 
@@ -71,8 +71,8 @@
 
 ```
 src/
-├── groq_analyzer.py     # 🤖 Groq AI 나스닥 100 분석
-├── factor_model.py      # 📊 학술 기반 팩터 모델
+├── openrouter_analyzer.py  # 🤖 OpenRouter AI 나스닥 100 분석
+├── factor_model.py         # 📊 학술 기반 팩터 모델
 ├── financial_data.py    # 💰 재무제표 데이터 (yfinance)
 ├── market_data.py       # 🌐 외부 사이트 데이터
 ├── analyzer.py          # 기술적 분석, 스캔
@@ -97,7 +97,7 @@ pip install -r requirements.txt
 ```
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 FINNHUB_API_KEY=your_finnhub_api_key
-GROQ_API_KEY=your_groq_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 
 ## ▶️ 실행
@@ -120,20 +120,20 @@ python main.py --ai
 python main.py --schedule
 ```
 
-### Groq 분석 직접 실행
+### AI 분석 직접 실행
 ```bash
 cd src
 
 # 기본 (Llama 4 Maverick)
-python groq_analyzer.py
+python openrouter_analyzer.py
 
 # 모델 선택
-python groq_analyzer.py llama4-maverick
-python groq_analyzer.py kimi-k2
-python groq_analyzer.py qwen3-32b
+python openrouter_analyzer.py llama4-maverick
+python openrouter_analyzer.py gemini-flash
+python openrouter_analyzer.py deepseek-v3
 
 # 빠른 스캔 (AI 없이)
-python groq_analyzer.py --quick
+python openrouter_analyzer.py --quick
 ```
 
 ## 🧪 테스트

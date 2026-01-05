@@ -1,5 +1,5 @@
 """
-AI 뉴스 분석 모듈 (Groq - Llama 3)
+AI 뉴스 분석 모듈 (OpenRouter API)
 """
 import os
 import requests
@@ -7,24 +7,26 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
-def _call_groq(prompt: str, system_prompt: str = "You are a helpful AI assistant.") -> str | None:
-    """Groq API 호출"""
-    if not GROQ_API_KEY:
+def _call_ai(prompt: str, system_prompt: str = "You are a helpful AI assistant.") -> str | None:
+    """OpenRouter API 호출"""
+    if not OPENROUTER_API_KEY:
         return None
     
     try:
         response = requests.post(
-            GROQ_URL,
+            API_URL,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {GROQ_API_KEY}"
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "HTTP-Referer": "https://github.com/autostock",
+                "X-Title": "AutoStock Analyzer"
             },
             json={
-                "model": "llama-3.1-8b-instant",
+                "model": "meta-llama/llama-4-scout:free",
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -36,21 +38,21 @@ def _call_groq(prompt: str, system_prompt: str = "You are a helpful AI assistant
         )
         
         if response.status_code != 200:
-            print(f"Groq API 오류: {response.status_code} - {response.text}")
+            print(f"API 오류: {response.status_code} - {response.text}")
             return None
         
         data = response.json()
         return data["choices"][0]["message"]["content"]
         
     except Exception as e:
-        print(f"Groq 호출 실패: {e}")
+        print(f"API 호출 실패: {e}")
         return None
 
 
 def analyze_news_with_ai(symbol: str, news_list: list) -> dict:
     """뉴스를 AI로 분석"""
-    if not GROQ_API_KEY:
-        return {"error": "GROQ_API_KEY가 설정되지 않았습니다."}
+    if not OPENROUTER_API_KEY:
+        return {"error": "OPENROUTER_API_KEY가 설정되지 않았습니다."}
     
     if not news_list:
         return {"error": "분석할 뉴스가 없습니다."}
@@ -74,7 +76,7 @@ def analyze_news_with_ai(symbol: str, news_list: list) -> dict:
 
     system = "당신은 주식 투자 전문가입니다. 반드시 한국어로 답변하세요."
     
-    result = _call_groq(prompt, system)
+    result = _call_ai(prompt, system)
     if result:
         return {"symbol": symbol, "analysis": result, "news_count": len(news_list)}
     return {"error": "AI 분석 실패"}
@@ -82,8 +84,8 @@ def analyze_news_with_ai(symbol: str, news_list: list) -> dict:
 
 def analyze_stock_with_ai(symbol: str, stock_data: dict, news_list: list = None, market_data: dict = None) -> dict:
     """종목 종합 AI 분석 (외부 데이터 소스 포함)"""
-    if not GROQ_API_KEY:
-        return {"error": "GROQ_API_KEY가 설정되지 않았습니다."}
+    if not OPENROUTER_API_KEY:
+        return {"error": "OPENROUTER_API_KEY가 설정되지 않았습니다."}
     
     news_text = ""
     if news_list:
@@ -134,7 +136,7 @@ def analyze_stock_with_ai(symbol: str, stock_data: dict, news_list: list = None,
 
     system = "당신은 주식 투자 전문가입니다. 반드시 한국어로 답변하세요."
     
-    result = _call_groq(prompt, system)
+    result = _call_ai(prompt, system)
     if result:
         return {"symbol": symbol, "analysis": result}
     return {"error": "AI 분석 실패"}
@@ -142,8 +144,8 @@ def analyze_stock_with_ai(symbol: str, stock_data: dict, news_list: list = None,
 
 def get_market_sentiment(news_list: list, fear_greed: dict = None) -> dict:
     """시장 전체 감성 분석 (공포탐욕 지수 포함)"""
-    if not GROQ_API_KEY:
-        return {"error": "GROQ_API_KEY가 설정되지 않았습니다."}
+    if not OPENROUTER_API_KEY:
+        return {"error": "OPENROUTER_API_KEY가 설정되지 않았습니다."}
     
     if not news_list:
         return {"error": "분석할 뉴스가 없습니다."}
@@ -170,7 +172,7 @@ def get_market_sentiment(news_list: list, fear_greed: dict = None) -> dict:
 
     system = "당신은 주식 시장 전문가입니다. 반드시 한국어로 답변하세요."
     
-    result = _call_groq(prompt, system)
+    result = _call_ai(prompt, system)
     if result:
         return {"analysis": result}
     return {"error": "AI 분석 실패"}
