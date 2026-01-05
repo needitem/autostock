@@ -204,6 +204,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text(f"뉴스 로딩 실패: {e}", reply_markup=get_back_keyboard())
     
+    elif data == "ai_recommend":
+        await query.edit_message_text("🤖 AI 매수/매도 추천 분석 중...\n(나스닥 100 전체 분석, 2~3분 소요)")
+        try:
+            from openrouter_analyzer import run_full_analysis
+            result = run_full_analysis()
+            if "error" in result:
+                text = f"❌ {result['error']}"
+            else:
+                text = format_ai_recommendation(result)
+            # 텔레그램 메시지 길이 제한 (4096자)
+            if len(text) > 4000:
+                text = text[:3900] + "\n\n... (메시지가 너무 길어 일부 생략)"
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
+    
     elif data.startswith("ai_"):
         target = data[3:]
         await query.edit_message_text(f"🤖 AI 분석 중... (10초 정도 걸려요)")
@@ -369,25 +385,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
         except Exception as e:
             await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "ai_recommend":
-        await query.edit_message_text("🤖 AI 매수/매도 추천 분석 중...\n(나스닥 100 전체 분석, 2~3분 소요)")
-        try:
-            print("DEBUG: ai_recommend 시작")
-            from openrouter_analyzer import run_full_analysis
-            print("DEBUG: import 완료")
-            result = run_full_analysis()
-            print("DEBUG: run_full_analysis 완료")
-            if "error" in result:
-                text = f"❌ {result['error']}"
-            else:
-                text = format_ai_recommendation(result)
-            # 텔레그램 메시지 길이 제한 (4096자)
-            if len(text) > 4000:
-                text = text[:3900] + "\n\n... (메시지가 너무 길어 일부 생략)"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
 
 
 # 포맷팅 함수들
