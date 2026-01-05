@@ -80,14 +80,36 @@ def analyze_news_with_ai(symbol: str, news_list: list) -> dict:
     return {"error": "AI 분석 실패"}
 
 
-def analyze_stock_with_ai(symbol: str, stock_data: dict, news_list: list = None) -> dict:
-    """종목 종합 AI 분석"""
+def analyze_stock_with_ai(symbol: str, stock_data: dict, news_list: list = None, market_data: dict = None) -> dict:
+    """종목 종합 AI 분석 (외부 데이터 소스 포함)"""
     if not GROQ_API_KEY:
         return {"error": "GROQ_API_KEY가 설정되지 않았습니다."}
     
     news_text = ""
     if news_list:
         news_text = "최근 뉴스:\n" + "\n".join([f"- {n['headline']}" for n in news_list[:5]])
+    
+    # 외부 데이터 소스 정보 추가
+    external_data = ""
+    if market_data:
+        sources = market_data.get("sources", {})
+        
+        # Finviz 데이터
+        fv = sources.get("finviz", {})
+        if fv:
+            external_data += f"\nFinviz 데이터:\n"
+            external_data += f"- P/E: {fv.get('pe', 'N/A')}, Forward P/E: {fv.get('forward_pe', 'N/A')}\n"
+            external_data += f"- PEG: {fv.get('peg', 'N/A')}, ROE: {fv.get('roe', 'N/A')}\n"
+            external_data += f"- 목표가: ${fv.get('target_price', 'N/A')}\n"
+            external_data += f"- 공매도비율: {fv.get('short_float', 'N/A')}\n"
+        
+        # TipRanks 데이터
+        tr = sources.get("tipranks", {})
+        if tr:
+            external_data += f"\nTipRanks 애널리스트:\n"
+            external_data += f"- 컨센서스: {tr.get('consensus', 'N/A')}\n"
+            external_data += f"- 매수/보유/매도: {tr.get('buy', 0)}/{tr.get('hold', 0)}/{tr.get('sell', 0)}\n"
+            external_data += f"- 평균 목표가: ${tr.get('price_target_avg', 0):.2f}\n"
     
     prompt = f"""{symbol} 종목을 분석해주세요.
 
@@ -98,7 +120,7 @@ def analyze_stock_with_ai(symbol: str, stock_data: dict, news_list: list = None)
 - 52주 범위 위치: {stock_data.get('position_52w', 'N/A')}%
 - 5일 수익률: {stock_data.get('change_5d', 'N/A')}%
 - 위험도 점수: {stock_data.get('risk_score', 'N/A')}/100
-
+{external_data}
 {news_text}
 
 다음 형식으로 간결하게 한국어로 답변해주세요:
@@ -118,8 +140,8 @@ def analyze_stock_with_ai(symbol: str, stock_data: dict, news_list: list = None)
     return {"error": "AI 분석 실패"}
 
 
-def get_market_sentiment(news_list: list) -> dict:
-    """시장 전체 감성 분석"""
+def get_market_sentiment(news_list: list, fear_greed: dict = None) -> dict:
+    """시장 전체 감성 분석 (공포탐욕 지수 포함)"""
     if not GROQ_API_KEY:
         return {"error": "GROQ_API_KEY가 설정되지 않았습니다."}
     
@@ -128,10 +150,15 @@ def get_market_sentiment(news_list: list) -> dict:
     
     news_text = "\n".join([f"- {n['headline']}" for n in news_list[:10]])
     
+    fg_text = ""
+    if fear_greed:
+        fg_text = f"\nCNN 공포탐욕 지수: {fear_greed.get('score', 'N/A')}/100 ({fear_greed.get('rating', '')})"
+    
     prompt = f"""아래 시장 뉴스를 분석해주세요.
 
 뉴스 목록:
 {news_text}
+{fg_text}
 
 다음 형식으로 간결하게 한국어로 답변해주세요:
 

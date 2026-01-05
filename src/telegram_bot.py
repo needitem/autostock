@@ -46,9 +46,13 @@ def get_main_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🌟 추천", callback_data="recommend"),
          InlineKeyboardButton("🔍 스캔", callback_data="scan")],
-        [InlineKeyboardButton("📊 종목분석", callback_data="analyze_menu"),
-         InlineKeyboardButton("📰 뉴스", callback_data="news_menu")],
-        [InlineKeyboardButton("📅 일정", callback_data="calendar"),
+        [InlineKeyboardButton("🤖 AI추천", callback_data="ai_recommend"),
+         InlineKeyboardButton("📊 종목분석", callback_data="analyze_menu")],
+        [InlineKeyboardButton("📰 뉴스", callback_data="news_menu"),
+         InlineKeyboardButton("😱 공포탐욕", callback_data="fear_greed")],
+        [InlineKeyboardButton("🏭 섹터", callback_data="sectors"),
+         InlineKeyboardButton("📅 일정", callback_data="calendar")],
+        [InlineKeyboardButton("🔬 종합분석", callback_data="comprehensive_menu"),
          InlineKeyboardButton("📚 전략", callback_data="strategies")],
     ])
 
@@ -92,12 +96,29 @@ def get_back_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 메인", callback_data="main")]])
 
 
+def get_comprehensive_keyboard():
+    keyboard = []
+    row = []
+    for symbol in POPULAR_STOCKS:
+        row.append(InlineKeyboardButton(symbol, callback_data=f"comp_{symbol}"))
+        if len(row) == 5:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("🌡️ 시장심리 종합", callback_data="market_sentiment")])
+    keyboard.append([InlineKeyboardButton("🔙 메인", callback_data="main")])
+    return InlineKeyboardMarkup(keyboard)
+
+
 def get_stock_detail_keyboard(symbol: str):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🤖 AI분석", callback_data=f"ai_{symbol}"),
-         InlineKeyboardButton("� 뉴스자", callback_data=f"n_{symbol}")],
+         InlineKeyboardButton("📰 뉴스", callback_data=f"n_{symbol}")],
         [InlineKeyboardButton("👔 내부자", callback_data=f"insider_{symbol}"),
          InlineKeyboardButton("🎯 목표가", callback_data=f"target_{symbol}")],
+        [InlineKeyboardButton("🔬 종합분석", callback_data=f"comp_{symbol}"),
+         InlineKeyboardButton("📈 Finviz", callback_data=f"fv_{symbol}")],
         [InlineKeyboardButton("🔙 메인", callback_data="main")],
     ])
 
@@ -190,8 +211,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if target == "market":
                 from news_fetcher import get_market_news
                 from ai_analyzer import get_market_sentiment
+                from market_data import get_fear_greed_index
                 news = get_market_news()
-                result = get_market_sentiment(news)
+                fg = get_fear_greed_index()
+                result = get_market_sentiment(news, fg)
                 if "error" in result:
                     text = f"❌ {result['error']}"
                 else:
@@ -201,9 +224,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 from analyzer import analyze_single_stock
                 from news_fetcher import get_company_news
                 from ai_analyzer import analyze_stock_with_ai
+                from market_data import get_comprehensive_stock_analysis
                 stock_data = analyze_single_stock(symbol)
                 news = get_company_news(symbol, days=3)
-                result = analyze_stock_with_ai(symbol, stock_data, news)
+                market_data = get_comprehensive_stock_analysis(symbol)
+                result = analyze_stock_with_ai(symbol, stock_data, news, market_data)
                 if "error" in result:
                     text = f"❌ {result['error']}"
                 else:
@@ -288,6 +313,78 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "risk":
         text = "⚠️ <b>위험도 가이드</b>\n━━━━━━━━━━━━━━━━━━\n\n⭐ 낮음: 🎯 보수적 모멘텀\n⭐⭐ 중간: ✨골든 📊볼린저 📈MACD 🔥거래량\n⭐⭐⭐ 높음: 🏆52주신고가 📉급락반등\n\n💡 손절 -7% 무조건 지키기!"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    
+    # ===== 새로운 기능들 =====
+    elif data == "fear_greed":
+        await query.edit_message_text("😱 공포탐욕 지수 로딩...")
+        try:
+            from market_data import get_fear_greed_index
+            fg = get_fear_greed_index()
+            text = format_fear_greed(fg)
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+    
+    elif data == "sectors":
+        await query.edit_message_text("🏭 섹터 성과 로딩...")
+        try:
+            from market_data import get_finviz_sector_performance
+            sectors = get_finviz_sector_performance()
+            text = format_sectors(sectors)
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+    
+    elif data == "comprehensive_menu":
+        await query.edit_message_text("🔬 종합분석할 종목 선택:", reply_markup=get_comprehensive_keyboard())
+    
+    elif data.startswith("comp_"):
+        symbol = data[5:]
+        await query.edit_message_text(f"🔬 {symbol} 종합분석 중... (여러 사이트 조회)")
+        try:
+            from market_data import get_comprehensive_stock_analysis
+            result = get_comprehensive_stock_analysis(symbol)
+            text = format_comprehensive(result)
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+        except Exception as e:
+            await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
+    
+    elif data.startswith("fv_"):
+        symbol = data[3:]
+        await query.edit_message_text(f"📈 {symbol} Finviz 데이터 로딩...")
+        try:
+            from market_data import get_finviz_stock_data
+            result = get_finviz_stock_data(symbol)
+            text = format_finviz(result)
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+        except Exception as e:
+            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+    
+    elif data == "market_sentiment":
+        await query.edit_message_text("🌡️ 시장 심리 종합 분석 중...")
+        try:
+            from market_data import get_market_sentiment_summary
+            result = get_market_sentiment_summary()
+            text = format_market_sentiment(result)
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
+    
+    elif data == "ai_recommend":
+        await query.edit_message_text("🤖 AI 매수/매도 추천 분석 중...\n(나스닥 100 전체 분석, 2~3분 소요)")
+        try:
+            from groq_analyzer import run_full_analysis
+            result = run_full_analysis()
+            if "error" in result:
+                text = f"❌ {result['error']}"
+            else:
+                text = format_ai_recommendation(result)
+            # 텔레그램 메시지 길이 제한 (4096자)
+            if len(text) > 4000:
+                text = text[:3900] + "\n\n... (메시지가 너무 길어 일부 생략)"
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
 
 
 # 포맷팅 함수들
@@ -403,8 +500,15 @@ def format_daily_report(scan_result: dict) -> str:
     from strategies import ALL_STRATEGIES
     market = scan_result["market"]
     strategy_results = scan_result["strategy_results"]
+    fear_greed = scan_result.get("fear_greed", {})
     
-    report = f"📊 <b>일일 리포트</b>\n━━━━━━━━━━━━━━━━━━\n\n🚦 {market['emoji']} {market['message']}\nQQQ: ${market['price']} (50일선: ${market['ma50']})\n\n"
+    report = f"📊 <b>일일 리포트</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # 공포탐욕 지수
+    if fear_greed:
+        report += f"😱 공포탐욕: {fear_greed.get('emoji', '')} {fear_greed.get('score', 'N/A')}/100 ({fear_greed.get('rating', '')})\n"
+    
+    report += f"🚦 {market['emoji']} {market['message']}\nQQQ: ${market['price']} (50일선: ${market['ma50']})\n\n"
     
     has_signals = False
     for emoji, name, _ in ALL_STRATEGIES:
@@ -441,6 +545,201 @@ def format_recommendations(result: dict) -> str:
     report += "위험도 0~100 (낮을수록 좋음)"
     
     return report
+
+
+# ===== 새로운 포맷팅 함수들 =====
+def format_fear_greed(fg: dict) -> str:
+    """공포탐욕 지수 포맷팅"""
+    text = "😱 <b>CNN 공포탐욕 지수</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"{fg['emoji']} <b>현재: {fg['score']}/100</b>\n"
+    text += f"📊 상태: {fg['rating']}\n\n"
+    text += f"💡 <b>해석:</b>\n{fg['advice']}\n\n"
+    text += "<b>지수 구간:</b>\n"
+    text += "• 0-25: 극단적 공포 🔴 (매수 기회?)\n"
+    text += "• 25-45: 공포 🟠\n"
+    text += "• 45-55: 중립 🟡\n"
+    text += "• 55-75: 탐욕 🟢\n"
+    text += "• 75-100: 극단적 탐욕 🔵 (주의!)\n\n"
+    text += f"⏰ {fg['timestamp']}"
+    return text
+
+
+def format_sectors(sectors: list) -> str:
+    """섹터 성과 포맷팅"""
+    text = "🏭 <b>섹터별 성과</b> (Finviz)\n━━━━━━━━━━━━━━━━━━\n\n"
+    
+    if not sectors:
+        text += "데이터를 가져올 수 없습니다."
+        return text
+    
+    # 성과순 정렬
+    try:
+        sectors_sorted = sorted(sectors, key=lambda x: float(x['change'].replace('%', '').replace('+', '')), reverse=True)
+    except:
+        sectors_sorted = sectors
+    
+    for s in sectors_sorted:
+        text += f"{s['emoji']} <b>{s['name']}</b>: {s['change']}\n"
+    
+    text += "\n💡 <b>활용법:</b>\n"
+    text += "• 강한 섹터의 대장주 매수\n"
+    text += "• 약한 섹터는 피하거나 반등 노림"
+    return text
+
+
+def format_comprehensive(result: dict) -> str:
+    """종합 분석 포맷팅"""
+    symbol = result["symbol"]
+    text = f"🔬 <b>{symbol} 종합분석</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    
+    sources = result.get("sources", {})
+    
+    # Finviz 데이터
+    fv = sources.get("finviz", {})
+    if fv:
+        text += "<b>📈 Finviz</b>\n"
+        text += f"• 가격: ${fv.get('price', 'N/A')} ({fv.get('change', 'N/A')})\n"
+        text += f"• P/E: {fv.get('pe', 'N/A')} | Forward P/E: {fv.get('forward_pe', 'N/A')}\n"
+        text += f"• RSI: {fv.get('rsi', 'N/A')}\n"
+        text += f"• 목표가: ${fv.get('target_price', 'N/A')}\n"
+        text += f"• 섹터: {fv.get('sector', 'N/A')}\n\n"
+    
+    # TipRanks 데이터
+    tr = sources.get("tipranks", {})
+    if tr:
+        text += "<b>🎯 TipRanks</b>\n"
+        text += f"• 컨센서스: {tr.get('consensus', 'N/A')}\n"
+        text += f"• 매수/보유/매도: {tr.get('buy', 0)}/{tr.get('hold', 0)}/{tr.get('sell', 0)}\n"
+        text += f"• 목표가: ${tr.get('price_target_avg', 0):.2f}\n"
+        text += f"• 애널리스트 수: {tr.get('num_analysts', 0)}명\n\n"
+    
+    # Seeking Alpha 데이터
+    sa = sources.get("seeking_alpha", {})
+    if sa:
+        text += "<b>📊 Seeking Alpha</b>\n"
+        text += f"• 퀀트 레이팅: {sa.get('rating_text', 'N/A')}\n\n"
+    
+    if not sources:
+        text += "데이터를 가져올 수 없습니다.\n"
+    
+    text += f"⏰ {result['timestamp']}"
+    return text
+
+
+def format_finviz(data: dict) -> str:
+    """Finviz 상세 데이터 포맷팅"""
+    if not data:
+        return "데이터를 가져올 수 없습니다."
+    
+    symbol = data.get("symbol", "")
+    text = f"📈 <b>{symbol} Finviz 데이터</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    
+    text += f"<b>💰 가격</b>\n"
+    text += f"• 현재가: ${data.get('price', 'N/A')} ({data.get('change', 'N/A')})\n"
+    text += f"• 52주 고가: {data.get('52w_high', 'N/A')}\n"
+    text += f"• 52주 저가: {data.get('52w_low', 'N/A')}\n"
+    text += f"• 목표가: ${data.get('target_price', 'N/A')}\n\n"
+    
+    text += f"<b>📊 밸류에이션</b>\n"
+    text += f"• P/E: {data.get('pe', 'N/A')}\n"
+    text += f"• Forward P/E: {data.get('forward_pe', 'N/A')}\n"
+    text += f"• PEG: {data.get('peg', 'N/A')}\n"
+    text += f"• P/S: {data.get('ps', 'N/A')}\n"
+    text += f"• P/B: {data.get('pb', 'N/A')}\n\n"
+    
+    text += f"<b>💵 수익성</b>\n"
+    text += f"• EPS: {data.get('eps', 'N/A')}\n"
+    text += f"• EPS 예상(내년): {data.get('eps_next_y', 'N/A')}\n"
+    text += f"• ROE: {data.get('roe', 'N/A')}\n"
+    text += f"• ROA: {data.get('roa', 'N/A')}\n"
+    text += f"• 배당률: {data.get('dividend', 'N/A')}\n\n"
+    
+    text += f"<b>📉 기술적</b>\n"
+    text += f"• RSI(14): {data.get('rsi', 'N/A')}\n"
+    text += f"• 상대거래량: {data.get('rel_volume', 'N/A')}\n"
+    text += f"• 공매도비율: {data.get('short_float', 'N/A')}\n\n"
+    
+    text += f"<b>🏢 기업정보</b>\n"
+    text += f"• 섹터: {data.get('sector', 'N/A')}\n"
+    text += f"• 산업: {data.get('industry', 'N/A')}"
+    
+    return text
+
+
+def format_market_sentiment(result: dict) -> str:
+    """시장 심리 종합 포맷팅"""
+    text = "🌡️ <b>시장 심리 종합</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Fear & Greed
+    fg = result.get("fear_greed", {})
+    if fg:
+        text += f"<b>😱 공포탐욕 지수</b>\n"
+        text += f"{fg['emoji']} {fg['score']}/100 - {fg['rating']}\n"
+        text += f"💡 {fg['advice']}\n\n"
+    
+    # 시장 개요
+    overview = result.get("market_overview", {})
+    indices = overview.get("indices", {})
+    if indices:
+        text += "<b>📊 주요 지수</b>\n"
+        for name, change in indices.items():
+            emoji = "🟢" if "+" in change else "🔴" if "-" in change else "⚪"
+            text += f"{emoji} {name}: {change}\n"
+        text += "\n"
+    
+    # 섹터 성과 (상위 3개, 하위 3개)
+    sectors = result.get("sectors", [])
+    if sectors:
+        try:
+            sectors_sorted = sorted(sectors, key=lambda x: float(x['change'].replace('%', '').replace('+', '')), reverse=True)
+            text += "<b>🏭 섹터 (상위/하위)</b>\n"
+            for s in sectors_sorted[:3]:
+                text += f"🟢 {s['name']}: {s['change']}\n"
+            text += "...\n"
+            for s in sectors_sorted[-3:]:
+                text += f"🔴 {s['name']}: {s['change']}\n"
+        except:
+            pass
+    
+    text += f"\n⏰ {result['timestamp']}"
+    return text
+
+
+def format_ai_recommendation(result: dict) -> str:
+    """AI 매수/매도 추천 포맷팅 (재무 데이터 포함)"""
+    text = "🤖 <b>AI 매수/매도 추천</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # 시장 심리
+    fg = result.get("fear_greed", {})
+    if fg:
+        text += f"😱 공포탐욕: {fg.get('emoji', '')} {fg.get('score', 'N/A')}/100 ({fg.get('rating', '')})\n"
+        text += f"💡 {fg.get('advice', '')}\n\n"
+        text += f"📊 분석 종목: {result.get('total_stocks', 0)}개\n"
+        text += f"🧠 모델: {result.get('model', 'llama4-maverick')}\n\n"
+    
+    # 점수 체계 설명
+    text += "<b>📐 점수 체계</b>\n"
+    text += "• 종합(T) = 팩터 60% + 재무 40%\n"
+    text += "• 팩터(F): 수익성/모멘텀/가치/퀄리티/변동성\n"
+    text += "• 재무(FIN): ROE/P·E/성장률/부채/배당\n"
+    text += "• 등급: A(70+) B(60+) C(50+) D(40+) F\n\n"
+    
+    # AI 분석 결과
+    analysis = result.get("analysis", "")
+    if analysis:
+        # HTML 태그 변환 (마크다운 -> HTML)
+        analysis = analysis.replace("**", "")
+        analysis = analysis.replace("##", "📌")
+        text += analysis
+    
+    # 매수 추천 TOP 5 재무 요약 추가
+    top_stocks = result.get("top_buy_stocks", [])
+    if top_stocks:
+        text += "\n\n<b>📊 매수 TOP 5 재무 요약</b>\n"
+        for s in top_stocks[:5]:
+            text += f"• {s['symbol']}: ROE {s.get('roe', 'N/A')} | P/E {s.get('pe', 'N/A')} | 성장 {s.get('growth', 'N/A')}\n"
+    
+    return text
 
 
 async def send_message(text: str) -> bool:

@@ -62,6 +62,13 @@ def scan_all_stocks() -> dict:
     """나스닥 100 전체 스캔 (병렬 처리)"""
     market = check_market_condition()
     
+    # 공포탐욕 지수 가져오기
+    try:
+        from market_data import get_fear_greed_index
+        fear_greed = get_fear_greed_index()
+    except:
+        fear_greed = {}
+    
     # 전략별 결과 저장
     strategy_results = {name: [] for _, name, _ in ALL_STRATEGIES}
     total_scanned = 0
@@ -85,6 +92,7 @@ def scan_all_stocks() -> dict:
     
     return {
         "market": market,
+        "fear_greed": fear_greed,
         "strategy_results": strategy_results,
         "total_scanned": total_scanned,
     }
