@@ -1,6 +1,7 @@
 """
-Groq AI 기반 나스닥 100 종합 분석 모듈
+AI 기반 나스닥 100 종합 분석 모듈
 - 전체 종목 분석 후 매수/매도 추천
+- OpenRouter API 사용 (Groq 모델 포함)
 """
 import os
 import json
@@ -10,38 +11,63 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+# OpenRouter API (Groq IP 차단 우회)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # 폴백용
 
-# 사용 가능한 모델들 (똑똑한 순)
-GROQ_MODELS = {
-    "llama4-maverick": "meta-llama/llama-4-maverick-17b-128e-instruct",  # Llama 4 최신 (가장 똑똑)
-    "llama4-scout": "meta-llama/llama-4-scout-17b-16e-instruct",  # Llama 4 빠름
-    "kimi-k2": "moonshotai/kimi-k2-instruct-0905",  # Kimi K2 (262K 컨텍스트)
-    "qwen3-32b": "qwen/qwen3-32b",  # Qwen 3 32B
-    "llama3.3-70b": "llama-3.3-70b-versatile",  # Llama 3.3 70B
-    "gpt-oss-120b": "openai/gpt-oss-120b",  # GPT OSS 120B
+# OpenRouter 사용 여부 (키가 있으면 OpenRouter 우선)
+USE_OPENROUTER = bool(OPENROUTER_API_KEY)
+
+API_URL = "https://openrouter.ai/api/v1/chat/completions" if USE_OPENROUTER else "https://api.groq.com/openai/v1/chat/completions"
+API_KEY = OPENROUTER_API_KEY if USE_OPENROUTER else GROQ_API_KEY
+
+# 사용 가능한 모델들 (OpenRouter 모델명)
+MODELS = {
+    "llama4-maverick": "meta-llama/llama-4-maverick:free",  # Llama 4 최신 (무료)
+    "llama4-scout": "meta-llama/llama-4-scout:free",  # Llama 4 Scout (무료)
+    "llama3.3-70b": "meta-llama/llama-3.3-70b-instruct:free",  # Llama 3.3 70B (무료)
+    "qwen3-32b": "qwen/qwen3-32b:free",  # Qwen 3 32B (무료)
+    "gemini-flash": "google/gemini-2.0-flash-exp:free",  # Gemini 2.0 Flash (무료)
+    "deepseek-v3": "deepseek/deepseek-chat-v3-0324:free",  # DeepSeek V3 (무료)
 }
 
-DEFAULT_MODEL = "llama4-maverick"  # 기본값: Llama 4 Maverick (가장 똑똑)
+# Groq 직접 연결용 모델명 (폴백)
+GROQ_MODELS = {
+    "llama4-maverick": "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "llama4-scout": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "llama3.3-70b": "llama-3.3-70b-versatile",
+    "qwen3-32b": "qwen/qwen3-32b",
+}
+
+DEFAULT_MODEL = "llama4-maverick"  # 기본값: Llama 4 Maverick
 
 
 def _call_groq(prompt: str, max_tokens: int = 4000, model: str = None) -> str | None:
-    """Groq API 호출"""
-    if not GROQ_API_KEY:
-        print("GROQ_API_KEY가 설정되지 않았습니다.")
+    """AI API 호출 (OpenRouter 또는 Groq)"""
+    if not API_KEY:
+        print("API 키가 설정되지 않았습니다. OPENROUTER_API_KEY 또는 GROQ_API_KEY를 설정하세요.")
         return None
     
     # 모델 선택
-    model_name = GROQ_MODELS.get(model or DEFAULT_MODEL, GROQ_MODELS[DEFAULT_MODEL])
+    if USE_OPENROUTER:
+        model_name = MODELS.get(model or DEFAULT_MODEL, MODELS[DEFAULT_MODEL])
+    else:
+        model_name = GROQ_MODELS.get(model or DEFAULT_MODEL, GROQ_MODELS[DEFAULT_MODEL])
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}"
+    }
+    
+    # OpenRouter 추가 헤더
+    if USE_OPENROUTER:
+        headers["HTTP-Referer"] = "https://github.com/autostock"
+        headers["X-Title"] = "AutoStock Analyzer"
     
     try:
         response = requests.post(
-            GROQ_URL,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {GROQ_API_KEY}"
-            },
+            API_URL,
+            headers=headers,
             json={
                 "model": model_name,
                 "messages": [
@@ -55,14 +81,14 @@ def _call_groq(prompt: str, max_tokens: int = 4000, model: str = None) -> str | 
         )
         
         if response.status_code != 200:
-            print(f"Groq API 오류: {response.status_code} - {response.text[:200]}")
+            print(f"API 오류: {response.status_code} - {response.text[:200]}")
             return None
         
         data = response.json()
         return data["choices"][0]["message"]["content"]
         
     except Exception as e:
-        print(f"Groq 호출 실패: {e}")
+        print(f"API 호출 실패: {e}")
         return None
 
 
@@ -165,9 +191,9 @@ def collect_all_stock_data() -> list[dict]:
 
 
 def analyze_with_groq(stock_data: list[dict], fear_greed: dict = None, model: str = None) -> dict:
-    """Groq으로 전체 종목 분석 및 매수/매도 추천"""
-    if not GROQ_API_KEY:
-        return {"error": "GROQ_API_KEY가 설정되지 않았습니다."}
+    """AI로 전체 종목 분석 및 매수/매도 추천"""
+    if not API_KEY:
+        return {"error": "API 키가 설정되지 않았습니다. OPENROUTER_API_KEY 또는 GROQ_API_KEY를 설정하세요."}
     
     # 매수/매도 후보 필터링 (종합 점수 기반: 팩터 60% + 재무 40%)
     buy_candidates = []
@@ -246,7 +272,7 @@ def analyze_with_groq(stock_data: list[dict], fear_greed: dict = None, model: st
             "analysis": result,
             "total_analyzed": len(stock_data),
         }
-    return {"error": "Groq 분석 실패"}
+    return {"error": "AI 분석 실패"}
 
 
 def run_full_analysis(model: str = None) -> dict:
@@ -254,8 +280,14 @@ def run_full_analysis(model: str = None) -> dict:
     from market_data import get_fear_greed_index
     from financial_data import get_financial_summary
     
-    model_name = GROQ_MODELS.get(model or DEFAULT_MODEL, GROQ_MODELS[DEFAULT_MODEL])
-    print(f"🚀 나스닥 100 전체 분석 시작... (모델: {model or DEFAULT_MODEL})")
+    # 모델명 표시
+    if USE_OPENROUTER:
+        model_name = MODELS.get(model or DEFAULT_MODEL, MODELS[DEFAULT_MODEL])
+        api_name = "OpenRouter"
+    else:
+        model_name = GROQ_MODELS.get(model or DEFAULT_MODEL, GROQ_MODELS[DEFAULT_MODEL])
+        api_name = "Groq"
+    print(f"🚀 나스닥 100 전체 분석 시작... (API: {api_name}, 모델: {model or DEFAULT_MODEL})")
     print()
     
     # 1. 공포탐욕 지수
