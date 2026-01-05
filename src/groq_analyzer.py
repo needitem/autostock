@@ -1,7 +1,7 @@
 """
 AI 기반 나스닥 100 종합 분석 모듈
 - 전체 종목 분석 후 매수/매도 추천
-- OpenRouter API 사용 (Groq 모델 포함)
+- OpenRouter API 사용
 """
 import os
 import json
@@ -11,15 +11,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# OpenRouter API (Groq IP 차단 우회)
+# OpenRouter API
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # 폴백용
-
-# OpenRouter 사용 여부 (키가 있으면 OpenRouter 우선)
-USE_OPENROUTER = bool(OPENROUTER_API_KEY)
-
-API_URL = "https://openrouter.ai/api/v1/chat/completions" if USE_OPENROUTER else "https://api.groq.com/openai/v1/chat/completions"
-API_KEY = OPENROUTER_API_KEY if USE_OPENROUTER else GROQ_API_KEY
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # 사용 가능한 모델들 (OpenRouter 모델명)
 MODELS = {
@@ -31,38 +25,23 @@ MODELS = {
     "deepseek-v3": "deepseek/deepseek-chat-v3-0324:free",  # DeepSeek V3 (무료)
 }
 
-# Groq 직접 연결용 모델명 (폴백)
-GROQ_MODELS = {
-    "llama4-maverick": "meta-llama/llama-4-maverick-17b-128e-instruct",
-    "llama4-scout": "meta-llama/llama-4-scout-17b-16e-instruct",
-    "llama3.3-70b": "llama-3.3-70b-versatile",
-    "qwen3-32b": "qwen/qwen3-32b",
-}
-
 DEFAULT_MODEL = "llama4-maverick"  # 기본값: Llama 4 Maverick
 
 
-def _call_groq(prompt: str, max_tokens: int = 4000, model: str = None) -> str | None:
-    """AI API 호출 (OpenRouter 또는 Groq)"""
-    if not API_KEY:
-        print("API 키가 설정되지 않았습니다. OPENROUTER_API_KEY 또는 GROQ_API_KEY를 설정하세요.")
+def _call_ai(prompt: str, max_tokens: int = 4000, model: str = None) -> str | None:
+    """OpenRouter API 호출"""
+    if not OPENROUTER_API_KEY:
+        print("OPENROUTER_API_KEY가 설정되지 않았습니다.")
         return None
     
-    # 모델 선택
-    if USE_OPENROUTER:
-        model_name = MODELS.get(model or DEFAULT_MODEL, MODELS[DEFAULT_MODEL])
-    else:
-        model_name = GROQ_MODELS.get(model or DEFAULT_MODEL, GROQ_MODELS[DEFAULT_MODEL])
+    model_name = MODELS.get(model or DEFAULT_MODEL, MODELS[DEFAULT_MODEL])
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}"
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://github.com/autostock",
+        "X-Title": "AutoStock Analyzer"
     }
-    
-    # OpenRouter 추가 헤더
-    if USE_OPENROUTER:
-        headers["HTTP-Referer"] = "https://github.com/autostock"
-        headers["X-Title"] = "AutoStock Analyzer"
     
     try:
         response = requests.post(
@@ -190,10 +169,10 @@ def collect_all_stock_data() -> list[dict]:
     return all_data
 
 
-def analyze_with_groq(stock_data: list[dict], fear_greed: dict = None, model: str = None) -> dict:
+def analyze_with_ai(stock_data: list[dict], fear_greed: dict = None, model: str = None) -> dict:
     """AI로 전체 종목 분석 및 매수/매도 추천"""
-    if not API_KEY:
-        return {"error": "API 키가 설정되지 않았습니다. OPENROUTER_API_KEY 또는 GROQ_API_KEY를 설정하세요."}
+    if not OPENROUTER_API_KEY:
+        return {"error": "OPENROUTER_API_KEY가 설정되지 않았습니다."}
     
     # 매수/매도 후보 필터링 (종합 점수 기반: 팩터 60% + 재무 40%)
     buy_candidates = []
@@ -265,7 +244,7 @@ def analyze_with_groq(stock_data: list[dict], fear_greed: dict = None, model: st
 ## 💡 종합 전략
 팩터+재무 분석 기반 투자 조언 (초보자용 3-4줄)"""
 
-    result = _call_groq(prompt, max_tokens=2000, model=model)
+    result = _call_ai(prompt, max_tokens=2000, model=model)
     
     if result:
         return {
@@ -281,13 +260,8 @@ def run_full_analysis(model: str = None) -> dict:
     from financial_data import get_financial_summary
     
     # 모델명 표시
-    if USE_OPENROUTER:
-        model_name = MODELS.get(model or DEFAULT_MODEL, MODELS[DEFAULT_MODEL])
-        api_name = "OpenRouter"
-    else:
-        model_name = GROQ_MODELS.get(model or DEFAULT_MODEL, GROQ_MODELS[DEFAULT_MODEL])
-        api_name = "Groq"
-    print(f"🚀 나스닥 100 전체 분석 시작... (API: {api_name}, 모델: {model or DEFAULT_MODEL})")
+    model_name = MODELS.get(model or DEFAULT_MODEL, MODELS[DEFAULT_MODEL])
+    print(f"🚀 나스닥 100 전체 분석 시작... (모델: {model or DEFAULT_MODEL})")
     print()
     
     # 1. 공포탐욕 지수
@@ -301,9 +275,9 @@ def run_full_analysis(model: str = None) -> dict:
     stock_data = collect_all_stock_data()
     print()
     
-    # 3. Groq 분석
+    # 3. AI 분석
     print("[3/3] AI 분석 중... (30초~1분 소요)")
-    result = analyze_with_groq(stock_data, fear_greed, model)
+    result = analyze_with_ai(stock_data, fear_greed, model)
     
     if "error" in result:
         print(f"❌ 오류: {result['error']}")
@@ -455,10 +429,10 @@ if __name__ == "__main__":
     else:
         # 모델 선택
         model = None
-        if len(sys.argv) > 1 and sys.argv[1] in GROQ_MODELS:
+        if len(sys.argv) > 1 and sys.argv[1] in MODELS:
             model = sys.argv[1]
         
-        # 전체 Groq 분석
+        # 전체 AI 분석
         result = run_full_analysis(model)
         
         if "analysis" in result:
