@@ -834,16 +834,96 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(format_news(symbol, news), parse_mode="HTML", reply_markup=get_back_keyboard(), disable_web_page_preview=True)
 
 
-def run_bot():
+async def scheduled_daily_scan(context):
+    """스케줄된 일일 스캔 (22:00)"""
+    chat_id = get_saved_chat_id()
+    if not chat_id:
+        print("[스케줄] Chat ID 없음, 스킵")
+        return
+    
+    print(f"[스케줄] 일일 스캔 시작...")
+    try:
+        from analyzer import scan_all_stocks
+        result = scan_all_stocks()
+        report = format_daily_report(result)
+        await context.bot.send_message(chat_id=chat_id, text=report, parse_mode="HTML")
+        print("[스케줄] 일일 스캔 전송 완료")
+    except Exception as e:
+        print(f"[스케줄] 일일 스캔 실패: {e}")
+
+
+async def scheduled_ai_recommendation(context):
+    """스케줄된 AI 추천 (23:00)"""
+    chat_id = get_saved_chat_id()
+    if not chat_id:
+        print("[스케줄] Chat ID 없음, 스킵")
+        return
+    
+    print(f"[스케줄] AI 추천 분석 시작...")
+    try:
+        from openrouter_analyzer import run_full_analysis
+        result = run_full_analysis()
+        
+        if "error" in result:
+            print(f"[스케줄] AI 분석 실패: {result['error']}")
+            return
+        
+        report = format_ai_recommendation(result)
+        if len(report) > 4000:
+            report = report[:3900] + "\n\n... (메시지가 너무 길어 일부 생략)"
+        
+        await context.bot.send_message(chat_id=chat_id, text=report, parse_mode="HTML")
+        print("[스케줄] AI 추천 전송 완료")
+    except Exception as e:
+        print(f"[스케줄] AI 추천 실패: {e}")
+
+
+def run_bot(with_scheduler: bool = True):
+    from datetime import time as dt_time
+    import pytz
+    
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("scan", scan_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("news", news_command))
     app.add_handler(CallbackQueryHandler(button_callback))
-    print("봇 실행 중... /start 로 시작")
+    
+    if with_scheduler:
+        # 한국 시간대
+        kst = pytz.timezone("Asia/Seoul")
+        
+        # 매일 22:00 (KST) - 일일 스캔
+        app.job_queue.run_daily(
+            scheduled_daily_scan,
+            time=dt_time(hour=22, minute=0, tzinfo=kst),
+            name="daily_scan"
+        )
+        
+        # 매일 23:00 (KST) - AI 추천
+        app.job_queue.run_daily(
+            scheduled_ai_recommendation,
+            time=dt_time(hour=23, minute=0, tzinfo=kst),
+            name="ai_recommendation"
+        )
+        
+        print("=" * 50)
+        print("📅 스케줄러 포함 봇 실행 중...")
+        print("=" * 50)
+        print("• 22:00 - 일일 스캔")
+        print("• 23:00 - AI 매수/매도 추천")
+        print("=" * 50)
+    else:
+        print("봇 실행 중... (스케줄러 없음)")
+    
+    print("/start 로 시작")
     app.run_polling()
 
 
 if __name__ == "__main__":
-    run_bot()
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "--no-schedule":
+        run_bot(with_scheduler=False)
+    else:
+        run_bot(with_scheduler=True)
