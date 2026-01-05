@@ -17,15 +17,16 @@ API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # 사용 가능한 모델들 (OpenRouter 무료 모델)
 MODELS = {
+    "deepseek-v3.1": "nex-agi/deepseek-v3.1-nex-n1:free",  # DeepSeek V3.1 (무료, 최신)
+    "deepseek-r1": "deepseek/deepseek-r1-0528:free",  # DeepSeek R1 (무료, 추론특화)
     "llama3.3-70b": "meta-llama/llama-3.3-70b-instruct:free",  # Llama 3.3 70B (무료)
     "llama3.1-405b": "meta-llama/llama-3.1-405b-instruct:free",  # Llama 3.1 405B (무료)
     "gemini-flash": "google/gemini-2.0-flash-exp:free",  # Gemini 2.0 Flash (무료)
-    "deepseek-r1": "deepseek/deepseek-r1-0528:free",  # DeepSeek R1 (무료)
     "kimi-k2": "moonshotai/kimi-k2:free",  # Kimi K2 (무료)
     "mistral-small": "mistralai/mistral-small-3.1-24b-instruct:free",  # Mistral Small (무료)
 }
 
-DEFAULT_MODEL = "llama3.3-70b"  # 기본값: Llama 3.3 70B
+DEFAULT_MODEL = "deepseek-v3.1"  # 기본값: DeepSeek V3.1 (최신)
 
 
 def _call_ai(prompt: str, max_tokens: int = 4000, model: str = None) -> str | None:

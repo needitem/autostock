@@ -26,7 +26,7 @@ def _call_ai(prompt: str, system_prompt: str = "You are a helpful AI assistant."
                 "X-Title": "AutoStock Analyzer"
             },
             json={
-                "model": "meta-llama/llama-3.3-70b-instruct:free",
+                "model": "nex-agi/deepseek-v3.1-nex-n1:free",
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}

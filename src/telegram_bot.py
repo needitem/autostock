@@ -129,262 +129,308 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                      parse_mode="HTML", reply_markup=get_main_keyboard())
 
 
+# ===== 개별 핸들러 함수들 =====
+async def handle_main(query):
+    await query.edit_message_text("메인 메뉴 👇", reply_markup=get_main_keyboard())
+
+async def handle_scan(query):
+    await query.edit_message_text("🔍 스캔 중...")
+    try:
+        from analyzer import scan_all_stocks
+        result = scan_all_stocks()
+        report = format_daily_report(result)
+        await query.edit_message_text(report, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"스캔 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_recommend(query):
+    await query.edit_message_text("🌟 추천 종목 분석 중... (1~2분 소요)")
+    try:
+        from analyzer import get_recommendations
+        result = get_recommendations()
+        report = format_recommendations(result)
+        await query.edit_message_text(report, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"추천 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_analyze_menu(query):
+    await query.edit_message_text("📊 분석할 종목 선택:", reply_markup=get_analyze_keyboard())
+
+async def handle_news_menu(query):
+    await query.edit_message_text("📰 뉴스 볼 종목 선택:", reply_markup=get_news_keyboard())
+
+async def handle_market_news(query):
+    await query.edit_message_text("🌍 시장 뉴스 로딩...")
+    try:
+        from news_fetcher import get_market_news
+        news = get_market_news()
+        text = format_market_news(news)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🤖 AI 시장분석", callback_data="ai_market")],
+            [InlineKeyboardButton("🔙 메인", callback_data="main")]
+        ]), disable_web_page_preview=True)
+    except Exception as e:
+        await query.edit_message_text(f"뉴스 로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_ai_recommend(query):
+    await query.edit_message_text("🤖 AI 매수/매도 추천 분석 중...\n(나스닥 100 전체 분석, 2~3분 소요)")
+    try:
+        from openrouter_analyzer import run_full_analysis
+        result = run_full_analysis()
+        if "error" in result:
+            text = f"❌ {result['error']}"
+        else:
+            text = format_ai_recommendation(result)
+        if len(text) > 4000:
+            text = text[:3900] + "\n\n... (메시지가 너무 길어 일부 생략)"
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_calendar(query):
+    await query.edit_message_text("📅 경제 일정 로딩...")
+    try:
+        from economic_calendar import get_upcoming_events, ECONOMIC_EVENTS
+        from news_fetcher import get_earnings_calendar
+        events = get_upcoming_events()
+        earnings = get_earnings_calendar()
+        text = format_calendar(events, earnings)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_strategies(query):
+    await query.edit_message_text("📚 전략 선택:", reply_markup=get_strategies_keyboard())
+
+async def handle_risk(query):
+    text = "⚠️ <b>위험도 가이드</b>\n━━━━━━━━━━━━━━━━━━\n\n⭐ 낮음: 🎯 보수적 모멘텀\n⭐⭐ 중간: ✨골든 📊볼린저 📈MACD 🔥거래량\n⭐⭐⭐ 높음: 🏆52주신고가 📉급락반등\n\n💡 손절 -7% 무조건 지키기!"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+
+async def handle_fear_greed(query):
+    await query.edit_message_text("😱 공포탐욕 지수 로딩...")
+    try:
+        from market_data import get_fear_greed_index
+        fg = get_fear_greed_index()
+        text = format_fear_greed(fg)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_sectors(query):
+    await query.edit_message_text("🏭 섹터 성과 로딩...")
+    try:
+        from market_data import get_finviz_sector_performance
+        sectors = get_finviz_sector_performance()
+        text = format_sectors(sectors)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_comprehensive_menu(query):
+    await query.edit_message_text("🔬 종합분석할 종목 선택:", reply_markup=get_comprehensive_keyboard())
+
+async def handle_market_sentiment(query):
+    await query.edit_message_text("🌡️ 시장 심리 종합 분석 중...")
+    try:
+        from market_data import get_market_sentiment_summary
+        result = get_market_sentiment_summary()
+        text = format_market_sentiment(result)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
+
+# ===== prefix 핸들러 함수들 =====
+async def handle_analyze_stock(query, data):
+    symbol = data[2:]
+    await query.edit_message_text(f"🔍 {symbol} 분석 중...")
+    try:
+        from analyzer import analyze_single_stock
+        result = analyze_single_stock(symbol)
+        if result:
+            text = format_analysis(result)
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+        else:
+            await query.edit_message_text(f"'{symbol}' 데이터 없음", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_news_stock(query, data):
+    symbol = data[2:]
+    await query.edit_message_text(f"📰 {symbol} 뉴스 로딩...")
+    try:
+        from news_fetcher import get_company_news
+        news = get_company_news(symbol)
+        text = format_news(symbol, news)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🤖 AI 뉴스분석", callback_data=f"ainews_{symbol}")],
+            [InlineKeyboardButton("🔙 메인", callback_data="main")]
+        ]), disable_web_page_preview=True)
+    except Exception as e:
+        await query.edit_message_text(f"뉴스 로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_ai_stock(query, data):
+    target = data[3:]
+    await query.edit_message_text(f"🤖 AI 분석 중... (10초 정도 걸려요)")
+    try:
+        if target == "market":
+            from news_fetcher import get_market_news
+            from ai_analyzer import get_market_sentiment
+            from market_data import get_fear_greed_index
+            news = get_market_news()
+            fg = get_fear_greed_index()
+            result = get_market_sentiment(news, fg)
+            if "error" in result:
+                text = f"❌ {result['error']}"
+            else:
+                text = f"🤖 <b>AI 시장 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
+        else:
+            symbol = target
+            from analyzer import analyze_single_stock
+            from news_fetcher import get_company_news
+            from ai_analyzer import analyze_stock_with_ai
+            from market_data import get_comprehensive_stock_analysis
+            stock_data = analyze_single_stock(symbol)
+            news = get_company_news(symbol, days=3)
+            market_data = get_comprehensive_stock_analysis(symbol)
+            result = analyze_stock_with_ai(symbol, stock_data, news, market_data)
+            if "error" in result:
+                text = f"❌ {result['error']}"
+            else:
+                text = f"🤖 <b>{symbol} AI 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_ainews(query, data):
+    symbol = data[7:]
+    await query.edit_message_text(f"🤖 {symbol} 뉴스 AI 분석 중...")
+    try:
+        from news_fetcher import get_company_news
+        from ai_analyzer import analyze_news_with_ai
+        news = get_company_news(symbol, days=7)
+        result = analyze_news_with_ai(symbol, news)
+        if "error" in result:
+            text = f"❌ {result['error']}"
+        else:
+            text = f"🤖 <b>{symbol} 뉴스 AI 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
+    except Exception as e:
+        await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_insider(query, data):
+    symbol = data[8:]
+    await query.edit_message_text(f"👔 {symbol} 내부자 거래 로딩...")
+    try:
+        from news_fetcher import get_insider_transactions
+        transactions = get_insider_transactions(symbol)
+        text = format_insider(symbol, transactions)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+    except Exception as e:
+        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_target(query, data):
+    symbol = data[7:]
+    await query.edit_message_text(f"🎯 {symbol} 목표가 로딩...")
+    try:
+        from news_fetcher import get_price_target, get_recommendation_trends
+        target = get_price_target(symbol)
+        rec = get_recommendation_trends(symbol)
+        text = format_target(symbol, target, rec)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+    except Exception as e:
+        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_earnings(query, data):
+    symbol = data[9:]
+    await query.edit_message_text(f"📊 {symbol} 실적 로딩...")
+    try:
+        from news_fetcher import get_earnings_calendar
+        earnings = get_earnings_calendar()
+        stock_earnings = [e for e in earnings if e["symbol"] == symbol]
+        text = format_earnings(symbol, stock_earnings)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+    except Exception as e:
+        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_strategy_detail(query, data):
+    name = data[2:]
+    info = STRATEGY_INFO.get(name, {})
+    if info:
+        text = f"{info['emoji']} <b>{name}</b>\n━━━━━━━━━━━━━━━━━━\n<b>위험도:</b> {info['risk']}\n\n{info['description']}"
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_strategies_keyboard())
+
+async def handle_comprehensive(query, data):
+    symbol = data[5:]
+    await query.edit_message_text(f"🔬 {symbol} 종합분석 중... (여러 사이트 조회)")
+    try:
+        from market_data import get_comprehensive_stock_analysis
+        result = get_comprehensive_stock_analysis(symbol)
+        text = format_comprehensive(result)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+    except Exception as e:
+        await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
+
+async def handle_finviz(query, data):
+    symbol = data[3:]
+    await query.edit_message_text(f"📈 {symbol} Finviz 데이터 로딩...")
+    try:
+        from market_data import get_finviz_stock_data
+        result = get_finviz_stock_data(symbol)
+        text = format_finviz(result)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
+    except Exception as e:
+        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
+
+# ===== 핸들러 매핑 =====
+EXACT_HANDLERS = {
+    "main": handle_main,
+    "scan": handle_scan,
+    "recommend": handle_recommend,
+    "analyze_menu": handle_analyze_menu,
+    "news_menu": handle_news_menu,
+    "market_news": handle_market_news,
+    "ai_recommend": handle_ai_recommend,
+    "calendar": handle_calendar,
+    "strategies": handle_strategies,
+    "risk": handle_risk,
+    "fear_greed": handle_fear_greed,
+    "sectors": handle_sectors,
+    "comprehensive_menu": handle_comprehensive_menu,
+    "market_sentiment": handle_market_sentiment,
+}
+
+# prefix 핸들러 (순서 중요: 긴 prefix가 먼저)
+PREFIX_HANDLERS = [
+    ("ainews_", handle_ainews),
+    ("insider_", handle_insider),
+    ("earnings_", handle_earnings),
+    ("target_", handle_target),
+    ("comp_", handle_comprehensive),
+    ("ai_", handle_ai_stock),
+    ("fv_", handle_finviz),
+    ("a_", handle_analyze_stock),
+    ("n_", handle_news_stock),
+    ("e_", handle_strategy_detail),
+]
+
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     
-    if data == "main":
-        await query.edit_message_text("메인 메뉴 👇", reply_markup=get_main_keyboard())
+    # 1. 정확 매칭 먼저 (우선순위 높음)
+    if data in EXACT_HANDLERS:
+        await EXACT_HANDLERS[data](query)
+        return
     
-    elif data == "scan":
-        await query.edit_message_text("🔍 스캔 중...")
-        try:
-            from analyzer import scan_all_stocks
-            result = scan_all_stocks()
-            report = format_daily_report(result)
-            await query.edit_message_text(report, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"스캔 실패: {e}", reply_markup=get_back_keyboard())
+    # 2. prefix 매칭 (긴 prefix부터 체크)
+    for prefix, handler in PREFIX_HANDLERS:
+        if data.startswith(prefix):
+            await handler(query, data)
+            return
     
-    elif data == "recommend":
-        await query.edit_message_text("🌟 추천 종목 분석 중... (1~2분 소요)")
-        try:
-            from analyzer import get_recommendations
-            result = get_recommendations()
-            report = format_recommendations(result)
-            await query.edit_message_text(report, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"추천 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "analyze_menu":
-        await query.edit_message_text("📊 분석할 종목 선택:", reply_markup=get_analyze_keyboard())
-    
-    elif data.startswith("a_"):
-        symbol = data[2:]
-        await query.edit_message_text(f"🔍 {symbol} 분석 중...")
-        try:
-            from analyzer import analyze_single_stock
-            result = analyze_single_stock(symbol)
-            if result:
-                text = format_analysis(result)
-                await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
-            else:
-                await query.edit_message_text(f"'{symbol}' 데이터 없음", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "news_menu":
-        await query.edit_message_text("📰 뉴스 볼 종목 선택:", reply_markup=get_news_keyboard())
-    
-    elif data.startswith("n_"):
-        symbol = data[2:]
-        await query.edit_message_text(f"📰 {symbol} 뉴스 로딩...")
-        try:
-            from news_fetcher import get_company_news
-            news = get_company_news(symbol)
-            text = format_news(symbol, news)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🤖 AI 뉴스분석", callback_data=f"ainews_{symbol}")],
-                [InlineKeyboardButton("🔙 메인", callback_data="main")]
-            ]), disable_web_page_preview=True)
-        except Exception as e:
-            await query.edit_message_text(f"뉴스 로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "market_news":
-        await query.edit_message_text("🌍 시장 뉴스 로딩...")
-        try:
-            from news_fetcher import get_market_news
-            news = get_market_news()
-            text = format_market_news(news)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🤖 AI 시장분석", callback_data="ai_market")],
-                [InlineKeyboardButton("🔙 메인", callback_data="main")]
-            ]), disable_web_page_preview=True)
-        except Exception as e:
-            await query.edit_message_text(f"뉴스 로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "ai_recommend":
-        await query.edit_message_text("🤖 AI 매수/매도 추천 분석 중...\n(나스닥 100 전체 분석, 2~3분 소요)")
-        try:
-            from openrouter_analyzer import run_full_analysis
-            result = run_full_analysis()
-            if "error" in result:
-                text = f"❌ {result['error']}"
-            else:
-                text = format_ai_recommendation(result)
-            # 텔레그램 메시지 길이 제한 (4096자)
-            if len(text) > 4000:
-                text = text[:3900] + "\n\n... (메시지가 너무 길어 일부 생략)"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data.startswith("ai_"):
-        target = data[3:]
-        await query.edit_message_text(f"🤖 AI 분석 중... (10초 정도 걸려요)")
-        try:
-            if target == "market":
-                from news_fetcher import get_market_news
-                from ai_analyzer import get_market_sentiment
-                from market_data import get_fear_greed_index
-                news = get_market_news()
-                fg = get_fear_greed_index()
-                result = get_market_sentiment(news, fg)
-                if "error" in result:
-                    text = f"❌ {result['error']}"
-                else:
-                    text = f"🤖 <b>AI 시장 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
-            else:
-                symbol = target
-                from analyzer import analyze_single_stock
-                from news_fetcher import get_company_news
-                from ai_analyzer import analyze_stock_with_ai
-                from market_data import get_comprehensive_stock_analysis
-                stock_data = analyze_single_stock(symbol)
-                news = get_company_news(symbol, days=3)
-                market_data = get_comprehensive_stock_analysis(symbol)
-                result = analyze_stock_with_ai(symbol, stock_data, news, market_data)
-                if "error" in result:
-                    text = f"❌ {result['error']}"
-                else:
-                    text = f"🤖 <b>{symbol} AI 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data.startswith("ainews_"):
-        symbol = data[7:]
-        await query.edit_message_text(f"🤖 {symbol} 뉴스 AI 분석 중...")
-        try:
-            from news_fetcher import get_company_news
-            from ai_analyzer import analyze_news_with_ai
-            news = get_company_news(symbol, days=7)
-            result = analyze_news_with_ai(symbol, news)
-            if "error" in result:
-                text = f"❌ {result['error']}"
-            else:
-                text = f"🤖 <b>{symbol} 뉴스 AI 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data.startswith("insider_"):
-        symbol = data[8:]
-        await query.edit_message_text(f"👔 {symbol} 내부자 거래 로딩...")
-        try:
-            from news_fetcher import get_insider_transactions
-            transactions = get_insider_transactions(symbol)
-            text = format_insider(symbol, transactions)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
-        except Exception as e:
-            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data.startswith("target_"):
-        symbol = data[7:]
-        await query.edit_message_text(f"🎯 {symbol} 목표가 로딩...")
-        try:
-            from news_fetcher import get_price_target, get_recommendation_trends
-            target = get_price_target(symbol)
-            rec = get_recommendation_trends(symbol)
-            text = format_target(symbol, target, rec)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
-        except Exception as e:
-            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data.startswith("earnings_"):
-        symbol = data[9:]
-        await query.edit_message_text(f"📊 {symbol} 실적 로딩...")
-        try:
-            from news_fetcher import get_earnings_calendar
-            earnings = get_earnings_calendar()
-            stock_earnings = [e for e in earnings if e["symbol"] == symbol]
-            text = format_earnings(symbol, stock_earnings)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
-        except Exception as e:
-            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "calendar":
-        await query.edit_message_text("📅 경제 일정 로딩...")
-        try:
-            from economic_calendar import get_upcoming_events, ECONOMIC_EVENTS
-            from news_fetcher import get_earnings_calendar
-            events = get_upcoming_events()
-            earnings = get_earnings_calendar()
-            text = format_calendar(events, earnings)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "strategies":
-        await query.edit_message_text("📚 전략 선택:", reply_markup=get_strategies_keyboard())
-    
-    elif data.startswith("e_"):
-        name = data[2:]
-        info = STRATEGY_INFO.get(name, {})
-        if info:
-            text = f"{info['emoji']} <b>{name}</b>\n━━━━━━━━━━━━━━━━━━\n<b>위험도:</b> {info['risk']}\n\n{info['description']}"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_strategies_keyboard())
-    
-    elif data == "risk":
-        text = "⚠️ <b>위험도 가이드</b>\n━━━━━━━━━━━━━━━━━━\n\n⭐ 낮음: 🎯 보수적 모멘텀\n⭐⭐ 중간: ✨골든 📊볼린저 📈MACD 🔥거래량\n⭐⭐⭐ 높음: 🏆52주신고가 📉급락반등\n\n💡 손절 -7% 무조건 지키기!"
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-    
-    # ===== 새로운 기능들 =====
-    elif data == "fear_greed":
-        await query.edit_message_text("😱 공포탐욕 지수 로딩...")
-        try:
-            from market_data import get_fear_greed_index
-            fg = get_fear_greed_index()
-            text = format_fear_greed(fg)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "sectors":
-        await query.edit_message_text("🏭 섹터 성과 로딩...")
-        try:
-            from market_data import get_finviz_sector_performance
-            sectors = get_finviz_sector_performance()
-            text = format_sectors(sectors)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "comprehensive_menu":
-        await query.edit_message_text("🔬 종합분석할 종목 선택:", reply_markup=get_comprehensive_keyboard())
-    
-    elif data.startswith("comp_"):
-        symbol = data[5:]
-        await query.edit_message_text(f"🔬 {symbol} 종합분석 중... (여러 사이트 조회)")
-        try:
-            from market_data import get_comprehensive_stock_analysis
-            result = get_comprehensive_stock_analysis(symbol)
-            text = format_comprehensive(result)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
-        except Exception as e:
-            await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data.startswith("fv_"):
-        symbol = data[3:]
-        await query.edit_message_text(f"📈 {symbol} Finviz 데이터 로딩...")
-        try:
-            from market_data import get_finviz_stock_data
-            result = get_finviz_stock_data(symbol)
-            text = format_finviz(result)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_stock_detail_keyboard(symbol))
-        except Exception as e:
-            await query.edit_message_text(f"로딩 실패: {e}", reply_markup=get_back_keyboard())
-    
-    elif data == "market_sentiment":
-        await query.edit_message_text("🌡️ 시장 심리 종합 분석 중...")
-        try:
-            from market_data import get_market_sentiment_summary
-            result = get_market_sentiment_summary()
-            text = format_market_sentiment(result)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"분석 실패: {e}", reply_markup=get_back_keyboard())
+
 
 
 # 포맷팅 함수들
