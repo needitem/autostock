@@ -1,13 +1,25 @@
 """
 학술 연구 기반 멀티팩터 모델
-- Fama-French 5-Factor Model + Momentum
-- 검증된 팩터들의 가중치 적용
+- Fama-French 5-Factor Model + Momentum + Low Volatility
 
-참고 논문:
+참고 연구:
+[클래식]
 - Fama & French (2015): 5-Factor Model
 - Novy-Marx (2013): Gross Profitability Premium
 - Jegadeesh & Titman (1993): Momentum
-- Robeco Research (2024): Factor Investing
+- Asness, Frazzini, Pedersen (2019): Quality Minus Junk (AQR)
+
+[최신 2023-2024]
+- López de Prado (2023): Causal Factor Investing
+- Robeco (2024): Low Volatility Anomaly 지속 확인
+- Blitz, van Vliet, Hanauer (2024): FF5 비판 - 모멘텀/저변동성 누락
+- Schwartz & Hanauer (2024): Formula Investing 검증
+
+주요 발견:
+- 수익성(Profitability): 가장 강력하고 일관된 팩터
+- 모멘텀(Momentum): 연평균 8%+ 초과수익
+- 저변동성(Low Volatility): CAPM 반박, 낮은 위험 = 높은 수익
+- 퀄리티(Quality): 수익성 + 안정성 + 낮은 부채
 """
 import pandas as pd
 import numpy as np
@@ -21,11 +33,15 @@ class FactorWeights:
     팩터별 가중치 (학술 연구 기반)
     
     연구 결과 요약:
-    - Profitability: 가장 강력한 예측력 (Novy-Marx 2013)
-    - Momentum: 연평균 8.3% 초과수익 (1927-2013)
-    - Value: 장기적으로 유효하나 최근 약화
-    - Quality: Profitability로 대부분 설명됨
-    - Low Volatility: 수익성 높은 종목과 상관
+    - Profitability: 가장 강력한 예측력 (Novy-Marx 2013, AQR QMJ)
+    - Momentum: 연평균 8.3% 초과수익 (1927-2013), FF5에서 누락된 중요 팩터
+    - Value: 장기적으로 유효, 2024-2025 아웃퍼폼
+    - Quality: Profitability + 안정성 + 낮은 부채 (AQR 2019)
+    - Low Volatility: CAPM 반박, 낮은 위험 = 높은 수익 (Robeco 2024)
+    
+    2024-2025 트렌드:
+    - Value + Low Volatility 강세
+    - Momentum 조정 후 회복 예상
     """
     # 핵심 팩터 (연구에서 가장 강력하게 검증됨)
     profitability: float = 0.25      # ROE, Gross Profit Margin

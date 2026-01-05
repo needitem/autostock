@@ -156,8 +156,32 @@ python -m pytest tests/test_financial_data.py -v
 - [TipRanks](https://tipranks.com) - 애널리스트 의견
 - [CNN Fear & Greed](https://edition.cnn.com/markets/fear-and-greed) - 공포탐욕 지수
 
-## 📚 참고 논문
+## 📚 참고 연구
 
-- Fama & French (2015): 5-Factor Model
-- Novy-Marx (2013): Gross Profitability Premium
-- Jegadeesh & Titman (1993): Momentum
+### 클래식 (검증된 팩터)
+| 연구 | 연도 | 핵심 내용 |
+|------|------|----------|
+| Fama & French | 2015 | 5-Factor Model (시장, 규모, 가치, 수익성, 투자) |
+| Novy-Marx | 2013 | Gross Profitability Premium (수익성 팩터) |
+| Jegadeesh & Titman | 1993 | Momentum (12-1개월 모멘텀 효과) |
+| Asness et al. (AQR) | 2019 | Quality Minus Junk (퀄리티 팩터) |
+
+### 최신 연구 (2023-2024)
+| 연구 | 연도 | 핵심 내용 |
+|------|------|----------|
+| López de Prado | 2023 | Causal Factor Investing - 인과관계 기반 팩터 분석 |
+| Robeco Research | 2024 | Low Volatility Anomaly - 저변동성 프리미엄 지속 확인 |
+| Blitz, van Vliet, Hanauer | 2024 | Fama-French 5-Factor 비판 - 모멘텀/저변동성 누락 |
+| MDPI Finance | 2024 | Multi-factor + ML 결합 모델 연구 |
+| Schwartz & Hanauer | 2024 | Formula Investing - 팩터 기반 공식 투자 검증 |
+
+### 주요 발견
+- **수익성 (Profitability)**: 가장 강력하고 일관된 팩터 (Novy-Marx, AQR)
+- **모멘텀 (Momentum)**: 연평균 8%+ 초과수익, Fama-French에서 누락된 중요 팩터
+- **저변동성 (Low Volatility)**: CAPM 반박, 낮은 위험 = 높은 수익 (Robeco)
+- **퀄리티 (Quality)**: 수익성 + 안정성 + 낮은 부채 조합 (AQR QMJ)
+
+### 2024-2025 팩터 트렌드
+- **Value + Low Volatility**: 2025년 아웃퍼폼 (Economic Times)
+- **Momentum**: 2024년 강세 후 2025년 조정
+- **Quality**: 불확실성 시기 방어적 성과
