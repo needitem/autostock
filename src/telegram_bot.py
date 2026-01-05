@@ -373,8 +373,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "ai_recommend":
         await query.edit_message_text("🤖 AI 매수/매도 추천 분석 중...\n(나스닥 100 전체 분석, 2~3분 소요)")
         try:
+            print("DEBUG: ai_recommend 시작")
             from openrouter_analyzer import run_full_analysis
+            print("DEBUG: import 완료")
             result = run_full_analysis()
+            print("DEBUG: run_full_analysis 완료")
             if "error" in result:
                 text = f"❌ {result['error']}"
             else:
