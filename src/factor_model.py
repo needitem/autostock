@@ -1,25 +1,29 @@
 """
 학술 연구 기반 멀티팩터 모델
-- Fama-French 5-Factor Model + Momentum + Low Volatility
 
-참고 연구:
-[클래식]
-- Fama & French (2015): 5-Factor Model
-- Novy-Marx (2013): Gross Profitability Premium
-- Jegadeesh & Titman (1993): Momentum
-- Asness, Frazzini, Pedersen (2019): Quality Minus Junk (AQR)
+참고 연구 및 데이터:
+[팩터 프리미엄 - Swedroe & Berkin (2016) "Your Complete Guide to Factor-Based Investing"]
+- 기간: 1927-2015 (88년)
+- Momentum: 연 9.6%, Sharpe 0.61 (가장 높은 프리미엄)
+- Value: 연 4.8%, Sharpe 0.34
+- Profitability: 연 3.1%, Sharpe 0.33
+- Size: 연 3.3%, Sharpe 0.24
 
-[최신 2023-2024]
+[Quality - Alpha Architect (2024)]
+- 기간: 1964-2023 (60년)
+- Quality (QMJ): 연 4.7%, Sharpe 0.47
+
+[Low Volatility - Robeco (2024)]
+- 저변동성 주식이 고변동성 주식보다 높은 위험조정수익률
+- CAPM 반박하는 anomaly
+
+[최신 연구]
 - López de Prado (2023): Causal Factor Investing
-- Robeco (2024): Low Volatility Anomaly 지속 확인
 - Blitz, van Vliet, Hanauer (2024): FF5 비판 - 모멘텀/저변동성 누락
-- Schwartz & Hanauer (2024): Formula Investing 검증
 
-주요 발견:
-- 수익성(Profitability): 가장 강력하고 일관된 팩터
-- 모멘텀(Momentum): 연평균 8%+ 초과수익
-- 저변동성(Low Volatility): CAPM 반박, 낮은 위험 = 높은 수익
-- 퀄리티(Quality): 수익성 + 안정성 + 낮은 부채
+가중치 근거:
+- Sharpe Ratio 기반 배분 (위험조정수익률 높은 팩터에 더 많은 가중치)
+- Momentum (0.61) > Quality (0.47) > Market (0.40) > Value (0.34) > Profitability (0.33)
 """
 import pandas as pd
 import numpy as np
@@ -30,29 +34,29 @@ from typing import Optional
 @dataclass
 class FactorWeights:
     """
-    팩터별 가중치 (학술 연구 기반)
+    팩터별 가중치 (Sharpe Ratio 기반)
     
-    연구 결과 요약:
-    - Profitability: 가장 강력한 예측력 (Novy-Marx 2013, AQR QMJ)
-    - Momentum: 연평균 8.3% 초과수익 (1927-2013), FF5에서 누락된 중요 팩터
-    - Value: 장기적으로 유효, 2024-2025 아웃퍼폼
-    - Quality: Profitability + 안정성 + 낮은 부채 (AQR 2019)
-    - Low Volatility: CAPM 반박, 낮은 위험 = 높은 수익 (Robeco 2024)
+    근거: Swedroe & Berkin (2016), Alpha Architect (2024)
     
-    2024-2025 트렌드:
-    - Value + Low Volatility 강세
-    - Momentum 조정 후 회복 예상
+    Sharpe Ratio 순위 (높을수록 위험조정수익률 좋음):
+    1. Momentum: 0.61 → 30%
+    2. Quality: 0.47 → 25%
+    3. Value: 0.34 → 20%
+    4. Profitability: 0.33 → 15%
+    5. Low Volatility: Robeco 연구 → 10%
+    
+    총합: 100%
     """
-    # 핵심 팩터 (연구에서 가장 강력하게 검증됨)
-    profitability: float = 0.25      # ROE, Gross Profit Margin
-    momentum: float = 0.20           # 12-1개월 수익률
-    value: float = 0.15              # P/E, P/B, P/S
-    quality: float = 0.15            # 부채비율, 이익안정성
+    # Sharpe Ratio 기반 가중치
+    momentum: float = 0.30           # Sharpe 0.61 (최고)
+    quality: float = 0.25            # Sharpe 0.47
+    value: float = 0.20              # Sharpe 0.34
+    profitability: float = 0.15      # Sharpe 0.33
+    low_volatility: float = 0.10     # Robeco anomaly
     
-    # 보조 팩터
-    low_volatility: float = 0.10     # 변동성 낮은 종목
-    size: float = 0.05               # 시가총액 (소형주 프리미엄)
-    investment: float = 0.10         # 보수적 투자 (자산성장률 낮음)
+    # 사용하지 않음 (근거 부족)
+    size: float = 0.0                # Sharpe 0.24 (낮음)
+    investment: float = 0.0          # FF5에서만 유의미
     
     def normalize(self):
         """가중치 합이 1이 되도록 정규화"""
@@ -352,8 +356,6 @@ def calculate_composite_score(data: dict, weights: FactorWeights = None) -> dict
     if weights is None:
         weights = DEFAULT_WEIGHTS
     
-    weights = weights.normalize()
-    
     # 각 팩터 점수 계산
     profitability = calculate_profitability_score(data)
     momentum = calculate_momentum_score(data)
@@ -361,15 +363,15 @@ def calculate_composite_score(data: dict, weights: FactorWeights = None) -> dict
     quality = calculate_quality_score(data)
     volatility = calculate_volatility_score(data)
     
-    # 종합 점수 (가중 평균)
+    # 종합 점수 (Sharpe Ratio 기반 가중 평균)
+    # Momentum 30% + Quality 25% + Value 20% + Profitability 15% + Low Vol 10%
     composite = (
-        profitability * weights.profitability +
         momentum * weights.momentum +
-        value * weights.value +
         quality * weights.quality +
+        value * weights.value +
+        profitability * weights.profitability +
         volatility * weights.low_volatility
-    ) / (weights.profitability + weights.momentum + weights.value + 
-         weights.quality + weights.low_volatility)
+    )
     
     # 등급 결정
     if composite >= 70:
@@ -394,18 +396,18 @@ def calculate_composite_score(data: dict, weights: FactorWeights = None) -> dict
         "grade": grade,
         "recommendation": recommendation,
         "factors": {
-            "profitability": round(profitability, 1),
             "momentum": round(momentum, 1),
-            "value": round(value, 1),
             "quality": round(quality, 1),
-            "volatility": round(volatility, 1),
+            "value": round(value, 1),
+            "profitability": round(profitability, 1),
+            "low_volatility": round(volatility, 1),
         },
         "weights_used": {
-            "profitability": round(weights.profitability * 100, 1),
-            "momentum": round(weights.momentum * 100, 1),
-            "value": round(weights.value * 100, 1),
-            "quality": round(weights.quality * 100, 1),
-            "volatility": round(weights.low_volatility * 100, 1),
+            "momentum": f"{weights.momentum*100:.0f}% (Sharpe 0.61)",
+            "quality": f"{weights.quality*100:.0f}% (Sharpe 0.47)",
+            "value": f"{weights.value*100:.0f}% (Sharpe 0.34)",
+            "profitability": f"{weights.profitability*100:.0f}% (Sharpe 0.33)",
+            "low_volatility": f"{weights.low_volatility*100:.0f}% (Robeco)",
         }
     }
 
