@@ -26,7 +26,7 @@ def _call_ai(prompt: str, system_prompt: str = "You are a helpful AI assistant."
                 "X-Title": "AutoStock Analyzer"
             },
             json={
-                "model": "meta-llama/llama-4-scout:free",
+                "model": "meta-llama/llama-3.3-70b-instruct:free",
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}

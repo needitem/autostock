@@ -15,17 +15,17 @@ load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# 사용 가능한 모델들 (OpenRouter 모델명)
+# 사용 가능한 모델들 (OpenRouter 무료 모델)
 MODELS = {
-    "llama4-maverick": "meta-llama/llama-4-maverick:free",  # Llama 4 최신 (무료)
-    "llama4-scout": "meta-llama/llama-4-scout:free",  # Llama 4 Scout (무료)
     "llama3.3-70b": "meta-llama/llama-3.3-70b-instruct:free",  # Llama 3.3 70B (무료)
-    "qwen3-32b": "qwen/qwen3-32b:free",  # Qwen 3 32B (무료)
+    "llama3.1-405b": "meta-llama/llama-3.1-405b-instruct:free",  # Llama 3.1 405B (무료)
     "gemini-flash": "google/gemini-2.0-flash-exp:free",  # Gemini 2.0 Flash (무료)
-    "deepseek-v3": "deepseek/deepseek-chat-v3-0324:free",  # DeepSeek V3 (무료)
+    "deepseek-r1": "deepseek/deepseek-r1-0528:free",  # DeepSeek R1 (무료)
+    "kimi-k2": "moonshotai/kimi-k2:free",  # Kimi K2 (무료)
+    "mistral-small": "mistralai/mistral-small-3.1-24b-instruct:free",  # Mistral Small (무료)
 }
 
-DEFAULT_MODEL = "llama4-maverick"  # 기본값: Llama 4 Maverick
+DEFAULT_MODEL = "llama3.3-70b"  # 기본값: Llama 3.3 70B
 
 
 def _call_ai(prompt: str, max_tokens: int = 4000, model: str = None) -> str | None:
@@ -395,16 +395,17 @@ if __name__ == "__main__":
   --quick       빠른 스캔 (AI 없이, 데이터 기반)
   --help, -h    도움말
 
-모델 (기본값: llama4-maverick):
-  llama4-maverick  Llama 4 Maverick (최신)
-  llama4-scout     Llama 4 Scout (빠름)
+모델 (기본값: llama3.3-70b):
   llama3.3-70b     Llama 3.3 70B
+  llama3.1-405b    Llama 3.1 405B (가장 큼)
   gemini-flash     Gemini 2.0 Flash
-  deepseek-v3      DeepSeek V3
+  deepseek-r1      DeepSeek R1 (추론)
+  kimi-k2          Kimi K2
+  mistral-small    Mistral Small 3.1
 
 예시:
-  python openrouter_analyzer.py                    # Llama 4로 분석
-  python openrouter_analyzer.py llama4-maverick    # Llama 4로 분석
+  python openrouter_analyzer.py                    # Llama 3.3으로 분석
+  python openrouter_analyzer.py llama3.1-405b      # Llama 405B로 분석
   python openrouter_analyzer.py gemini-flash       # Gemini로 분석
   python openrouter_analyzer.py --quick            # 빠른 스캔 (AI 없이)
 """)

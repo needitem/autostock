@@ -5,7 +5,7 @@
 ## 🚀 주요 기능
 
 ### 🤖 AI 매수/매도 추천
-- **OpenRouter API** (Llama 4 Maverick) 기반 종합 분석
+- **OpenRouter API** (Llama 3.3 70B) 기반 종합 분석
 - 나스닥 100 전체 종목 자동 분석
 - 매일 저녁 11시 텔레그램 자동 알림
 
@@ -124,13 +124,13 @@ python main.py --schedule
 ```bash
 cd src
 
-# 기본 (Llama 4 Maverick)
+# 기본 (Llama 3.3 70B)
 python openrouter_analyzer.py
 
 # 모델 선택
-python openrouter_analyzer.py llama4-maverick
+python openrouter_analyzer.py llama3.3-70b
 python openrouter_analyzer.py gemini-flash
-python openrouter_analyzer.py deepseek-v3
+python openrouter_analyzer.py deepseek-r1
 
 # 빠른 스캔 (AI 없이)
 python openrouter_analyzer.py --quick
