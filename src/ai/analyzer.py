@@ -64,6 +64,7 @@ class AIAnalyzer:
             return None
         
         try:
+            print(f"[AI] {self.provider} 호출 중... (모델: {self.model})")
             response = requests.post(
                 self.base_url,
                 headers={
@@ -82,12 +83,30 @@ class AIAnalyzer:
                 timeout=120
             )
             
+            print(f"[AI] 응답 코드: {response.status_code}")
+            
             if response.status_code == 200:
-                return response.json()["choices"][0]["message"]["content"]
+                data = response.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content")
+                if content:
+                    print(f"[AI] 성공 - 응답 길이: {len(content)}")
+                    return content
+                else:
+                    print(f"[AI] 응답 내용 없음: {data}")
             else:
-                print(f"AI 호출 실패 ({self.provider}): HTTP {response.status_code} - {response.text[:200]}")
+                print(f"[AI] 호출 실패 ({self.provider}): HTTP {response.status_code} - {response.text[:500]}")
+                
+                # Z.ai 실패 시 OpenRouter로 폴백
+                if self.provider == "zai" and self.openrouter_key:
+                    print("[AI] OpenRouter로 폴백...")
+                    self.provider = "openrouter"
+                    self.api_key = self.openrouter_key
+                    self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+                    self.model = self.OPENROUTER_MODELS["deepseek"]
+                    return self._call(prompt, max_tokens)
+                    
         except Exception as e:
-            print(f"AI 호출 실패: {e}")
+            print(f"[AI] 호출 예외: {e}")
         
         return None
     
