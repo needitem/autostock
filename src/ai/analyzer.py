@@ -87,12 +87,23 @@ class AIAnalyzer:
             
             if response.status_code == 200:
                 data = response.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content")
-                if content:
-                    print(f"[AI] 성공 - 응답 길이: {len(content)}")
-                    return content
+                print(f"[AI] 응답 데이터 키: {data.keys()}")
+                
+                choice = data.get("choices", [{}])[0]
+                message = choice.get("message", {})
+                
+                # Z.ai는 reasoning_content와 content가 분리될 수 있음
+                content = message.get("content", "")
+                reasoning = message.get("reasoning_content", "")
+                
+                # content가 없으면 reasoning_content 사용
+                result = content or reasoning
+                
+                if result:
+                    print(f"[AI] 성공 - 응답 길이: {len(result)}")
+                    return result
                 else:
-                    print(f"[AI] 응답 내용 없음: {data}")
+                    print(f"[AI] 응답 내용 없음 - message: {message}")
             else:
                 print(f"[AI] 호출 실패 ({self.provider}): HTTP {response.status_code} - {response.text[:500]}")
                 
