@@ -1,255 +1,192 @@
-"""
-AI 분석 모듈 (OpenRouter / Z.ai)
-"""
+﻿# -*- coding: utf-8 -*-
 import os
 import requests
 from dotenv import load_dotenv
-
 load_dotenv()
 
-
 class AIAnalyzer:
-    """AI 분석기"""
-    
-    # OpenRouter 모델
-    OPENROUTER_MODELS = {
-        "deepseek": "deepseek/deepseek-r1-0528:free",
-        "kimi": "moonshotai/kimi-k2:free",
-        "qwen": "qwen/qwen3-4b:free",
-        "gemma": "google/gemma-3n-e4b-it:free",
-    }
-    
-    # Z.ai 모델
-    ZAI_MODELS = {
-        "glm-4.7": "glm-4.7",
-        "glm-4.6": "glm-4.6",
-        "glm-4.5": "glm-4.5",
-    }
-    
-    def __init__(self, provider: str = "auto", model: str = None):
-        """
-        provider: "openrouter", "zai", "auto" (auto는 Z.ai 우선)
-        """
+    def __init__(self, provider="auto", model=None):
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
         self.zai_key = os.getenv("ZAI_API_KEY")
-        
-        # 자동 선택: Z.ai 키가 있으면 Z.ai 우선
         if provider == "auto":
-            if self.zai_key:
-                provider = "zai"
-            elif self.openrouter_key:
-                provider = "openrouter"
-            else:
-                provider = None
-        
+            provider = "zai" if self.zai_key else ("openrouter" if self.openrouter_key else None)
         self.provider = provider
-        
         if provider == "zai":
             self.api_key = self.zai_key
-            self.base_url = "https://api.z.ai/api/coding/paas/v4/chat/completions"  # Coding Plan용
+            self.base_url = "https://api.z.ai/api/coding/paas/v4/chat/completions"
             self.model = model or "glm-4.7"
         elif provider == "openrouter":
             self.api_key = self.openrouter_key
             self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-            self.model = self.OPENROUTER_MODELS.get(model, self.OPENROUTER_MODELS["deepseek"])
+            self.model = "deepseek/deepseek-r1-0528:free"
         else:
-            self.api_key = None
-            self.base_url = None
-            self.model = None
-    
-    def _call(self, prompt: str, max_tokens: int = 2000) -> str | None:
-        """API 호출"""
+            self.api_key = self.base_url = self.model = None
+
+    def _call(self, prompt, max_tokens=8000):
         if not self.api_key:
-            print("AI 호출 실패: API 키 없음")
             return None
-        
         try:
-            print(f"[AI] {self.provider} 호출 중... (모델: {self.model})")
-            response = requests.post(
-                self.base_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": "당신은 미국 주식 전문 애널리스트입니다. 반드시 한국어로만 답변하세요. 생각 과정 없이 결과만 간결하게 출력하세요."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": max_tokens
-                },
-                timeout=120
-            )
-            
-            print(f"[AI] 응답 코드: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                print(f"[AI] 응답 데이터 키: {data.keys()}")
-                
-                choice = data.get("choices", [{}])[0]
-                message = choice.get("message", {})
-                
-                # Z.ai는 reasoning_content와 content가 분리될 수 있음
-                # content만 사용 (reasoning은 생각 과정이므로 무시)
-                content = message.get("content", "")
-                
-                if content:
-                    print(f"[AI] 성공 - 응답 길이: {len(content)}")
-                    return content
-                else:
-                    # content가 없으면 reasoning_content 사용 (폴백)
-                    reasoning = message.get("reasoning_content", "")
-                    if reasoning:
-                        print(f"[AI] reasoning_content 사용 - 길이: {len(reasoning)}")
-                        return reasoning
-                    print(f"[AI] 응답 내용 없음 - message: {message}")
-            else:
-                print(f"[AI] 호출 실패 ({self.provider}): HTTP {response.status_code} - {response.text[:500]}")
-                
-                # Z.ai 실패 시 OpenRouter로 폴백
-                if self.provider == "zai" and self.openrouter_key:
-                    print("[AI] OpenRouter로 폴백...")
-                    self.provider = "openrouter"
-                    self.api_key = self.openrouter_key
-                    self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-                    self.model = self.OPENROUTER_MODELS["deepseek"]
-                    return self._call(prompt, max_tokens)
-                    
+            print(f"[AI] {self.provider} calling...")
+            r = requests.post(self.base_url, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json={"model": self.model, "messages": [{"role": "system", "content": "US stock analyst. Korean only. Be thorough."}, {"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": max_tokens}, timeout=300)
+            if r.status_code == 200:
+                c = r.json().get("choices", [{}])[0].get("message", {})
+                result = c.get("content") or c.get("reasoning_content")
+                if result:
+                    print(f"[AI] OK len={len(result)}")
+                return result
+            print(f"[AI] Failed: {r.status_code}")
         except Exception as e:
-            print(f"[AI] 호출 예외: {e}")
-        
+            print(f"[AI] Error: {e}")
         return None
-    
-    def analyze_stock(self, symbol: str, data: dict) -> dict:
-        """개별 종목 AI 분석"""
-        # 재무 데이터
-        finviz = data.get("finviz", {})
-        
-        prompt = f"""{symbol} 종목 분석 데이터:
 
-📊 가격 정보:
-- 현재가: ${data.get('price', 0)}
-- 52주 고가: ${data.get('high_52w', 0)} / 저가: ${data.get('low_52w', 0)}
-- 52주 내 위치: {data.get('position_52w', 50):.0f}%
+    def _fmt_stock(self, s, news_list=None):
+        sc = s.get("score", {})
+        ts = sc.get("total_score", 0) if isinstance(sc, dict) else 0
+        gr = sc.get("grade", "C") if isinstance(sc, dict) else "C"
+        line = f"{s['symbol']} $${s.get('price',0):.1f} | 점수{ts:.0f}({gr}) | RSI{s.get('rsi',50):.0f} | BB{s.get('bb_position',50):.0f}% | 50MA{s.get('ma50_gap',0):+.1f}%"
+        if news_list:
+            for n in news_list[:3]:
+                headline = n.get('headline', '')[:80]
+                summary = n.get('summary', '')[:100]
+                sentiment = "긍정" if any(w in headline.lower() for w in ['up','rise','gain','beat','strong']) else "부정" if any(w in headline.lower() for w in ['down','fall','drop','miss','weak','cut']) else "중립"
+                line += f"\n  [{n.get('datetime','')}] {headline} ({sentiment})"
+                if summary:
+                    line += f"\n    > {summary}"
+        return line
 
-📈 기술적 지표:
-- RSI(14): {data.get('rsi', 50):.0f}
-- MACD: {data.get('macd', 0):.3f} (시그널: {data.get('macd_signal', 0):.3f})
-- 볼린저밴드 위치: {data.get('bb_position', 50):.0f}%
-- 50일선 대비: {data.get('ma50_gap', 0):+.1f}%
-- 200일선 대비: {data.get('ma200_gap', 0):+.1f}%
-- 5일 변화율: {data.get('change_5d', 0):+.1f}%
+    def _cat_section(self, cat, info, stocks, news):
+        cs = [s for s in stocks if s["symbol"] in info["stocks"]]
+        if not cs:
+            return ""
+        cs.sort(key=lambda x: -(x.get("score",{}).get("total_score",0) if isinstance(x.get("score"),dict) else 0))
+        sec = f"\n### {info['emoji']} {cat} ({len(cs)}개 종목)\n"
+        for s in cs:
+            sec += f"{self._fmt_stock(s, news.get(s['symbol']))}\n"
+        return sec
 
-💰 재무 지표:
-- P/E: {finviz.get('P/E', data.get('pe', 'N/A'))}
-- Forward P/E: {finviz.get('Forward P/E', 'N/A')}
-- PEG: {finviz.get('PEG', 'N/A')}
-- ROE: {finviz.get('ROE', data.get('roe', 'N/A'))}
-- ROA: {finviz.get('ROA', 'N/A')}
-- Profit Margin: {finviz.get('Profit Margin', 'N/A')}
-- Debt/Eq: {finviz.get('Debt/Eq', 'N/A')}
+    def analyze_stock(self, symbol, data):
+        news = data.get("news", [])
+        news_text = ""
+        if news:
+            news_text = "\n\n 최근 뉴스:\n"
+            for n in news[:5]:
+                headline = n.get('headline', '')
+                summary = n.get('summary', '')[:150]
+                sentiment = "긍정" if any(w in headline.lower() for w in ['up','rise','gain','beat','strong']) else "부정" if any(w in headline.lower() for w in ['down','fall','drop','miss','weak','cut']) else "중립"
+                news_text += f"- [{n.get('datetime','')}] {headline} ({sentiment})\n"
+                if summary:
+                    news_text += f"  요약: {summary}\n"
+        prompt = f"""{symbol} 종목 분석
 
-📋 종합점수: {data.get('total_score', 50)}/100
+ 기술적 지표:
+- 현재가: $${data.get('price',0)}
+- RSI: {data.get('rsi',50):.0f}
+- 볼린저밴드 위치: {data.get('bb_position',50):.0f}%
+- 50일선 대비: {data.get('ma50_gap',0):+.1f}%
+- 200일선 대비: {data.get('ma200_gap',0):+.1f}%
+- 종합점수: {data.get('total_score',50)}/100
+{news_text}
 
-위 데이터를 바탕으로 분석해주세요:
-1. 현재 기술적 상태 (2줄)
-2. 재무 건전성 평가 (1줄)
+한국어로 분석해주세요:
+1. 기술적 상태 (2줄)
+2. 뉴스 영향 분석 - 각 뉴스가 주가에 미치는 영향 (3줄)
 3. 매수/매도/관망 의견과 근거 (2줄)
 4. 주요 리스크 (1줄)"""
+        r = self._call(prompt, 2000)
+        return {"analysis": r} if r else {"error": "AI failed"}
 
-        result = self._call(prompt, 800)
-        return {"analysis": result} if result else {"error": "AI 분석 실패"}
-    
-    def analyze_recommendations(self, stocks: list[dict]) -> dict:
-        """추천 종목 AI 분석"""
+    def analyze_full_market(self, stocks, news_data, market_data, categories):
         if not stocks:
-            return {"error": "분석할 종목 없음"}
+            return {"error": "No stocks"}
+        n = len(stocks)
+        avg_rsi = sum(s.get("rsi",50) for s in stocks) / n
+        get_sc = lambda s: s.get("score",{}).get("total_score",0) if isinstance(s.get("score"),dict) else 0
+        avg_score = sum(get_sc(s) for s in stocks) / n
+        gd = {"A":0,"B":0,"C":0,"D":0,"F":0}
+        for s in stocks:
+            g = s.get("score",{}).get("grade","C") if isinstance(s.get("score"),dict) else "C"
+            if g in gd: gd[g] += 1
+        oversold = sum(1 for s in stocks if s.get("rsi",50) < 30)
+        overbought = sum(1 for s in stocks if s.get("rsi",50) > 70)
+        fg = market_data.get("fear_greed",{})
+        mc = market_data.get("market_condition",{})
+        mn = market_data.get("market_news",[])
         
-        # score 딕셔너리에서 값 추출
-        def get_score(s):
-            score = s.get("score", {})
-            return score.get("total_score", 0) if isinstance(score, dict) else 0
+        mkt = f"""
+ 시장 현황:
+- 공포탐욕지수: {fg.get('score','?')} ({fg.get('rating','?')})
+- 시장 추세: {mc.get('message','?')}
+- QQQ: $${mc.get('price',0):.2f}
+"""
+        if mn:
+            mkt += "\n 시장 주요 뉴스:\n"
+            for x in mn[:5]:
+                mkt += f"- {x.get('headline','')}\n"
+                if x.get('summary'):
+                    mkt += f"  > {x.get('summary','')[:100]}\n"
         
-        def get_risk(s):
-            score = s.get("score", {})
-            risk = score.get("risk", {}) if isinstance(score, dict) else {}
-            return risk.get("score", 0) if isinstance(risk, dict) else 0
+        cat_sec = "".join([self._cat_section(c, i, stocks, news_data) for c, i in categories.items()])
         
-        def get_grade(s):
-            score = s.get("score", {})
-            return score.get("grade", "C") if isinstance(score, dict) else "C"
-        
-        # 상위 15개만
-        stocks = sorted(stocks, key=lambda x: -get_score(x))[:15]
-        
-        stock_text = "\n".join([
-            f"• {s['symbol']}: ${s.get('price',0):.0f}, 점수 {get_score(s):.0f}({get_grade(s)}), "
-            f"RSI {s.get('rsi',50):.0f}, BB {s.get('bb_position',50):.0f}%, "
-            f"50MA {s.get('ma50_gap',0):+.1f}%, 위험 {get_risk(s)}"
-            for s in stocks
-        ])
-        
-        prompt = f"""나스닥 100 종목 스캔 결과입니다.
+        prompt = f"""전체 시장 종합 분석 ({n}개 종목)
 
-{stock_text}
+ 시장 통계:
+- 평균 RSI: {avg_rsi:.0f}
+- 평균 점수: {avg_score:.0f}/100
+- 등급 분포: A등급 {gd['A']}개, B등급 {gd['B']}개, C등급 {gd['C']}개, D등급 {gd['D']}개, F등급 {gd['F']}개
+- 과매도(RSI<30): {oversold}개
+- 과매수(RSI>70): {overbought}개
+{mkt}
 
-지표 설명:
-- 점수: 종합 투자 매력도 (100점 만점, A~F 등급)
-- RSI: 과매수(>70)/과매도(<30) 지표
-- BB: 볼린저밴드 위치 (0%=하단, 100%=상단)
-- 50MA: 50일 이동평균선 대비 괴리율
-- 위험: 위험도 점수 (높을수록 위험)
+## 카테고리별 전체 종목 데이터 (기술적 지표 + 뉴스)
+{cat_sec}
 
-분석해주세요:
+위 모든 데이터(기술적 지표 + 뉴스)를 종합 분석해서 한국어로 작성해주세요:
 
-## 📈 매수 추천 TOP 5
-각 종목별로:
-- 심볼 ($가격)
-- 추천 이유 (기술적/재무적 근거 1줄)
+##  카테고리별 TOP 5 (각 카테고리에서 5개씩)
+각 카테고리별로 가장 매력적인 종목 5개 선정
+- 종목명 () - 선정 이유 (기술적 지표 + 뉴스 근거 포함, 2줄)
 
-## 📉 주의 종목
-위험도가 높거나 과매수 구간인 종목 (있다면)
+##  전체 시장 TOP 5
+모든 카테고리 통틀어 가장 추천하는 5개 종목
+- 종목명 () [카테고리] - 추천 이유 (기술적 + 뉴스 분석, 3줄)
 
-## 💡 투자 전략
-현재 시장 상황을 고려한 초보자용 조언 (2-3줄)"""
+##  주의 종목
+위험도가 높거나 악재 뉴스가 있는 종목들 (뉴스 근거 포함)
 
-        result = self._call(prompt, 1500)
-        return {"analysis": result, "total": len(stocks)} if result else {"error": "AI 분석 실패"}
-    
-    def analyze_category(self, category: str, stocks: list[dict]) -> dict:
-        """카테고리별 AI 분석"""
+##  시장 분석
+- 현재 시장 전체 상태 평가 (2줄)
+- 강세 섹터 vs 약세 섹터 (1줄)
+
+##  투자 전략
+현재 시장 상황, 뉴스, 기술적 지표를 종합한 투자 조언 (4줄)"""
+
+        r = self._call(prompt, 8000)
+        return {"analysis": r, "total": n, "stats": {"avg_rsi": avg_rsi, "avg_score": avg_score, "grade_dist": gd, "oversold": oversold, "overbought": overbought}} if r else {"error": "AI failed"}
+
+    def analyze_category(self, category, stocks, news_data=None):
         if not stocks:
-            return {"error": "분석할 종목 없음"}
-        
-        def get_score(s):
-            score = s.get("score", {})
-            return score.get("total_score", 0) if isinstance(score, dict) else 0
-        
-        stocks = sorted(stocks, key=lambda x: -get_score(x))[:10]
-        
-        stock_text = "\n".join([
-            f"{s['symbol']}:${s.get('price',0):.0f},점수{get_score(s):.0f},RSI{s.get('rsi',50):.0f}"
-            for s in stocks
-        ])
-        
-        prompt = f"""{category} 섹터 분석 데이터입니다.
+            return {"error": "No stocks"}
+        news_data = news_data or {}
+        stocks = sorted(stocks, key=lambda x: -(x.get("score",{}).get("total_score",0) if isinstance(x.get("score"),dict) else 0))
+        st = "\n".join([self._fmt_stock(s, news_data.get(s['symbol'])) for s in stocks])
+        prompt = f"""{category} 섹터 분석 ({len(stocks)}개 종목)
 
-{stock_text}
+{st}
 
-분석해주세요:
+한국어로 분석:
+## TOP 5 추천
+각 종목: 심볼 (), 이유 (기술적 + 뉴스 근거 2줄)
 
-## 📈 매수 추천 TOP 3
-각 종목: 심볼, 가격, 이유(1줄)
+## 주의 종목
+위험하거나 악재 뉴스가 있는 종목
 
-## 💡 {category} 투자 전략
-이 섹터 투자 시 고려사항 (2줄)"""
+## {category} 투자 전략 (3줄)"""
+        r = self._call(prompt, 3000)
+        return {"analysis": r, "category": category, "total": len(stocks)} if r else {"error": "AI failed"}
 
-        result = self._call(prompt, 800)
-        return {"analysis": result, "category": category} if result else {"error": "AI 분석 실패"}
+    def analyze_recommendations(self, stocks, news_data=None, market_data=None):
+        from config import STOCK_CATEGORIES
+        return self.analyze_full_market(stocks, news_data or {}, market_data or {}, STOCK_CATEGORIES)
 
-
-# 싱글톤
 ai = AIAnalyzer()

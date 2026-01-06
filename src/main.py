@@ -41,24 +41,55 @@ def run_scan_once():
 
 
 def run_ai_once():
-    """AI 추천 한 번 실행"""
+    """AI 추천 한 번 실행 (전체 카테고리 + 모든 뉴스 통합)"""
     print(f"[{datetime.now()}] AI 추천 분석 시작...")
     
     from core.signals import scan_stocks
+    from core.stock_data import get_market_condition, get_fear_greed_index
+    from core.news import get_bulk_news, get_market_news
     from ai.analyzer import ai
-    from config import NASDAQ_100
+    from config import ALL_CATEGORY_STOCKS, STOCK_CATEGORIES
     
-    result = scan_stocks(NASDAQ_100)  # 전체 스캔
-    ai_result = ai.analyze_recommendations(result["results"])
+    # 1. 전체 카테고리 종목 스캔
+    print(f"[1/4] 전체 카테고리 종목 스캔 중... ({len(ALL_CATEGORY_STOCKS)}개)")
+    result = scan_stocks(ALL_CATEGORY_STOCKS)
+    stocks = result["results"]
+    print(f"  → {len(stocks)}개 종목 스캔 완료")
+    
+    # 2. 시장 데이터 수집
+    print("[2/4] 시장 데이터 수집 중...")
+    market_data = {
+        "fear_greed": get_fear_greed_index(),
+        "market_condition": get_market_condition(),
+        "market_news": get_market_news(),
+    }
+    print(f"  → 공포탐욕: {market_data['fear_greed'].get('score', 'N/A')}, 시장: {market_data['market_condition'].get('message', 'N/A')}")
+    
+    # 3. 모든 종목 뉴스 수집
+    print(f"[3/4] 전체 종목 뉴스 수집 중... ({len(stocks)}개)")
+    all_symbols = [s['symbol'] for s in stocks]
+    news_data = get_bulk_news(all_symbols, days=7)
+    print(f"  → {len(news_data)}개 종목 뉴스 수집 완료")
+    
+    # 4. AI 분석
+    print("[4/4] AI 분석 중...")
+    ai_result = ai.analyze_full_market(stocks, news_data, market_data, STOCK_CATEGORIES)
     
     if "error" in ai_result:
         print(f"❌ AI 분석 실패: {ai_result['error']}")
         return
     
     print("\n🤖 AI 추천")
-    print("=" * 50)
+    print("=" * 60)
     print(ai_result["analysis"])
-    print("=" * 50)
+    print("=" * 60)
+    
+    # 통계 출력
+    stats = ai_result.get("stats", {})
+    if stats:
+        print(f"\n📊 분석 통계: {ai_result['total']}개 종목")
+        print(f"   평균RSI: {stats.get('avg_rsi', 0):.0f}, 평균점수: {stats.get('avg_score', 0):.0f}")
+        print(f"   과매도: {stats.get('oversold', 0)}개, 과매수: {stats.get('overbought', 0)}개")
 
 
 def run_bot(with_scheduler: bool = True):

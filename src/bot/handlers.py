@@ -94,18 +94,46 @@ async def handle_scan(query):
 
 
 async def handle_ai_recommend(query):
-    """AI 추천"""
-    await query.edit_message_text("🤖 AI 분석 중... (2~3분 소요)")
+    """AI 추천 (전체 카테고리 + 모든 뉴스 통합)"""
+    await query.edit_message_text("🤖 AI 분석 중... (5~10분 소요)\n\n1️⃣ 전체 카테고리 종목 스캔...")
     try:
-        from config import NASDAQ_100
-        result = scan_stocks(NASDAQ_100)  # 전체 스캔
+        from config import ALL_CATEGORY_STOCKS, STOCK_CATEGORIES
+        from core.news import get_bulk_news, get_market_news
         
-        ai_result = ai.analyze_recommendations(result["results"])
+        # 1. 전체 카테고리 종목 스캔
+        result = scan_stocks(ALL_CATEGORY_STOCKS)
+        stocks = result["results"]
+        
+        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 수집...")
+        
+        # 2. 시장 데이터
+        market_data = {
+            "fear_greed": get_fear_greed_index(),
+            "market_condition": get_market_condition(),
+            "market_news": get_market_news(),
+        }
+        
+        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 전체 종목 뉴스 수집...")
+        
+        # 3. 모든 종목 뉴스 수집
+        all_symbols = [s['symbol'] for s in stocks]
+        news_data = get_bulk_news(all_symbols, days=7)
+        
+        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 뉴스 수집 완료 ({len(news_data)}개)\n4️⃣ AI 종합 분석 중...")
+        
+        # 4. AI 분석
+        ai_result = ai.analyze_full_market(stocks, news_data, market_data, STOCK_CATEGORIES)
+        
         if "error" in ai_result:
             text = f"❌ {ai_result['error']}"
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
         else:
-            text = f"🤖 <b>AI 추천</b>\n━━━━━━━━━━━━━━━━━━\n\n{ai_result['analysis']}"
+            stats = ai_result.get("stats", {})
+            header = f"🤖 <b>AI 종합 추천</b> ({ai_result['total']}개 분석)\n"
+            header += f"📊 평균RSI: {stats.get('avg_rsi', 0):.0f} | 평균점수: {stats.get('avg_score', 0):.0f}\n"
+            header += f"📉 과매도: {stats.get('oversold', 0)}개 | 과매수: {stats.get('overbought', 0)}개\n"
+            header += "━━━━━━━━━━━━━━━━━━\n\n"
+            text = header + ai_result['analysis']
             await send_long_message(query, text)
     except Exception as e:
         await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=kb.back())
@@ -274,19 +302,27 @@ async def handle_analyze_stock(query, data):
 
 async def handle_ai_stock(query, data):
     symbol = data[3:]
-    await query.edit_message_text(f"🤖 {symbol} AI 분석 중...")
+    await query.edit_message_text(f"🤖 {symbol} AI 분석 중... (뉴스 포함)")
     try:
+        from core.news import get_company_news
+        
         analysis = get_full_analysis(symbol)
         if analysis is None:
             await query.edit_message_text(f"'{symbol}' 데이터 없음", reply_markup=kb.back())
             return
+        
+        # 뉴스 수집
+        news = get_company_news(symbol, days=7)
+        analysis["news"] = news
+        
         score = calculate_score(analysis)
         analysis["total_score"] = score["total_score"]
         result = ai.analyze_stock(symbol, analysis)
         if "error" in result:
             text = f"❌ {result['error']}"
         else:
-            text = f"🤖 <b>{symbol} AI 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
+            news_count = len(news)
+            text = f"🤖 <b>{symbol} AI 분석</b> (뉴스 {news_count}건 반영)\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
     except Exception as e:
         await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=kb.back())
