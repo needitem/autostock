@@ -82,3 +82,93 @@ NASDAQ_100 = get_nasdaq_100()
 
 # 시장 지표 (QQQ)
 MARKET_INDICATOR = "QQQ"
+
+
+# ===== 카테고리별 종목 =====
+STOCK_CATEGORIES = {
+    "AI/반도체": {
+        "emoji": "🤖",
+        "etf": "SMH",  # VanEck Semiconductor ETF
+        "stocks": [
+            "NVDA", "AMD", "AVGO", "QCOM", "INTC", "MU", "MRVL", "LRCX", "KLAC", "AMAT",
+            "TSM", "ASML", "ARM", "SMCI", "PLTR", "AI", "PATH", "SNOW", "DDOG", "CRWD",
+            "PANW", "ZS", "NET", "S", "FTNT", "ORCL", "IBM", "NOW", "CRM", "ADBE"
+        ],
+        "description": "AI 인프라, GPU, 반도체 장비, AI 소프트웨어"
+    },
+    "인터넷/플랫폼": {
+        "emoji": "🌐",
+        "etf": "SKYY",  # First Trust Cloud Computing ETF
+        "stocks": [
+            "GOOGL", "GOOG", "META", "AMZN", "NFLX", "SPOT", "UBER", "LYFT", "ABNB", "BKNG",
+            "DASH", "PINS", "SNAP", "RBLX", "U", "TTWO", "EA", "MTCH", "BMBL", "ZG",
+            "ETSY", "EBAY", "SHOP", "MELI", "SE", "PDD", "JD", "BABA", "CPNG", "GRAB"
+        ],
+        "description": "검색, SNS, 이커머스, 스트리밍, 게임"
+    },
+    "헬스케어/바이오": {
+        "emoji": "🏥",
+        "etf": "XBI",  # SPDR S&P Biotech ETF
+        "stocks": [
+            "LLY", "UNH", "JNJ", "MRK", "ABBV", "PFE", "TMO", "ABT", "DHR", "BMY",
+            "AMGN", "GILD", "VRTX", "REGN", "MRNA", "BIIB", "ILMN", "DXCM", "ISRG", "IDXX",
+            "ZTS", "EW", "SYK", "BDX", "MDT", "BSX", "HCA", "CI", "ELV", "CVS"
+        ],
+        "description": "제약, 바이오텍, 의료기기, 헬스케어 서비스"
+    },
+    "핀테크/금융": {
+        "emoji": "💳",
+        "etf": "FINX",  # Global X FinTech ETF
+        "stocks": [
+            "V", "MA", "PYPL", "SQ", "COIN", "HOOD", "SOFI", "AFRM", "UPST", "NU",
+            "INTU", "FIS", "FISV", "GPN", "AXP", "COF", "DFS", "SYF", "ALLY", "LC",
+            "BLK", "SCHW", "MS", "GS", "JPM", "BAC", "WFC", "C", "USB", "PNC"
+        ],
+        "description": "결제, 핀테크, 암호화폐, 전통 금융"
+    },
+    "전기차/클린에너지": {
+        "emoji": "⚡",
+        "etf": "QCLN",  # First Trust NASDAQ Clean Edge Green Energy
+        "stocks": [
+            "TSLA", "RIVN", "LCID", "NIO", "XPEV", "LI", "GM", "F", "TM", "HMC",
+            "ENPH", "SEDG", "FSLR", "RUN", "NOVA", "PLUG", "BE", "CHPT", "BLNK", "EVGO",
+            "ALB", "LAC", "LTHM", "MP", "QS", "PTRA", "LEA", "APT", "BWA", "APTV"
+        ],
+        "description": "전기차, 배터리, 태양광, 충전 인프라"
+    },
+    "소비재/리테일": {
+        "emoji": "🛒",
+        "etf": "XRT",  # SPDR S&P Retail ETF
+        "stocks": [
+            "AMZN", "WMT", "COST", "TGT", "HD", "LOW", "TJX", "ROST", "DG", "DLTR",
+            "NKE", "LULU", "DECK", "CROX", "SKX", "UAA", "VFC", "PVH", "RL", "TPR",
+            "SBUX", "MCD", "CMG", "DPZ", "YUM", "QSR", "WING", "SHAK", "CAVA", "BROS"
+        ],
+        "description": "이커머스, 리테일, 의류, 외식"
+    },
+    "통신/미디어": {
+        "emoji": "📡",
+        "etf": "XLC",  # Communication Services Select Sector SPDR
+        "stocks": [
+            "GOOGL", "META", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "CHTR", "PARA",
+            "WBD", "FOX", "FOXA", "NWSA", "NWS", "LYV", "SIRI", "ROKU", "FUBO", "ATUS",
+            "LUMN", "FYBR", "USM", "LBRDK", "LBRDA", "CABO", "SBGI", "GTN", "NXST", "SSP"
+        ],
+        "description": "통신사, 미디어, 엔터테인먼트"
+    },
+    "산업재/방산": {
+        "emoji": "🏭",
+        "etf": "XLI",  # Industrial Select Sector SPDR
+        "stocks": [
+            "CAT", "DE", "HON", "UNP", "UPS", "FDX", "BA", "LMT", "RTX", "NOC",
+            "GD", "GE", "MMM", "EMR", "ETN", "ITW", "PH", "ROK", "CMI", "PCAR",
+            "WM", "RSG", "FAST", "ODFL", "JBHT", "XPO", "CHRW", "EXPD", "LSTR", "SAIA"
+        ],
+        "description": "항공우주, 방산, 물류, 산업장비"
+    },
+}
+
+# 전체 카테고리 종목 (중복 제거)
+ALL_CATEGORY_STOCKS = list(set(
+    stock for cat in STOCK_CATEGORIES.values() for stock in cat["stocks"]
+))

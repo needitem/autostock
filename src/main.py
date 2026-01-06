@@ -1,114 +1,91 @@
-import schedule
-import time
+"""
+주식 분석 봇 메인 엔트리포인트
+
+사용법:
+  python main.py              # 봇 실행 (스케줄러 포함)
+  python main.py --no-schedule # 봇 실행 (스케줄러 없음)
+  python main.py --scan       # 스캔 한 번 실행
+  python main.py --ai         # AI 추천 한 번 실행
+"""
+import sys
+import os
+
+# src 폴더를 path에 추가
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from datetime import datetime
-import pytz
-
-from analyzer import scan_all_stocks
-from telegram_bot import send_sync, format_daily_report, format_ai_recommendation
-from telegram_bot import get_saved_chat_id
 
 
-def run_daily_scan():
-    """일일 스캔 실행"""
+def run_scan_once():
+    """스캔 한 번 실행"""
     print(f"[{datetime.now()}] 스캔 시작...")
     
-    result = scan_all_stocks()
-    report = format_daily_report(result)
+    from core.signals import scan_stocks
+    from config import NASDAQ_100
     
-    print(report)
+    result = scan_stocks(NASDAQ_100[:50])
     
-    if get_saved_chat_id():
-        send_sync(report)
-        print("텔레그램 전송 완료")
-    else:
-        print("Chat ID가 없습니다. 먼저 python telegram_bot.py 실행 후 /start 보내세요.")
-
-
-def run_ai_recommendation():
-    """AI 매수/매도 추천 실행 (매일 저녁 11시)"""
-    print(f"[{datetime.now()}] AI 추천 분석 시작...")
+    print(f"\n📊 스캔 결과: {result['total']}개 분석")
+    print("=" * 50)
     
-    try:
-        from openrouter_analyzer import run_full_analysis
-        result = run_full_analysis()
+    for r in result["results"][:10]:
+        score = r.get("score", {})
+        strategies = r.get("strategies", [])
+        strats = ", ".join([s["emoji"] for s in strategies]) if strategies else "-"
         
-        if "error" in result:
-            print(f"AI 분석 실패: {result['error']}")
-            return
-        
-        report = format_ai_recommendation(result)
-        
-        # 텔레그램 메시지 길이 제한 (4096자)
-        if len(report) > 4000:
-            report = report[:3900] + "\n\n... (메시지가 너무 길어 일부 생략)"
-        
-        print(report)
-        
-        if get_saved_chat_id():
-            send_sync(report)
-            print("텔레그램 전송 완료")
-        else:
-            print("Chat ID가 없습니다.")
-    except Exception as e:
-        print(f"AI 추천 실패: {e}")
-
-
-def run_once():
-    """한 번만 실행 (테스트용)"""
-    run_daily_scan()
+        print(f"{r['symbol']:6} ${r['price']:8.2f} | "
+              f"점수: {score.get('total_score', 0):5.1f} | "
+              f"RSI: {r.get('rsi', 50):5.1f} | {strats}")
+    
+    print("=" * 50)
 
 
 def run_ai_once():
-    """AI 추천 한 번만 실행 (테스트용)"""
-    run_ai_recommendation()
+    """AI 추천 한 번 실행"""
+    print(f"[{datetime.now()}] AI 추천 분석 시작...")
+    
+    from core.signals import scan_stocks
+    from ai.analyzer import ai
+    from config import NASDAQ_100
+    
+    result = scan_stocks(NASDAQ_100)  # 전체 스캔
+    ai_result = ai.analyze_recommendations(result["results"])
+    
+    if "error" in ai_result:
+        print(f"❌ AI 분석 실패: {ai_result['error']}")
+        return
+    
+    print("\n🤖 AI 추천")
+    print("=" * 50)
+    print(ai_result["analysis"])
+    print("=" * 50)
 
 
-def run_scheduler():
-    """스케줄러 실행
-    - 매일 22:00 (오후 10시): 일일 스캔
-    - 매일 23:00 (오후 11시): AI 매수/매도 추천
-    (한국 시간 기준)
-    """
-    # 한국 시간 기준 오후 10시 - 일일 스캔
-    schedule.every().day.at("22:00").do(run_daily_scan)
-    
-    # 한국 시간 기준 오후 11시 - AI 매수/매도 추천
-    schedule.every().day.at("23:00").do(run_ai_recommendation)
-    
-    print("=" * 50)
-    print("📅 스케줄러 시작됨 (한국 시간 기준)")
-    print("=" * 50)
-    print("• 22:00 - 일일 스캔")
-    print("• 23:00 - AI 매수/매도 추천")
-    print("=" * 50)
-    print("Ctrl+C로 종료")
-    print()
-    
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+def run_bot(with_scheduler: bool = True):
+    """텔레그램 봇 실행"""
+    from bot import run_bot as bot_run
+    bot_run(with_scheduler=with_scheduler)
+
+
+def main():
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        
+        if arg == "--scan":
+            run_scan_once()
+        elif arg == "--ai":
+            run_ai_once()
+        elif arg == "--no-schedule":
+            run_bot(with_scheduler=False)
+        elif arg == "--help":
+            print(__doc__)
+        else:
+            print(f"알 수 없는 옵션: {arg}")
+            print(__doc__)
+    else:
+        # 기본: 봇 실행 (스케줄러 포함)
+        run_bot(with_scheduler=True)
 
 
 if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--schedule":
-            run_scheduler()
-        elif sys.argv[1] == "--ai":
-            run_ai_once()
-        elif sys.argv[1] == "--help":
-            print("""
-사용법: python main.py [옵션]
-
-옵션:
-  (없음)       일일 스캔 한 번 실행
-  --ai         AI 매수/매도 추천 한 번 실행
-  --schedule   스케줄러 실행 (22:00 스캔, 23:00 AI추천)
-  --help       도움말
-""")
-        else:
-            run_once()
-    else:
-        # 기본: 한 번만 실행
-        run_once()
+    main()
