@@ -46,7 +46,7 @@ class AIAnalyzer:
         
         if provider == "zai":
             self.api_key = self.zai_key
-            self.base_url = "https://api.z.ai/api/paas/v4/chat/completions"
+            self.base_url = "https://api.z.ai/api/coding/paas/v4/chat/completions"  # Coding Plan용
             self.model = model or "glm-4.7"
         elif provider == "openrouter":
             self.api_key = self.openrouter_key
