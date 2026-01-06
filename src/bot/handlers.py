@@ -22,6 +22,37 @@ from trading.portfolio import portfolio
 from ai.analyzer import ai
 
 
+# ===== 헬퍼 함수 =====
+async def send_long_message(query, text: str, max_len: int = 4000):
+    """긴 메시지 분할 전송"""
+    if len(text) <= max_len:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
+        return
+    
+    # 첫 메시지는 edit, 나머지는 reply
+    parts = []
+    while text:
+        if len(text) <= max_len:
+            parts.append(text)
+            break
+        # 줄바꿈 기준으로 자르기
+        cut_pos = text.rfind('\n', 0, max_len)
+        if cut_pos == -1:
+            cut_pos = max_len
+        parts.append(text[:cut_pos])
+        text = text[cut_pos:].lstrip('\n')
+    
+    # 첫 파트는 edit
+    await query.edit_message_text(parts[0], parse_mode="HTML")
+    
+    # 나머지는 새 메시지로 전송
+    for i, part in enumerate(parts[1:], 2):
+        if i == len(parts):  # 마지막 메시지에만 키보드 추가
+            await query.message.reply_text(part, parse_mode="HTML", reply_markup=kb.back())
+        else:
+            await query.message.reply_text(part, parse_mode="HTML")
+
+
 # ===== 메인 메뉴 핸들러 =====
 async def handle_main(query):
     await query.edit_message_text("메인 메뉴 👇", reply_markup=kb.main_menu())
@@ -72,12 +103,10 @@ async def handle_ai_recommend(query):
         ai_result = ai.analyze_recommendations(result["results"])
         if "error" in ai_result:
             text = f"❌ {ai_result['error']}"
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
         else:
             text = f"🤖 <b>AI 추천</b>\n━━━━━━━━━━━━━━━━━━\n\n{ai_result['analysis']}"
-        
-        if len(text) > 4000:
-            text = text[:3900] + "\n\n... (생략)"
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
+            await send_long_message(query, text)
     except Exception as e:
         await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=kb.back())
 
@@ -317,11 +346,34 @@ async def handle_category_all(query):
             else:
                 text += "  • 추천 없음\n"
             text += "\n"
-        if len(text) > 4000:
-            text = text[:3900] + "\n\n... (생략)"
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.category_menu())
+        await send_long_message_category(query, text)
     except Exception as e:
         await query.edit_message_text(f"분석 실패: {e}", reply_markup=kb.category_menu())
+
+
+async def send_long_message_category(query, text: str, max_len: int = 4000):
+    """카테고리용 긴 메시지 분할 전송"""
+    if len(text) <= max_len:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.category_menu())
+        return
+    
+    parts = []
+    while text:
+        if len(text) <= max_len:
+            parts.append(text)
+            break
+        cut_pos = text.rfind('\n', 0, max_len)
+        if cut_pos == -1:
+            cut_pos = max_len
+        parts.append(text[:cut_pos])
+        text = text[cut_pos:].lstrip('\n')
+    
+    await query.edit_message_text(parts[0], parse_mode="HTML")
+    for i, part in enumerate(parts[1:], 2):
+        if i == len(parts):
+            await query.message.reply_text(part, parse_mode="HTML", reply_markup=kb.category_menu())
+        else:
+            await query.message.reply_text(part, parse_mode="HTML")
 
 
 # ===== 핸들러 매핑 =====

@@ -39,6 +39,27 @@ def save_chat_id(chat_id: str):
         json.dump({"chat_id": chat_id}, f)
 
 
+async def send_long_message_bot(bot, chat_id: str, text: str, max_len: int = 4000):
+    """긴 메시지 분할 전송 (Bot 객체용)"""
+    if len(text) <= max_len:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+        return
+    
+    parts = []
+    while text:
+        if len(text) <= max_len:
+            parts.append(text)
+            break
+        cut_pos = text.rfind('\n', 0, max_len)
+        if cut_pos == -1:
+            cut_pos = max_len
+        parts.append(text[:cut_pos])
+        text = text[cut_pos:].lstrip('\n')
+    
+    for part in parts:
+        await bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML")
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """시작 명령어"""
     save_chat_id(str(update.effective_chat.id))
@@ -189,10 +210,9 @@ async def scheduled_ai_recommendation(context):
             return
         
         text = f"🤖 <b>AI 추천</b>\n━━━━━━━━━━━━━━━━━━\n\n{ai_result['analysis']}"
-        if len(text) > 4000:
-            text = text[:3900] + "\n\n... (생략)"
         
-        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+        # 긴 메시지 분할 전송
+        await send_long_message_bot(context.bot, chat_id, text)
         print("[스케줄] AI 추천 전송 완료")
     except Exception as e:
         print(f"[스케줄] AI 추천 실패: {e}")
