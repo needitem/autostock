@@ -1,5 +1,5 @@
 """
-AI 분석 모듈 (OpenRouter)
+AI 분석 모듈 (OpenRouter / Z.ai)
 """
 import os
 import requests
@@ -11,16 +11,51 @@ load_dotenv()
 class AIAnalyzer:
     """AI 분석기"""
     
-    MODELS = {
+    # OpenRouter 모델
+    OPENROUTER_MODELS = {
         "deepseek": "deepseek/deepseek-r1-0528:free",
         "kimi": "moonshotai/kimi-k2:free",
         "qwen": "qwen/qwen3-4b:free",
         "gemma": "google/gemma-3n-e4b-it:free",
     }
     
-    def __init__(self, model: str = "deepseek"):
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.model = self.MODELS.get(model, self.MODELS["deepseek"])
+    # Z.ai 모델
+    ZAI_MODELS = {
+        "glm-4.7": "glm-4.7",
+        "glm-4.6": "glm-4.6",
+        "glm-4.5": "glm-4.5",
+    }
+    
+    def __init__(self, provider: str = "auto", model: str = None):
+        """
+        provider: "openrouter", "zai", "auto" (auto는 Z.ai 우선)
+        """
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        self.zai_key = os.getenv("ZAI_API_KEY")
+        
+        # 자동 선택: Z.ai 키가 있으면 Z.ai 우선
+        if provider == "auto":
+            if self.zai_key:
+                provider = "zai"
+            elif self.openrouter_key:
+                provider = "openrouter"
+            else:
+                provider = None
+        
+        self.provider = provider
+        
+        if provider == "zai":
+            self.api_key = self.zai_key
+            self.base_url = "https://api.z.ai/api/paas/v4/chat/completions"
+            self.model = model or "glm-4.7"
+        elif provider == "openrouter":
+            self.api_key = self.openrouter_key
+            self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+            self.model = self.OPENROUTER_MODELS.get(model, self.OPENROUTER_MODELS["deepseek"])
+        else:
+            self.api_key = None
+            self.base_url = None
+            self.model = None
     
     def _call(self, prompt: str, max_tokens: int = 2000) -> str | None:
         """API 호출"""
@@ -30,7 +65,7 @@ class AIAnalyzer:
         
         try:
             response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+                self.base_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
@@ -50,7 +85,7 @@ class AIAnalyzer:
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
             else:
-                print(f"AI 호출 실패: HTTP {response.status_code} - {response.text[:200]}")
+                print(f"AI 호출 실패 ({self.provider}): HTTP {response.status_code} - {response.text[:200]}")
         except Exception as e:
             print(f"AI 호출 실패: {e}")
         
