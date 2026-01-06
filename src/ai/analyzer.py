@@ -74,7 +74,7 @@ class AIAnalyzer:
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "당신은 미국 주식 전문 애널리스트입니다. 한국어로 답변하세요."},
+                        {"role": "system", "content": "당신은 미국 주식 전문 애널리스트입니다. 반드시 한국어로만 답변하세요. 생각 과정 없이 결과만 간결하게 출력하세요."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.3,
@@ -93,16 +93,18 @@ class AIAnalyzer:
                 message = choice.get("message", {})
                 
                 # Z.ai는 reasoning_content와 content가 분리될 수 있음
+                # content만 사용 (reasoning은 생각 과정이므로 무시)
                 content = message.get("content", "")
-                reasoning = message.get("reasoning_content", "")
                 
-                # content가 없으면 reasoning_content 사용
-                result = content or reasoning
-                
-                if result:
-                    print(f"[AI] 성공 - 응답 길이: {len(result)}")
-                    return result
+                if content:
+                    print(f"[AI] 성공 - 응답 길이: {len(content)}")
+                    return content
                 else:
+                    # content가 없으면 reasoning_content 사용 (폴백)
+                    reasoning = message.get("reasoning_content", "")
+                    if reasoning:
+                        print(f"[AI] reasoning_content 사용 - 길이: {len(reasoning)}")
+                        return reasoning
                     print(f"[AI] 응답 내용 없음 - message: {message}")
             else:
                 print(f"[AI] 호출 실패 ({self.provider}): HTTP {response.status_code} - {response.text[:500]}")
