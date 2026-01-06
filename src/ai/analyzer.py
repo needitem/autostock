@@ -123,21 +123,42 @@ class AIAnalyzer:
     
     def analyze_stock(self, symbol: str, data: dict) -> dict:
         """개별 종목 AI 분석"""
-        prompt = f"""{symbol} 분석 데이터:
-- 가격: ${data.get('price', 0)}
-- RSI: {data.get('rsi', 50)}
-- 52주 위치: {data.get('position_52w', 50)}%
+        # 재무 데이터
+        finviz = data.get("finviz", {})
+        
+        prompt = f"""{symbol} 종목 분석 데이터:
+
+📊 가격 정보:
+- 현재가: ${data.get('price', 0)}
+- 52주 고가: ${data.get('high_52w', 0)} / 저가: ${data.get('low_52w', 0)}
+- 52주 내 위치: {data.get('position_52w', 50):.0f}%
+
+📈 기술적 지표:
+- RSI(14): {data.get('rsi', 50):.0f}
+- MACD: {data.get('macd', 0):.3f} (시그널: {data.get('macd_signal', 0):.3f})
+- 볼린저밴드 위치: {data.get('bb_position', 50):.0f}%
 - 50일선 대비: {data.get('ma50_gap', 0):+.1f}%
-- P/E: {data.get('pe', 'N/A')}
-- ROE: {data.get('roe', 'N/A')}
-- 종합점수: {data.get('total_score', 50)}/100
+- 200일선 대비: {data.get('ma200_gap', 0):+.1f}%
+- 5일 변화율: {data.get('change_5d', 0):+.1f}%
 
-간단히 분석해주세요:
-1. 현재 상태 (2줄)
-2. 매수/매도 의견 (1줄)
-3. 주의점 (1줄)"""
+💰 재무 지표:
+- P/E: {finviz.get('P/E', data.get('pe', 'N/A'))}
+- Forward P/E: {finviz.get('Forward P/E', 'N/A')}
+- PEG: {finviz.get('PEG', 'N/A')}
+- ROE: {finviz.get('ROE', data.get('roe', 'N/A'))}
+- ROA: {finviz.get('ROA', 'N/A')}
+- Profit Margin: {finviz.get('Profit Margin', 'N/A')}
+- Debt/Eq: {finviz.get('Debt/Eq', 'N/A')}
 
-        result = self._call(prompt, 500)
+📋 종합점수: {data.get('total_score', 50)}/100
+
+위 데이터를 바탕으로 분석해주세요:
+1. 현재 기술적 상태 (2줄)
+2. 재무 건전성 평가 (1줄)
+3. 매수/매도/관망 의견과 근거 (2줄)
+4. 주요 리스크 (1줄)"""
+
+        result = self._call(prompt, 800)
         return {"analysis": result} if result else {"error": "AI 분석 실패"}
     
     def analyze_recommendations(self, stocks: list[dict]) -> dict:
@@ -153,31 +174,45 @@ class AIAnalyzer:
         def get_risk(s):
             score = s.get("score", {})
             risk = score.get("risk", {}) if isinstance(score, dict) else {}
-            return risk.get("score", 50) if isinstance(risk, dict) else 50
+            return risk.get("score", 0) if isinstance(risk, dict) else 0
+        
+        def get_grade(s):
+            score = s.get("score", {})
+            return score.get("grade", "C") if isinstance(score, dict) else "C"
         
         # 상위 15개만
         stocks = sorted(stocks, key=lambda x: -get_score(x))[:15]
         
         stock_text = "\n".join([
-            f"{s['symbol']}:${s.get('price',0):.0f},점수{get_score(s):.0f},RSI{s.get('rsi',50):.0f},위험{get_risk(s)}"
+            f"• {s['symbol']}: ${s.get('price',0):.0f}, 점수 {get_score(s):.0f}({get_grade(s)}), "
+            f"RSI {s.get('rsi',50):.0f}, BB {s.get('bb_position',50):.0f}%, "
+            f"50MA {s.get('ma50_gap',0):+.1f}%, 위험 {get_risk(s)}"
             for s in stocks
         ])
         
-        prompt = f"""나스닥 종목 분석 데이터입니다.
-형식: 심볼:$가격,점수,RSI,위험도
+        prompt = f"""나스닥 100 종목 스캔 결과입니다.
 
 {stock_text}
+
+지표 설명:
+- 점수: 종합 투자 매력도 (100점 만점, A~F 등급)
+- RSI: 과매수(>70)/과매도(<30) 지표
+- BB: 볼린저밴드 위치 (0%=하단, 100%=상단)
+- 50MA: 50일 이동평균선 대비 괴리율
+- 위험: 위험도 점수 (높을수록 위험)
 
 분석해주세요:
 
 ## 📈 매수 추천 TOP 5
-각 종목: 심볼, 가격, 추천이유(1줄)
+각 종목별로:
+- 심볼 ($가격)
+- 추천 이유 (기술적/재무적 근거 1줄)
 
 ## 📉 주의 종목
-위험도 높은 종목 (있다면)
+위험도가 높거나 과매수 구간인 종목 (있다면)
 
 ## 💡 투자 전략
-초보자용 조언 (2-3줄)"""
+현재 시장 상황을 고려한 초보자용 조언 (2-3줄)"""
 
         result = self._call(prompt, 1500)
         return {"analysis": result, "total": len(stocks)} if result else {"error": "AI 분석 실패"}
