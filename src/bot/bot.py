@@ -263,6 +263,32 @@ async def scheduled_watchlist_scan(context):
         print(f"[스케줄] 자동매매 스캔 실패: {e}")
 
 
+async def scheduled_watchlist_monitor(context):
+    """관심종목 30분 모니터링"""
+    chat_id = get_saved_chat_id()
+    if not chat_id:
+        return
+    
+    try:
+        from trading.watchlist import watchlist
+        from trading.monitor import monitor
+        
+        # 모니터링 활성화 체크
+        data = watchlist._load()
+        if not data["settings"].get("monitor_enabled", True):
+            return
+        
+        # 관심종목 체크
+        results = monitor.check_all_watchlist()
+        
+        if results:
+            text = monitor.format_alert_message(results)
+            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+            print(f"[모니터] 알림 전송: {len(results)}개 종목")
+    except Exception as e:
+        print(f"[모니터] 체크 실패: {e}")
+
+
 def run_bot(with_scheduler: bool = True):
     """봇 실행"""
     from datetime import time as dt_time
@@ -282,6 +308,14 @@ def run_bot(with_scheduler: bool = True):
     
     if with_scheduler:
         kst = pytz.timezone("Asia/Seoul")
+        
+        # 30분마다 관심종목 모니터링 (미국장 시간: 한국 23:30 ~ 06:00)
+        app.job_queue.run_repeating(
+            scheduled_watchlist_monitor,
+            interval=1800,  # 30분 = 1800초
+            first=10,  # 시작 후 10초 뒤 첫 실행
+            name="watchlist_monitor"
+        )
         
         app.job_queue.run_daily(
             scheduled_watchlist_scan,
@@ -304,6 +338,7 @@ def run_bot(with_scheduler: bool = True):
         print("=" * 50)
         print("📅 스케줄러 포함 봇 실행 중...")
         print("=" * 50)
+        print("• 30분마다 - 관심종목 모니터링 🔔")
         print("• 21:00 - 자동매매 (저점매수/손절매도)")
         print("• 22:00 - 일일 스캔")
         print("• 23:00 - AI 매수/매도 추천")

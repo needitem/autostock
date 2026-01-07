@@ -33,7 +33,8 @@ def main_menu():
         [btn("📈 추천종목", "recommend"), btn("🔍 전체스캔", "scan")],
         [btn("🤖 AI 분석", "ai_recommend")],
         [btn("📊 종목분석", "analyze_menu"), btn("📂 카테고리", "category_menu")],
-        [btn("�  시장심리", "fear_greed")],
+        [btn("😱 시장심리", "fear_greed")],
+        [btn("👀 관심종목", "watchlist_main")],
         [btn("💰 트레이딩", "trading_menu")],
     ])
 
@@ -84,6 +85,40 @@ def watchlist_menu():
         [btn("📋 현황보기", "watchlist_status")],
         [btn("➕ 종목추가", "watchlist_add")],
         [btn("← 자동매매", "auto_settings")],
+    ])
+
+
+def watchlist_main_menu():
+    """관심종목 메인 메뉴"""
+    return InlineKeyboardMarkup([
+        [btn("📋 현황보기", "watchlist_status")],
+        [btn("🔔 지금 체크", "watchlist_check_now")],
+        [btn("➕ 종목추가", "watchlist_add"), btn("➖ 종목삭제", "watchlist_remove_menu")],
+        [btn("⚙️ 알림설정", "watchlist_alert_settings")],
+        [btn("← 메인", "main")],
+    ])
+
+
+def watchlist_remove_menu(stocks: list):
+    """관심종목 삭제 메뉴"""
+    kb = []
+    for symbol in stocks:
+        kb.append([btn(f"❌ {symbol}", f"watchdel_{symbol}")])
+    kb.append([btn("← 관심종목", "watchlist_main")])
+    return InlineKeyboardMarkup(kb)
+
+
+def watchlist_alert_settings(settings: dict):
+    """알림 설정 메뉴"""
+    monitor_on = settings.get("monitor_enabled", True)
+    interval = settings.get("monitor_interval", 30)
+    
+    monitor_status = "✅ ON" if monitor_on else "❌ OFF"
+    
+    return InlineKeyboardMarkup([
+        [btn(f"🔔 모니터링: {monitor_status}", "toggle_monitor")],
+        [btn(f"⏱️ 체크 간격: {interval}분", "change_interval")],
+        [btn("← 관심종목", "watchlist_main")],
     ])
 
 

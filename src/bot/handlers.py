@@ -19,6 +19,7 @@ from core.signals import check_entry_signal, scan_stocks
 from trading.kis_api import kis
 from trading.watchlist import watchlist
 from trading.portfolio import portfolio
+from trading.monitor import monitor
 from ai.analyzer import ai
 
 
@@ -258,29 +259,176 @@ async def handle_api_status(query):
 
 
 # ===== 관심종목 핸들러 =====
-async def handle_watchlist(query):
+async def handle_watchlist_main(query):
+    """관심종목 메인"""
+    data = watchlist.get_all()
+    stock_count = len(data.get("stocks", {}))
+    settings = data.get("settings", {})
+    monitor_on = settings.get("monitor_enabled", True)
+    interval = settings.get("monitor_interval", 30)
+    
     text = "👀 <b>관심종목</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "관심 종목을 등록하면\n저점 조건 충족 시 자동매수됩니다.\n\n"
-    text += "<b>저점 조건 (3개 이상 충족 시):</b>\n"
-    text += "• RSI 35 이하\n• 볼린저 하단 근처\n• 5일선 대비 -3%\n• 3일 이상 연속 하락"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_menu())
+    text += f"📌 등록 종목: {stock_count}개\n"
+    text += f"🔔 모니터링: {'ON' if monitor_on else 'OFF'}\n"
+    text += f"⏱️ 체크 간격: {interval}분\n\n"
+    text += "<b>알림 조건:</b>\n"
+    text += "• 가격 ±3% 변동\n"
+    text += "• RSI 과매도(30↓) / 과매수(70↑)\n"
+    text += "• 지지선/저항선 돌파\n"
+    text += "• 골든크로스/데드크로스\n"
+    text += "• 거래량 급증 (2배↑)\n"
+    text += "• 캔들 패턴 감지"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+
+
+async def handle_watchlist(query):
+    """관심종목 (자동매매 메뉴에서)"""
+    await handle_watchlist_main(query)
 
 
 async def handle_watchlist_status(query):
+    """관심종목 현황"""
     await query.edit_message_text("📋 관심종목 현황 조회 중...")
     try:
         stocks = watchlist.get_status()
-        auto_buy = watchlist.is_auto_buy()
-        text = fmt.format_watchlist(stocks, auto_buy)
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_menu())
+        if not stocks:
+            text = "👀 <b>관심종목 현황</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+            text += "등록된 종목이 없습니다.\n\n➕ 종목추가 버튼으로 추가하세요!"
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+            return
+        
+        text = "👀 <b>관심종목 현황</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+        
+        for s in stocks:
+            # 상태 이모지
+            if s["is_signal"]:
+                status_emoji = "🟢"  # 매수 신호
+            elif s.get("rsi", 50) > 70:
+                status_emoji = "🔴"  # 과매수
+            else:
+                status_emoji = "⚪"  # 중립
+            
+            text += f"{status_emoji} <b>{s['symbol']}</b>\n"
+            text += f"   현재: ${s['price']:.2f} ({s['change_pct']:+.1f}%)\n"
+            text += f"   RSI: {s['rsi']:.0f} | BB: {s['bb_position']:.0f}%\n"
+            
+            if s["is_signal"]:
+                text += f"   🚨 <b>저점 신호! ({s['strength']})</b>\n"
+            text += "\n"
+        
+        text += f"━━━━━━━━━━━━━━━━━━\n"
+        text += f"🟢 매수신호 | ⚪ 중립 | 🔴 과매수"
+        
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
     except Exception as e:
-        await query.edit_message_text(f"조회 실패: {e}", reply_markup=kb.watchlist_menu())
+        await query.edit_message_text(f"조회 실패: {e}", reply_markup=kb.watchlist_main_menu())
+
+
+async def handle_watchlist_check_now(query):
+    """지금 바로 체크"""
+    await query.edit_message_text("🔍 관심종목 체크 중...")
+    try:
+        results = monitor.check_all_watchlist()
+        
+        if not results:
+            # 알림 없으면 현황 표시
+            stocks = watchlist.get_status()
+            if not stocks:
+                text = "👀 등록된 관심종목이 없습니다."
+            else:
+                text = "✅ <b>체크 완료</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+                text += "특별한 알림 조건 없음\n\n"
+                for s in stocks:
+                    summary = monitor.get_summary(s['symbol'])
+                    text += summary + "\n"
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+            return
+        
+        # 알림 있으면 표시
+        text = monitor.format_alert_message(results)
+        await send_long_message(query, text)
+    except Exception as e:
+        await query.edit_message_text(f"체크 실패: {e}", reply_markup=kb.watchlist_main_menu())
 
 
 async def handle_watchlist_add_menu(query):
+    """종목 추가 메뉴"""
     text = "➕ <b>관심종목 추가</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "추가할 종목을 선택하거나\n심볼을 직접 입력하세요."
+    text += "추가할 종목을 선택하거나\n심볼을 직접 입력하세요.\n\n"
+    text += "예: <code>AAPL</code>, <code>TSLA</code>"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_add())
+
+
+async def handle_watchlist_remove_menu(query):
+    """종목 삭제 메뉴"""
+    data = watchlist.get_all()
+    stocks = list(data.get("stocks", {}).keys())
+    
+    if not stocks:
+        text = "❌ 삭제할 종목이 없습니다."
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+        return
+    
+    text = "➖ <b>관심종목 삭제</b>\n━━━━━━━━━━━━━━━━━━\n\n삭제할 종목을 선택하세요."
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_remove_menu(stocks))
+
+
+async def handle_watchlist_remove(query, data):
+    """종목 삭제 실행"""
+    symbol = data[9:]  # watchdel_ 제거
+    result = watchlist.remove(symbol)
+    
+    if result.get("success"):
+        text = f"✅ {symbol} 삭제 완료"
+    else:
+        text = f"❌ 삭제 실패: {result.get('error')}"
+    
+    await query.answer(text)
+    await handle_watchlist_remove_menu(query)
+
+
+async def handle_watchlist_alert_settings(query):
+    """알림 설정"""
+    data = watchlist.get_all()
+    settings = data.get("settings", {})
+    
+    text = "⚙️ <b>알림 설정</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "<b>모니터링</b>\n"
+    text += "ON: 30분마다 자동 체크 후 알림\n"
+    text += "OFF: 수동 체크만 가능\n\n"
+    text += "<b>체크 간격</b>\n"
+    text += "관심종목을 체크하는 주기\n"
+    text += "(미국장 개장 시간에만 작동)"
+    
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_alert_settings(settings))
+
+
+async def handle_toggle_monitor(query):
+    """모니터링 토글"""
+    data = watchlist._load()
+    current = data["settings"].get("monitor_enabled", True)
+    data["settings"]["monitor_enabled"] = not current
+    watchlist._save()
+    
+    status = "활성화" if not current else "비활성화"
+    await query.answer(f"모니터링 {status}됨")
+    await handle_watchlist_alert_settings(query)
+
+
+async def handle_change_interval(query):
+    """체크 간격 변경 (30 → 60 → 15 → 30)"""
+    data = watchlist._load()
+    current = data["settings"].get("monitor_interval", 30)
+    
+    intervals = [15, 30, 60]
+    idx = intervals.index(current) if current in intervals else 0
+    new_interval = intervals[(idx + 1) % len(intervals)]
+    
+    data["settings"]["monitor_interval"] = new_interval
+    watchlist._save()
+    
+    await query.answer(f"체크 간격: {new_interval}분")
+    await handle_watchlist_alert_settings(query)
 
 
 # ===== Prefix 핸들러 =====
@@ -432,11 +580,18 @@ EXACT_HANDLERS = {
     "orders": handle_orders,
     "api_status": handle_api_status,
     "watchlist": handle_watchlist,
+    "watchlist_main": handle_watchlist_main,
     "watchlist_status": handle_watchlist_status,
     "watchlist_add": handle_watchlist_add_menu,
+    "watchlist_check_now": handle_watchlist_check_now,
+    "watchlist_remove_menu": handle_watchlist_remove_menu,
+    "watchlist_alert_settings": handle_watchlist_alert_settings,
+    "toggle_monitor": handle_toggle_monitor,
+    "change_interval": handle_change_interval,
 }
 
 PREFIX_HANDLERS = [
+    ("watchdel_", handle_watchlist_remove),
     ("watchadd_", handle_watchlist_add),
     ("cat_", handle_category),
     ("ai_", handle_ai_stock),
