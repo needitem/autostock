@@ -61,10 +61,10 @@ async def handle_main(query):
 
 async def handle_recommend(query):
     """추천 종목"""
-    await query.edit_message_text("🌟 추천 종목 분석 중... (2~3분 소요)")
+    await query.edit_message_text("🌟 추천 종목 분석 중... (5~10분 소요)")
     try:
-        from config import NASDAQ_100
-        result = scan_stocks(NASDAQ_100)  # 전체 스캔
+        from config import ALL_US_STOCKS
+        result = scan_stocks(ALL_US_STOCKS)  # 전체 스캔
         
         # 점수 높은 순 정렬, 상위 20개
         stocks = sorted(result["results"], key=lambda x: -x["score"]["total_score"])[:20]
@@ -76,10 +76,10 @@ async def handle_recommend(query):
 
 async def handle_scan(query):
     """전체 스캔"""
-    await query.edit_message_text("🔍 스캔 중...")
+    await query.edit_message_text("🔍 전체 스캔 중... (5~10분 소요)")
     try:
-        from config import NASDAQ_100
-        result = scan_stocks(NASDAQ_100)  # 전체 스캔
+        from config import ALL_US_STOCKS
+        result = scan_stocks(ALL_US_STOCKS)  # 전체 스캔
 
         text = f"🔍 <b>스캔 결과</b>\n━━━━━━━━━━━━━━━━━━\n\n"
         text += f"분석: {result['total']}개\n\n"
@@ -95,14 +95,14 @@ async def handle_scan(query):
 
 
 async def handle_ai_recommend(query):
-    """AI 추천 (전체 카테고리 + 모든 뉴스 통합)"""
-    await query.edit_message_text("🤖 AI 분석 중... (5~10분 소요)\n\n1️⃣ 전체 카테고리 종목 스캔...")
+    """AI 추천 (전체 종목 + 모든 뉴스 통합)"""
+    await query.edit_message_text("🤖 AI 분석 중... (10~15분 소요)\n\n1️⃣ 전체 종목 스캔...")
     try:
-        from config import ALL_CATEGORY_STOCKS, STOCK_CATEGORIES
+        from config import ALL_US_STOCKS, STOCK_CATEGORIES
         from core.news import get_bulk_news, get_market_news
         
-        # 1. 전체 카테고리 종목 스캔
-        result = scan_stocks(ALL_CATEGORY_STOCKS)
+        # 1. 전체 종목 스캔
+        result = scan_stocks(ALL_US_STOCKS)
         stocks = result["results"]
         
         await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 수집...")
@@ -114,11 +114,12 @@ async def handle_ai_recommend(query):
             "market_news": get_market_news(),
         }
         
-        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 전체 종목 뉴스 수집...")
+        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 주요 종목 뉴스 수집...")
         
-        # 3. 모든 종목 뉴스 수집
-        all_symbols = [s['symbol'] for s in stocks]
-        news_data = get_bulk_news(all_symbols, days=7)
+        # 3. 상위 100개 종목 뉴스 수집
+        top_stocks = sorted(stocks, key=lambda x: -x.get("score", {}).get("total_score", 0))[:100]
+        top_symbols = [s['symbol'] for s in top_stocks]
+        news_data = get_bulk_news(top_symbols, days=7)
         
         await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 뉴스 수집 완료 ({len(news_data)}개)\n4️⃣ AI 종합 분석 중...")
         

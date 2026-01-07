@@ -160,11 +160,12 @@ class AIAnalyzer:
         return line
 
     def _cat_section(self, cat, info, stocks, news):
-        cs = [s for s in stocks if s["symbol"] in info["stocks"]]
+        cs = [s for s in stocks if s["symbol"] in info.get("stocks", [])]
         if not cs:
             return ""
         cs.sort(key=lambda x: -(x.get("score",{}).get("total_score",0) if isinstance(x.get("score"),dict) else 0))
-        sec = f"\n### {info['emoji']} {cat} ({len(cs)}개 종목)\n"
+        cat_name = info.get("name", cat)
+        sec = f"\n### {info.get('emoji', '📊')} {cat_name} ({len(cs)}개 종목)\n"
         for s in cs:
             sec += f"{self._fmt_stock(s, news.get(s['symbol']))}\n"
         return sec

@@ -75,9 +75,9 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 스캔 중...")
     try:
         from core.signals import scan_stocks
-        from config import NASDAQ_100
+        from config import ALL_US_STOCKS
         
-        result = scan_stocks(NASDAQ_100)  # 전체 스캔
+        result = scan_stocks(ALL_US_STOCKS)  # 전체 스캔
         text = f"🔍 <b>스캔 결과</b>\n분석: {result['total']}개"
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as e:
@@ -171,17 +171,18 @@ async def scheduled_daily_scan(context):
     print("[스케줄] 일일 스캔 시작...")
     try:
         from core.signals import scan_stocks
-        from config import NASDAQ_100
+        from config import ALL_US_STOCKS
         
-        result = scan_stocks(NASDAQ_100[:50])
+        result = scan_stocks(ALL_US_STOCKS)
         
         text = f"📊 <b>일일 스캔</b>\n━━━━━━━━━━━━━━━━━━\n\n"
         text += f"분석: {result['total']}개\n\n"
         
-        for r in result["results"][:10]:
-            if r.get("strategies"):
-                strats = ", ".join([s["emoji"] for s in r["strategies"]])
-                text += f"• {r['symbol']} ${r['price']} | {strats}\n"
+        # 상위 10개 종목
+        top_stocks = sorted(result["results"], key=lambda x: -x.get("score", {}).get("total_score", 0))[:10]
+        for r in top_stocks:
+            score = r.get("score", {}).get("total_score", 0)
+            text += f"• {r['symbol']} ${r['price']:.2f} | 점수: {score:.0f}\n"
         
         await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
         print("[스케줄] 일일 스캔 전송 완료")
@@ -200,16 +201,16 @@ async def scheduled_ai_recommendation(context):
     try:
         from core.signals import scan_stocks
         from ai.analyzer import ai
-        from config import NASDAQ_100
+        from config import ALL_US_STOCKS, STOCK_CATEGORIES
         
-        result = scan_stocks(NASDAQ_100)  # 전체 스캔
+        result = scan_stocks(ALL_US_STOCKS)  # 전체 스캔
         ai_result = ai.analyze_recommendations(result["results"])
         
         if "error" in ai_result:
             print(f"[스케줄] AI 분석 실패: {ai_result['error']}")
             return
         
-        text = f"🤖 <b>AI 추천</b>\n━━━━━━━━━━━━━━━━━━\n\n{ai_result['analysis']}"
+        text = f"🤖 <b>AI 추천</b> ({ai_result.get('total', 0)}개 분석)\n━━━━━━━━━━━━━━━━━━\n\n{ai_result['analysis']}"
         
         # 긴 메시지 분할 전송
         await send_long_message_bot(context.bot, chat_id, text)
