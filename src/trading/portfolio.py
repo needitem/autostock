@@ -112,13 +112,15 @@ class Portfolio:
         return results
     
     def _get_buy_plan(self, signals: list, available: float, max_per_stock: float) -> list[dict]:
-        """매수 계획 (AI 또는 기본 로직)"""
+        """매수 계획 (AI 또는 신호기반 로직)"""
         import os
         import requests
         import re
         import json
         
-        api_key = os.getenv("OPENROUTER_API_KEY")
+        api_key = os.getenv("OPENAI_API_KEY")
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions")
         
         if api_key:
             # AI 매수 계획
@@ -145,10 +147,10 @@ JSON 형식으로만 답변:
 {{"orders": [{{"symbol": "NVDA", "amount": 200, "reason": "RSI 과매도"}}]}}"""
 
                 response = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    base_url,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                     json={
-                        "model": "deepseek/deepseek-chat:free",
+                        "model": model,
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": 500
                     },
@@ -165,22 +167,34 @@ JSON 형식으로만 답변:
                             if sig:
                                 order["price"] = sig["price"]
                         return plan.get("orders", [])
-            except:
-                pass
+            except Exception as e:
+                print(f"[AutoBuy] AI 매수계획 실패, 신호기반 로직으로 대체: {e}")
         
-        # 기본 로직
+        # 신호기반 로직 (API 키 없어도 항상 동작)
+        if not api_key:
+            print("[AutoBuy] OPENAI_API_KEY 없음: 신호기반 매수계획 사용")
+
+        prioritized = sorted(
+            signals,
+            key=lambda s: (1 if s.get("strength") == "강함" else 0, -abs(float(s.get("rsi", 50) - 30))),
+            reverse=True,
+        )
+
         max_total = available * 0.5
-        per_stock = min(max_per_stock, max_total / len(signals)) if signals else 0
+        per_stock = min(max_per_stock, max_total / len(prioritized)) if prioritized else 0
         
         orders = []
-        for s in signals[:3]:
-            amount = per_stock if s["strength"] == "강함" else per_stock * 0.7
+        for s in prioritized[:3]:
+            weight = 1.0 if s["strength"] == "강함" else 0.7
+            if s.get("rsi", 50) <= 30:
+                weight += 0.15
+            amount = per_stock * weight
             amount = max(50, min(amount, max_per_stock))
             orders.append({
                 "symbol": s["symbol"],
                 "amount": round(amount, 2),
                 "price": s["price"],
-                "reason": f"신호 {s['strength']}, RSI {s['rsi']}"
+                "reason": f"신호기반({s['strength']}), RSI {s['rsi']}"
             })
         
         return orders

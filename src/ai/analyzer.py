@@ -34,28 +34,22 @@ class AIAnalyzer:
         }
     }
 
-    def __init__(self, provider="auto", model=None):
-        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
-        self.zai_key = os.getenv("ZAI_API_KEY")
-        if provider == "auto":
-            provider = "zai" if self.zai_key else ("openrouter" if self.openrouter_key else None)
-        self.provider = provider
-        if provider == "zai":
-            self.api_key = self.zai_key
-            self.base_url = "https://api.z.ai/api/coding/paas/v4/chat/completions"
-            self.model = model or "glm-4.7"
-        elif provider == "openrouter":
-            self.api_key = self.openrouter_key
-            self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-            self.model = "deepseek/deepseek-r1-0528:free"
-        else:
-            self.api_key = self.base_url = self.model = None
+    def __init__(self, model=None):
+        self.provider = "openai"
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions")
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    @property
+    def has_api_access(self):
+        return bool(self.api_key)
 
     def _call(self, prompt, max_tokens=4096):
         if not self.api_key:
+            print("[AI] OPENAI_API_KEY가 없어 룰기반 분석으로 대체합니다")
             return None
         try:
-            print(f"[AI] {self.provider} calling...")
+            print(f"[AI] {self.provider} calling... model={self.model}")
             system_prompt = """미국 주식 전문 애널리스트입니다. 한국어로만 답변합니다.
 
 중요 규칙:
@@ -64,8 +58,7 @@ class AIAnalyzer:
 3. 예시: "RSI가 28로 과매도 구간이라 반등 가능성 있음", "ADX 35로 강한 상승 추세 진행 중"
 4. 지지선/저항선은 매수/매도 타이밍 판단에 활용
 5. 캔들 패턴과 크로스 신호는 단기 방향성 판단에 중요"""
-            
-            # Z.ai용 요청 본문
+
             body = {
                 "model": self.model,
                 "messages": [
@@ -75,20 +68,27 @@ class AIAnalyzer:
                 "temperature": 0.3,
                 "max_tokens": max_tokens
             }
-            
-            # Z.ai는 thinking 모드 비활성화 (더 빠른 응답)
-            if self.provider == "zai":
-                body["thinking"] = {"type": "disabled"}
-            
-            r = requests.post(self.base_url, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json=body, timeout=300)
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            r = requests.post(self.base_url, headers=headers, json=body, timeout=300)
             if r.status_code == 200:
                 c = r.json().get("choices", [{}])[0].get("message", {})
-                result = c.get("content") or c.get("reasoning_content")
+                result = c.get("content")
+
+                # 일부 OpenAI 호환 엔드포인트는 content를 list로 반환
+                if isinstance(result, list):
+                    parts = [x.get("text", "") for x in result if isinstance(x, dict)]
+                    result = "".join(parts).strip()
+
                 if result:
                     print(f"[AI] OK len={len(result)}")
                 return result
-            print(f"[AI] Failed: {r.status_code} - {r.text[:200]}")
+
+            print(f"[AI] Failed: {r.status_code} - {r.text[:300]}")
         except Exception as e:
             print(f"[AI] Error: {e}")
         return None
@@ -155,7 +155,10 @@ class AIAnalyzer:
         
         # 뉴스
         if news_list:
-            line += f"\n  뉴스: {'/'.join([n.get('headline','')[:40] for n in news_list[:2]])}"
+            line += "\n  뉴스: " + " / ".join([
+                f"{n.get('headline','')[:36]} ({n.get('datetime','?')}, {n.get('age_hours','?')}h전)"
+                for n in news_list[:2]
+            ])
         
         return line
 
@@ -240,7 +243,9 @@ class AIAnalyzer:
 7. 주요 리스크 (1줄)"""
 
         r = self._call(prompt, 2500)
-        return {"analysis": r} if r else {"error": "AI failed"}
+        if r:
+            return {"analysis": r, "mode": "openai"}
+        return {"analysis": self._rule_based_stock_analysis(symbol, data), "mode": "rule-based"}
 
     def analyze_full_market(self, stocks, news_data, market_data, categories):
         if not stocks:
@@ -335,7 +340,19 @@ class AIAnalyzer:
 - 손절/익절 기준"""
 
         r = self._call(prompt, 8000)
-        return {"analysis": r, "total": n, "stats": {"avg_rsi": avg_rsi, "avg_score": avg_score, "grade_dist": gd, "oversold": oversold, "overbought": overbought, "stoch_oversold": stoch_oversold, "stoch_overbought": stoch_overbought, "strong_trend": strong_trend}} if r else {"error": "AI failed"}
+        stats = {
+            "avg_rsi": avg_rsi,
+            "avg_score": avg_score,
+            "grade_dist": gd,
+            "oversold": oversold,
+            "overbought": overbought,
+            "stoch_oversold": stoch_oversold,
+            "stoch_overbought": stoch_overbought,
+            "strong_trend": strong_trend,
+        }
+        if r:
+            return {"analysis": r, "total": n, "stats": stats, "mode": "openai"}
+        return {"analysis": self._rule_based_market_analysis(stocks, categories, stats), "total": n, "stats": stats, "mode": "rule-based"}
 
     def analyze_category(self, category, stocks, news_data=None):
         if not stocks:
@@ -374,7 +391,85 @@ class AIAnalyzer:
 ## 💡 {category} 투자 전략 (3줄)
 초보자를 위한 구체적 조언"""
         r = self._call(prompt, 3000)
-        return {"analysis": r, "category": category, "total": len(stocks)} if r else {"error": "AI failed"}
+        if r:
+            return {"analysis": r, "category": category, "total": len(stocks), "mode": "openai"}
+        return {
+            "analysis": self._rule_based_category_analysis(category, stocks),
+            "category": category,
+            "total": len(stocks),
+            "mode": "rule-based",
+        }
+
+    def _rule_based_stock_analysis(self, symbol, data):
+        rsi = data.get("rsi", 50)
+        adx = data.get("adx", 0)
+        ma50_gap = data.get("ma50_gap", 0)
+        volume_ratio = data.get("volume_ratio", 1)
+        support = data.get("support", [])
+        resistance = data.get("resistance", [])
+
+        state = "중립"
+        if rsi < 30:
+            state = "과매도"
+        elif rsi > 70:
+            state = "과매수"
+
+        trend = "횡보"
+        if adx >= 25 and ma50_gap > 0:
+            trend = "상승 추세"
+        elif adx >= 25 and ma50_gap < 0:
+            trend = "하락 추세"
+
+        support_txt = f"${support[0]:.2f}" if support else "확인 어려움"
+        resistance_txt = f"${resistance[0]:.2f}" if resistance else "확인 어려움"
+
+        return (
+            f"[룰기반 분석 모드]\n"
+            f"1) 현재 상태: RSI {rsi:.0f}로 {state}, ADX {adx:.0f}로 {trend} 성격입니다.\n"
+            f"2) 거래량: 평균 대비 {volume_ratio:.1f}배로 {'수급 유입' if volume_ratio >= 1.3 else '평균 수준'}입니다.\n"
+            f"3) 매매 관점: 50일선 대비 {ma50_gap:+.1f}%이며, 지지 {support_txt} / 저항 {resistance_txt}를 기준으로 분할 대응이 유효합니다.\n"
+            f"4) 리스크: 단일 지표 신뢰보다 손절선(지지 이탈) 우선 관리가 필요합니다."
+        )
+
+    def _rule_based_market_analysis(self, stocks, categories, stats):
+        top = sorted(
+            stocks,
+            key=lambda x: -(x.get("score", {}).get("total_score", 0) if isinstance(x.get("score"), dict) else 0),
+        )[:5]
+        top_lines = "\n".join(
+            [f"- {s['symbol']} (${s.get('price', 0):.2f}) 점수 {s.get('score', {}).get('total_score', 0):.0f}" for s in top]
+        ) or "- 데이터 없음"
+
+        cat_lines = []
+        for cat, info in categories.items():
+            cat_stocks = [s for s in stocks if s["symbol"] in info.get("stocks", [])]
+            if not cat_stocks:
+                continue
+            best = max(cat_stocks, key=lambda x: x.get("score", {}).get("total_score", 0))
+            cat_lines.append(f"- {info.get('emoji', '📊')} {info.get('name', cat)}: {best['symbol']} ({best.get('score', {}).get('total_score', 0):.0f}점)")
+
+        return (
+            "[룰기반 시장 분석 모드]\n"
+            f"- 평균 RSI {stats['avg_rsi']:.0f}, 평균 점수 {stats['avg_score']:.0f}, 과매도 {stats['oversold']}개 / 과매수 {stats['overbought']}개\n"
+            "\n🏆 전체 TOP 5\n"
+            f"{top_lines}\n"
+            "\n📂 카테고리 대표 종목\n"
+            f"{chr(10).join(cat_lines) if cat_lines else '- 데이터 없음'}\n"
+            "\n💡 전략: 점수 상위라도 RSI 과매수 구간은 분할 접근, 과매도 구간은 거래량 동반 반등 확인 후 진입을 권장합니다."
+        )
+
+    def _rule_based_category_analysis(self, category, stocks):
+        top = stocks[:5]
+        lines = "\n".join([
+            f"- {s['symbol']} (${s.get('price', 0):.2f}) | 점수 {s.get('score', {}).get('total_score', 0):.0f} | RSI {s.get('rsi', 50):.0f}"
+            for s in top
+        ])
+        return (
+            f"[룰기반 {category} 분석 모드]\n"
+            "점수/RSI/추세 기준으로 상위 종목을 정리했습니다.\n\n"
+            f"{lines if lines else '- 데이터 없음'}\n\n"
+            "전략: 상위 종목 중 RSI 35~60, ADX 20 이상 구간을 우선 검토하고 손절 기준을 먼저 정하세요."
+        )
 
     def analyze_recommendations(self, stocks, news_data=None, market_data=None):
         from config import STOCK_CATEGORIES

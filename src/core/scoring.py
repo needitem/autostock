@@ -6,15 +6,56 @@
 """
 
 
+def _coverage_ratio(data: dict, keys: list[str]) -> float:
+    """지정 키의 데이터 충실도 계산"""
+    if not keys:
+        return 0.0
+    valid = sum(1 for k in keys if _has_value(data.get(k)))
+    return valid / len(keys)
+
+
+def _score_confidence(data: dict, financial_coverage: float) -> dict:
+    """점수 신뢰도(데이터 충실도 기반)"""
+    technical_keys = ["rsi", "bb_position", "ma50_gap", "position_52w", "change_5d", "adx", "volume_ratio"]
+    technical_coverage = _coverage_ratio(data, technical_keys)
+
+    confidence = technical_coverage * 0.6 + financial_coverage * 0.4
+    confidence_score = round(confidence * 100, 1)
+
+    if confidence_score >= 80:
+        label = "높음"
+    elif confidence_score >= 60:
+        label = "보통"
+    else:
+        label = "낮음"
+
+    return {
+        "score": confidence_score,
+        "label": label,
+        "technical_coverage": round(technical_coverage, 2),
+        "financial_coverage": round(financial_coverage, 2),
+    }
+
+
 def calculate_score(data: dict) -> dict:
     """종합 점수 계산"""
     factor = calculate_factor_score(data)
     financial = calculate_financial_score(data)
     risk = calculate_risk_score(data)
+
+    # 데이터가 없는 항목은 가중치에서 제외 후 정규화
+    components = [
+        {"score": factor["score"], "weight": 0.5, "available": True},
+        {"score": financial["score"], "weight": 0.3, "available": financial.get("coverage", 0) > 0},
+        {"score": 100 - risk["score"], "weight": 0.2, "available": True},
+    ]
+    active_weight = sum(c["weight"] for c in components if c["available"])
+    total = 50.0 if active_weight == 0 else sum(
+        c["score"] * (c["weight"] / active_weight) for c in components if c["available"]
+    )
     
-    # 종합 점수 (팩터 50% + 재무 30% + 안전성 20%)
-    total = factor["score"] * 0.5 + financial["score"] * 0.3 + (100 - risk["score"]) * 0.2
-    
+    confidence = _score_confidence(data, financial.get("coverage", 0))
+
     if total >= 70:
         grade, recommendation = "A", "적극 매수"
     elif total >= 60:
@@ -25,7 +66,10 @@ def calculate_score(data: dict) -> dict:
         grade, recommendation = "D", "매도 고려"
     else:
         grade, recommendation = "F", "매도"
-    
+
+    if confidence["score"] < 60 and grade in {"A", "B"}:
+        recommendation = f"{recommendation} (데이터 보강 필요)"
+
     return {
         "symbol": data.get("symbol", ""),
         "total_score": round(total, 1),
@@ -34,6 +78,7 @@ def calculate_score(data: dict) -> dict:
         "factor": factor,
         "financial": financial,
         "risk": risk,
+        "confidence": confidence,
     }
 
 
@@ -139,69 +184,83 @@ def calculate_factor_score(data: dict) -> dict:
 def calculate_financial_score(data: dict) -> dict:
     """재무 점수"""
     scores = {}
+    checks = {"profitability": 0, "growth": 0, "health": 0}
     
     # 수익성
     profitability = 50
     roe = _parse_pct(data.get("roe", 0))
-    if roe >= 20:
-        profitability += 25
-    elif roe >= 15:
-        profitability += 15
-    elif roe < 0:
-        profitability -= 20
+    if _has_value(data.get("roe")):
+        checks["profitability"] += 1
+        if roe >= 20:
+            profitability += 25
+        elif roe >= 15:
+            profitability += 15
+        elif roe < 0:
+            profitability -= 20
     
     margin = _parse_pct(data.get("profit_margin", 0))
-    if margin >= 20:
-        profitability += 15
-    elif margin >= 10:
-        profitability += 10
-    elif margin < 0:
-        profitability -= 10
+    if _has_value(data.get("profit_margin")):
+        checks["profitability"] += 1
+        if margin >= 20:
+            profitability += 15
+        elif margin >= 10:
+            profitability += 10
+        elif margin < 0:
+            profitability -= 10
     
     scores["profitability"] = max(0, min(100, profitability))
     
     # 성장성
     growth = 50
     rev_growth = _parse_pct(data.get("revenue_growth", 0))
-    if rev_growth >= 20:
-        growth += 20
-    elif rev_growth >= 10:
-        growth += 10
-    elif rev_growth < 0:
-        growth -= 10
+    if _has_value(data.get("revenue_growth")):
+        checks["growth"] += 1
+        if rev_growth >= 20:
+            growth += 20
+        elif rev_growth >= 10:
+            growth += 10
+        elif rev_growth < 0:
+            growth -= 10
     
     earn_growth = _parse_pct(data.get("earnings_growth", 0))
-    if earn_growth >= 20:
-        growth += 20
-    elif earn_growth >= 10:
-        growth += 10
-    elif earn_growth < -10:
-        growth -= 15
+    if _has_value(data.get("earnings_growth")):
+        checks["growth"] += 1
+        if earn_growth >= 20:
+            growth += 20
+        elif earn_growth >= 10:
+            growth += 10
+        elif earn_growth < -10:
+            growth -= 15
     
     scores["growth"] = max(0, min(100, growth))
     
     # 재무건전성
     health = 50
-    current = data.get("current_ratio", 0) or 0
-    if current >= 2:
-        health += 15
-    elif current >= 1.5:
-        health += 10
-    elif current < 1:
-        health -= 10
+    current = _parse_num(data.get("current_ratio", 0))
+    if _has_value(data.get("current_ratio")):
+        checks["health"] += 1
+        if current >= 2:
+            health += 15
+        elif current >= 1.5:
+            health += 10
+        elif current < 1:
+            health -= 10
     
-    fcf = data.get("free_cash_flow", 0) or 0
-    if fcf > 0:
-        health += 15
-    else:
-        health -= 10
+    fcf = _parse_num(data.get("free_cash_flow", 0))
+    if _has_value(data.get("free_cash_flow")):
+        checks["health"] += 1
+        if fcf > 0:
+            health += 15
+        else:
+            health -= 10
     
     scores["health"] = max(0, min(100, health))
     
     # 종합
     total = (scores["profitability"] * 0.4 + scores["growth"] * 0.35 + scores["health"] * 0.25)
-    
-    return {"score": round(total, 1), "details": scores}
+
+    coverage = sum(checks.values()) / 6
+    return {"score": round(total, 1), "details": scores, "coverage": round(coverage, 2)}
 
 
 def calculate_risk_score(data: dict) -> dict:
@@ -290,3 +349,12 @@ def _parse_num(value) -> float:
         return float(value or 0)
     except:
         return 0
+
+
+def _has_value(value) -> bool:
+    """결측값 여부"""
+    if value is None:
+        return False
+    if isinstance(value, str) and value.strip().upper() in {"", "N/A", "NONE", "NULL", "-"}:
+        return False
+    return True
