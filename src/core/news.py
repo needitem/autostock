@@ -13,6 +13,16 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 BASE_URL = "https://finnhub.io/api/v1"
 
 
+def _safe_dt(timestamp: int):
+    """유닉스 타임스탬프를 datetime으로 변환"""
+    try:
+        if not timestamp:
+            return None
+        return datetime.fromtimestamp(int(timestamp))
+    except Exception:
+        return None
+
+
 def _request(endpoint: str, params: dict = None) -> dict | None:
     """Finnhub API 요청"""
     if not FINNHUB_API_KEY:
@@ -30,10 +40,10 @@ def _request(endpoint: str, params: dict = None) -> dict | None:
 
 
 def get_company_news(symbol: str, days: int = 7) -> list[dict]:
-    """종목별 뉴스 가져오기"""
-    today = datetime.now()
-    from_date = (today - timedelta(days=days)).strftime("%Y-%m-%d")
-    to_date = today.strftime("%Y-%m-%d")
+    """종목별 뉴스 가져오기 (최신순)"""
+    now = datetime.now()
+    from_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    to_date = now.strftime("%Y-%m-%d")
 
     data = _request("/company-news", {
         "symbol": symbol,
@@ -44,14 +54,30 @@ def get_company_news(symbol: str, days: int = 7) -> list[dict]:
     if not data:
         return []
 
+    # 최신순 정렬 + 조회 기간 밖 데이터 제외
+    sorted_data = sorted(data, key=lambda x: x.get("datetime", 0), reverse=True)
+
     news = []
-    for item in data[:5]:  # 종목당 최대 5개
+    min_ts = int((now - timedelta(days=days)).timestamp())
+    for item in sorted_data:
+        published = _safe_dt(item.get("datetime", 0))
+        if published is None:
+            continue
+        if int(item.get("datetime", 0)) < min_ts:
+            continue
+
+        age_hours = max(0, int((now - published).total_seconds() // 3600))
         news.append({
             "headline": item.get("headline", ""),
-            "summary": item.get("summary", "")[:150],
+            "summary": item.get("summary", "")[:180],
             "source": item.get("source", ""),
-            "datetime": datetime.fromtimestamp(item.get("datetime", 0)).strftime("%m/%d"),
+            "datetime": published.strftime("%m/%d %H:%M"),
+            "published_ts": int(item.get("datetime", 0)),
+            "age_hours": age_hours,
+            "url": item.get("url", ""),
         })
+        if len(news) >= 5:
+            break
 
     return news
 
@@ -74,20 +100,30 @@ def get_bulk_news(symbols: list[str], days: int = 7) -> dict[str, list[dict]]:
 
 
 def get_market_news(category: str = "general") -> list[dict]:
-    """시장 전체 뉴스"""
+    """시장 전체 뉴스 (최신순)"""
     data = _request("/news", {"category": category})
 
     if not data:
         return []
 
+    now = datetime.now()
     news = []
-    for item in data[:10]:
+    for item in sorted(data, key=lambda x: x.get("datetime", 0), reverse=True):
+        published = _safe_dt(item.get("datetime", 0))
+        if published is None:
+            continue
+        age_hours = max(0, int((now - published).total_seconds() // 3600))
         news.append({
             "headline": item.get("headline", ""),
             "summary": item.get("summary", "")[:200],
             "source": item.get("source", ""),
-            "datetime": datetime.fromtimestamp(item.get("datetime", 0)).strftime("%m/%d %H:%M"),
+            "datetime": published.strftime("%m/%d %H:%M"),
+            "published_ts": int(item.get("datetime", 0)),
+            "age_hours": age_hours,
+            "url": item.get("url", ""),
         })
+        if len(news) >= 10:
+            break
 
     return news
 

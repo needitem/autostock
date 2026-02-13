@@ -66,8 +66,22 @@ async def handle_recommend(query):
         from config import ALL_US_STOCKS
         result = scan_stocks(ALL_US_STOCKS)  # 전체 스캔
         
-        # 점수 높은 순 정렬, 상위 20개
-        stocks = sorted(result["results"], key=lambda x: -x["score"]["total_score"])[:20]
+        # 추천 품질 필터: 기술 신호 또는 높은 점수 + 과도한 위험 제외
+        filtered = [
+            s for s in result["results"]
+            if s.get("strategy_count", 0) > 0 or s.get("score", {}).get("total_score", 0) >= 65
+        ]
+        filtered = [
+            s for s in filtered
+            if s.get("score", {}).get("risk", {}).get("score", 100) < 70
+        ]
+        filtered = [
+            s for s in filtered
+            if s.get("score", {}).get("confidence", {}).get("score", 0) >= 55
+        ]
+
+        # 품질 점수 기준 정렬, 상위 20개
+        stocks = sorted(filtered, key=lambda x: -x.get("quality_score", x["score"]["total_score"]))[:20]
         text = fmt.format_recommendations(stocks, result["total"])
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as e:
@@ -119,7 +133,7 @@ async def handle_ai_recommend(query):
         # 3. 상위 100개 종목 뉴스 수집
         top_stocks = sorted(stocks, key=lambda x: -x.get("score", {}).get("total_score", 0))[:100]
         top_symbols = [s['symbol'] for s in top_stocks]
-        news_data = get_bulk_news(top_symbols, days=7)
+        news_data = get_bulk_news(top_symbols, days=3)
         
         await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 뉴스 수집 완료 ({len(news_data)}개)\n4️⃣ AI 종합 분석 중...")
         
@@ -461,7 +475,7 @@ async def handle_ai_stock(query, data):
             return
         
         # 뉴스 수집
-        news = get_company_news(symbol, days=7)
+        news = get_company_news(symbol, days=3)
         analysis["news"] = news
         
         score = calculate_score(analysis)

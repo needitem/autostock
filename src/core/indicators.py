@@ -138,6 +138,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         "low_52w": round(float(low_52w.iloc[-1]), 2),
         "position_52w": round(pos_52w, 1),
         # 갭
+        "ma5_gap": round((price - float(ma5.iloc[-1])) / float(ma5.iloc[-1]) * 100, 1),
+        "ma20_gap": round((price - float(ma20.iloc[-1])) / float(ma20.iloc[-1]) * 100, 1),
         "ma50_gap": round((price - float(ma50.iloc[-1])) / float(ma50.iloc[-1]) * 100, 1),
         "ma200_gap": round((price - float(ma200.iloc[-1])) / float(ma200.iloc[-1]) * 100, 1),
         "change_5d": round(change_5d, 1),

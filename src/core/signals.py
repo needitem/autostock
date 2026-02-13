@@ -33,7 +33,7 @@ def check_entry_signal(symbol: str, target_price: float = 0) -> dict:
     conditions = {
         "rsi_oversold": ind["rsi"] <= 35,
         "bb_lower": ind["bb_position"] <= 20,
-        "below_ma5": ind["ma50_gap"] <= -3,
+        "below_ma5": ind.get("ma5_gap", ind["ma50_gap"]) <= -3,
         "consecutive_down": ind["down_days"] >= 3,
         "target_reached": ind["price"] <= target_price if target_price > 0 else False,
     }
@@ -57,6 +57,7 @@ def check_entry_signal(symbol: str, target_price: float = 0) -> dict:
         "conditions": conditions,
         "rsi": ind["rsi"],
         "bb_position": ind["bb_position"],
+        "ma5_gap": ind.get("ma5_gap", ind["ma50_gap"]),
         "ma50_gap": ind["ma50_gap"],
         "down_days": ind["down_days"],
     }
@@ -216,6 +217,10 @@ def scan_stocks(symbols: list[str]) -> dict:
             strategies = check_strategies(symbol)
             score = calculate_score({"symbol": symbol, **ind})
             
+            strategy_count = len(strategies)
+            risk_score = score.get("risk", {}).get("score", 50)
+            quality_score = score.get("total_score", 0) + min(12, strategy_count * 4) - max(0, risk_score - 45) * 0.2
+
             return {
                 "symbol": symbol,
                 "price": ind["price"],
@@ -223,6 +228,8 @@ def scan_stocks(symbols: list[str]) -> dict:
                 "ma50_gap": ind["ma50_gap"],
                 "position_52w": ind["position_52w"],
                 "strategies": strategies,
+                "strategy_count": strategy_count,
+                "quality_score": round(quality_score, 1),
                 "score": score,
             }
         except:
