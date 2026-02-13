@@ -59,8 +59,11 @@ def format_analysis(data: dict) -> str:
     # 점수
     total = score.get("total_score", 0)
     grade = score.get("grade", "C")
+    confidence = score.get("confidence", {})
     text += f"\n{grade_emoji(grade)} 종합점수: <b>{total:.0f}</b>/100 ({grade}등급)\n"
     text += f"└ {score.get('recommendation', '')}\n"
+    if confidence:
+        text += f"└ 신뢰도: {confidence.get('score', 0):.0f}/100 ({confidence.get('label', '보통')})\n"
     
     # 위험도
     risk_score = risk.get("score", 0)
@@ -94,8 +97,9 @@ def format_recommendations(stocks: list, total: int) -> str:
         risk = score.get("risk", {}).get("score", 0)
         
         text += f"\n<b>{i}. {s['symbol']}</b> {usd(s.get('price', 0))}\n"
+        conf = score.get("confidence", {}).get("score", 0)
         text += f"   {grade_emoji(grade)} {score.get('total_score', 0):.0f}점 │ "
-        text += f"RSI {s.get('rsi', 50):.0f} │ "
+        text += f"신뢰 {conf:.0f} │ RSI {s.get('rsi', 50):.0f} │ "
         text += f"위험 {risk}\n"
     
     text += f"\n{LINE}\n"

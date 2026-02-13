@@ -10,7 +10,7 @@
 - yfinance에서 섹터/산업 자동 분류
 
 ### 🤖 AI 종합 분석
-- **Z.ai GLM-4.7** / **OpenRouter** 기반
+- **OpenAI API** 기반 (기본 모델: `gpt-4o-mini`, 변경 가능)
 - 기술적 지표 + 뉴스 + 시장 심리 종합 분석
 - 초보자도 이해할 수 있는 근거 기반 추천
 
@@ -73,7 +73,7 @@
 ```
 src/
 ├── ai/
-│   └── analyzer.py      # 🤖 AI 분석 (Z.ai/OpenRouter)
+│   └── analyzer.py      # 🤖 AI 분석 (OpenAI API)
 ├── bot/
 │   ├── bot.py           # 텔레그램 봇 + 스케줄러
 │   ├── handlers.py      # 콜백 핸들러
@@ -113,9 +113,11 @@ pip install -r requirements.txt
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 FINNHUB_API_KEY=your_finnhub_api_key
 
-# AI API (둘 중 하나)
-ZAI_API_KEY=your_zai_api_key
-OPENROUTER_API_KEY=your_openrouter_api_key
+# AI API (OpenAI, 선택)
+# API 키가 없으면 AI 분석/매수계획은 룰기반 모드로 자동 대체됩니다.
+# OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL=https://api.openai.com/v1/chat/completions
 
 # 한국투자증권 (자동매매용)
 KIS_APP_KEY=your_kis_app_key
