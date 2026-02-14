@@ -1,26 +1,67 @@
 """
-종목 점수화 모듈
-- 팩터 점수 (모멘텀, 가치, 퀄리티 등)
-- 재무 점수
-- 위험도 점수
+Scoring engine for stock recommendations.
+
+Score output contract is kept backward-compatible:
+- total_score, grade, recommendation
+- factor, financial, risk, confidence
 """
 
+from __future__ import annotations
 
-def _coverage_ratio(data: dict, keys: list[str]) -> float:
-    """지정 키의 데이터 충실도 계산"""
+from typing import Any
+
+
+def _has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().upper() not in {"", "-", "N/A", "NONE", "NULL", "NAN"}
+    return True
+
+
+def _num(value: Any, default: float = 0.0) -> float:
+    try:
+        if isinstance(value, str):
+            value = value.replace(",", "").replace("%", "").strip()
+        return float(value)
+    except Exception:
+        return default
+
+
+def _pct(value: Any, default: float = 0.0) -> float:
+    out = _num(value, default)
+    # normalize ratio-like values (0.15 -> 15)
+    if abs(out) <= 1.5:
+        return out * 100
+    return out
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, value))
+
+
+def _coverage_ratio(data: dict[str, Any], keys: list[str]) -> float:
     if not keys:
         return 0.0
-    valid = sum(1 for k in keys if _has_value(data.get(k)))
+    valid = sum(1 for key in keys if _has_value(data.get(key)))
     return valid / len(keys)
 
 
-def _score_confidence(data: dict, financial_coverage: float) -> dict:
-    """점수 신뢰도(데이터 충실도 기반)"""
-    technical_keys = ["rsi", "bb_position", "ma50_gap", "position_52w", "change_5d", "adx", "volume_ratio"]
+def _score_confidence(data: dict[str, Any], financial_coverage: float) -> dict[str, Any]:
+    technical_keys = [
+        "rsi",
+        "bb_position",
+        "ma50_gap",
+        "position_52w",
+        "change_5d",
+        "adx",
+        "volume_ratio",
+        "atr_pct",
+    ]
     technical_coverage = _coverage_ratio(data, technical_keys)
 
     confidence = technical_coverage * 0.6 + financial_coverage * 0.4
-    confidence_score = round(confidence * 100, 1)
+    confidence_score = round(_clamp(confidence * 100), 1)
 
     if confidence_score >= 80:
         label = "높음"
@@ -37,42 +78,32 @@ def _score_confidence(data: dict, financial_coverage: float) -> dict:
     }
 
 
-def calculate_score(data: dict) -> dict:
-    """종합 점수 계산"""
+def calculate_score(data: dict[str, Any]) -> dict[str, Any]:
+    """Calculate final recommendation score (0..100)."""
     factor = calculate_factor_score(data)
     financial = calculate_financial_score(data)
     risk = calculate_risk_score(data)
 
-    # 데이터가 없는 항목은 가중치에서 제외 후 정규화
     components = [
-        {"score": factor["score"], "weight": 0.5, "available": True},
-        {"score": financial["score"], "weight": 0.3, "available": financial.get("coverage", 0) > 0},
-        {"score": 100 - risk["score"], "weight": 0.2, "available": True},
+        {"score": factor["score"], "weight": 0.55, "available": True},
+        {"score": financial["score"], "weight": 0.25, "available": financial.get("coverage", 0) > 0},
+        {"score": 100 - risk["score"], "weight": 0.20, "available": True},
     ]
-    active_weight = sum(c["weight"] for c in components if c["available"])
-    total = 50.0 if active_weight == 0 else sum(
-        c["score"] * (c["weight"] / active_weight) for c in components if c["available"]
-    )
-    
-    confidence = _score_confidence(data, financial.get("coverage", 0))
-
-    if total >= 70:
-        grade, recommendation = "A", "적극 매수"
-    elif total >= 60:
-        grade, recommendation = "B", "매수"
-    elif total >= 50:
-        grade, recommendation = "C", "관망"
-    elif total >= 40:
-        grade, recommendation = "D", "매도 고려"
+    active_weight = sum(item["weight"] for item in components if item["available"])
+    if active_weight <= 0:
+        total = 50.0
     else:
-        grade, recommendation = "F", "매도"
+        total = sum(item["score"] * (item["weight"] / active_weight) for item in components if item["available"])
+    total = round(_clamp(total), 1)
 
+    confidence = _score_confidence(data, financial.get("coverage", 0))
+    grade, recommendation = _grade_and_reco(total, risk["score"])
     if confidence["score"] < 60 and grade in {"A", "B"}:
         recommendation = f"{recommendation} (데이터 보강 필요)"
 
     return {
         "symbol": data.get("symbol", ""),
-        "total_score": round(total, 1),
+        "total_score": total,
         "grade": grade,
         "recommendation": recommendation,
         "factor": factor,
@@ -82,113 +113,177 @@ def calculate_score(data: dict) -> dict:
     }
 
 
-def calculate_factor_score(data: dict) -> dict:
-    """팩터 점수 (모멘텀, 가치, 퀄리티, 저변동성)"""
-    scores = {}
-    
-    # 모멘텀 (30%)
-    momentum = 50
-    pos_52w = data.get("position_52w", 50)
-    if 60 <= pos_52w <= 85:
-        momentum += 25
-    elif 50 <= pos_52w < 60:
-        momentum += 15
-    elif pos_52w > 95:
-        momentum -= 10
-    elif pos_52w < 30:
-        momentum -= 15
-    
-    ma50_gap = data.get("ma50_gap", 0)
-    if 0 < ma50_gap <= 10:
-        momentum += 15
+def _grade_and_reco(total: float, risk_score: float) -> tuple[str, str]:
+    if total >= 75:
+        grade, reco = "A", "적극 매수"
+    elif total >= 65:
+        grade, reco = "B", "매수"
+    elif total >= 52:
+        grade, reco = "C", "관망"
+    elif total >= 42:
+        grade, reco = "D", "매도 고려"
+    else:
+        grade, reco = "F", "매도"
+
+    if risk_score >= 70 and grade in {"A", "B"}:
+        reco = "관망 (리스크 높음)"
+        if grade == "A":
+            grade = "B"
+    return grade, reco
+
+
+def calculate_factor_score(data: dict[str, Any]) -> dict[str, Any]:
+    """Technical+valuation blend focused on recommendation ranking."""
+    scores: dict[str, float] = {}
+
+    # Trend / momentum
+    trend = 50.0
+    ma50_gap = _num(data.get("ma50_gap"), 0)
+    ma200_gap = _num(data.get("ma200_gap"), 0)
+    pos_52w = _num(data.get("position_52w"), 50)
+    rsi = _num(data.get("rsi"), 50)
+    adx = _num(data.get("adx"), 20)
+    change_5d = _num(data.get("change_5d"), 0)
+
+    if 0 <= ma50_gap <= 12:
+        trend += 15
     elif ma50_gap > 20:
-        momentum -= 10
+        trend -= 10
     elif ma50_gap < -10:
-        momentum -= 15
-    
-    rsi = data.get("rsi", 50)
-    if 50 <= rsi <= 65:
-        momentum += 10
-    elif rsi > 70:
-        momentum -= 15
-    elif rsi < 30:
-        momentum -= 10
-    
-    scores["momentum"] = max(0, min(100, momentum))
-    
-    # 가치 (25%)
-    value = 50
-    pe = _parse_num(data.get("pe", 0))
+        trend -= 15
+
+    if ma200_gap > 0:
+        trend += 8
+    elif ma200_gap < -8:
+        trend -= 10
+
+    if 55 <= pos_52w <= 88:
+        trend += 12
+    elif pos_52w >= 95:
+        trend -= 10
+    elif pos_52w <= 20:
+        trend -= 8
+
+    if 45 <= rsi <= 62:
+        trend += 8
+    elif rsi > 72:
+        trend -= 14
+    elif rsi < 28:
+        trend -= 12
+
+    if adx >= 25:
+        trend += 5
+    if abs(change_5d) > 15:
+        trend -= 10
+
+    scores["momentum"] = _clamp(trend)
+
+    # Value
+    value = 50.0
+    pe = _num(data.get("pe"), 0)
+    peg = _num(data.get("peg"), 0)
+    pb = _num(data.get("pb"), 0)
+
     if 0 < pe <= 15:
-        value += 20
+        value += 18
     elif 15 < pe <= 25:
         value += 10
-    elif pe > 35:
-        value -= 15
-    
-    peg = _parse_num(data.get("peg", 0))
-    if 0 < peg <= 1:
+    elif pe > 40:
+        value -= 14
+
+    if 0 < peg <= 1.2:
         value += 15
-    elif 1 < peg <= 2:
-        value += 5
-    elif peg > 3:
-        value -= 10
-    
-    scores["value"] = max(0, min(100, value))
-    
-    # 퀄리티 (25%)
-    quality = 50
-    roe = _parse_pct(data.get("roe", 0))
-    if roe > 20:
-        quality += 20
-    elif roe > 15:
-        quality += 15
-    elif roe > 10:
+    elif 1.2 < peg <= 2.0:
+        value += 8
+    elif peg > 3.0:
+        value -= 12
+
+    if 0 < pb <= 4:
+        value += 7
+    elif pb > 10:
+        value -= 8
+
+    scores["value"] = _clamp(value)
+
+    # Quality
+    quality = 50.0
+    roe = _pct(data.get("roe"), 0)
+    margin = _pct(data.get("profit_margin"), 0)
+    rev_growth = _pct(data.get("revenue_growth"), 0)
+    earn_growth = _pct(data.get("earnings_growth"), 0)
+    debt = _num(data.get("debt_to_equity"), 0)
+
+    if roe >= 20:
+        quality += 18
+    elif roe >= 12:
         quality += 10
     elif roe < 0:
         quality -= 15
-    
-    debt = _parse_num(data.get("debt_to_equity", 0)) / 100
-    if debt <= 0.5:
-        quality += 15
-    elif debt <= 1:
+
+    if margin >= 18:
         quality += 10
-    elif debt > 2:
-        quality -= 15
-    
-    scores["quality"] = max(0, min(100, quality))
-    
-    # 저변동성 (20%)
-    volatility = 50
-    bb_pos = data.get("bb_position", 50)
+    elif margin >= 8:
+        quality += 6
+    elif margin < 0:
+        quality -= 10
+
+    if rev_growth >= 15:
+        quality += 8
+    elif rev_growth < -5:
+        quality -= 8
+
+    if earn_growth >= 15:
+        quality += 8
+    elif earn_growth < -10:
+        quality -= 10
+
+    if debt > 0:
+        if debt <= 80:
+            quality += 6
+        elif debt >= 250:
+            quality -= 10
+
+    scores["quality"] = _clamp(quality)
+
+    # Stability
+    stability = 50.0
+    bb_pos = _num(data.get("bb_position"), 50)
+    vol_ratio = _num(data.get("volume_ratio"), 1)
+
     if 30 <= bb_pos <= 70:
-        volatility += 20
+        stability += 12
     elif bb_pos < 10 or bb_pos > 90:
-        volatility -= 15
-    
-    change_5d = abs(data.get("change_5d", 0))
-    if change_5d <= 3:
-        volatility += 15
-    elif change_5d > 15:
-        volatility -= 15
-    
-    scores["low_volatility"] = max(0, min(100, volatility))
-    
-    # 종합 (가중 평균)
-    total = (scores["momentum"] * 0.30 + scores["value"] * 0.25 + 
-             scores["quality"] * 0.25 + scores["low_volatility"] * 0.20)
-    
-    return {"score": round(total, 1), "details": scores}
+        stability -= 12
+
+    if abs(change_5d) <= 3:
+        stability += 12
+    elif abs(change_5d) >= 12:
+        stability -= 10
+
+    if 0.8 <= vol_ratio <= 2.2:
+        stability += 6
+    elif vol_ratio > 4:
+        stability -= 8
+
+    scores["stability"] = _clamp(stability)
+
+    total = (
+        scores["momentum"] * 0.35
+        + scores["value"] * 0.25
+        + scores["quality"] * 0.25
+        + scores["stability"] * 0.15
+    )
+    return {"score": round(_clamp(total), 1), "details": scores}
 
 
-def calculate_financial_score(data: dict) -> dict:
-    """재무 점수"""
-    scores = {}
+def calculate_financial_score(data: dict[str, Any]) -> dict[str, Any]:
+    """Financial health score with explicit data-coverage output."""
+    scores: dict[str, float] = {}
     checks = {"profitability": 0, "growth": 0, "health": 0}
-    
-    # 수익성
-    profitability = 50
-    roe = _parse_pct(data.get("roe", 0))
+
+    # Profitability
+    profitability = 50.0
+    roe = _pct(data.get("roe"), 0)
     if _has_value(data.get("roe")):
         checks["profitability"] += 1
         if roe >= 20:
@@ -197,8 +292,8 @@ def calculate_financial_score(data: dict) -> dict:
             profitability += 15
         elif roe < 0:
             profitability -= 20
-    
-    margin = _parse_pct(data.get("profit_margin", 0))
+
+    margin = _pct(data.get("profit_margin"), 0)
     if _has_value(data.get("profit_margin")):
         checks["profitability"] += 1
         if margin >= 20:
@@ -207,12 +302,11 @@ def calculate_financial_score(data: dict) -> dict:
             profitability += 10
         elif margin < 0:
             profitability -= 10
-    
-    scores["profitability"] = max(0, min(100, profitability))
-    
-    # 성장성
-    growth = 50
-    rev_growth = _parse_pct(data.get("revenue_growth", 0))
+    scores["profitability"] = _clamp(profitability)
+
+    # Growth
+    growth = 50.0
+    rev_growth = _pct(data.get("revenue_growth"), 0)
     if _has_value(data.get("revenue_growth")):
         checks["growth"] += 1
         if rev_growth >= 20:
@@ -221,8 +315,8 @@ def calculate_financial_score(data: dict) -> dict:
             growth += 10
         elif rev_growth < 0:
             growth -= 10
-    
-    earn_growth = _parse_pct(data.get("earnings_growth", 0))
+
+    earn_growth = _pct(data.get("earnings_growth"), 0)
     if _has_value(data.get("earnings_growth")):
         checks["growth"] += 1
         if earn_growth >= 20:
@@ -231,130 +325,131 @@ def calculate_financial_score(data: dict) -> dict:
             growth += 10
         elif earn_growth < -10:
             growth -= 15
-    
-    scores["growth"] = max(0, min(100, growth))
-    
-    # 재무건전성
-    health = 50
-    current = _parse_num(data.get("current_ratio", 0))
+    scores["growth"] = _clamp(growth)
+
+    # Balance-sheet health
+    health = 50.0
+    current_ratio = _num(data.get("current_ratio"), 0)
     if _has_value(data.get("current_ratio")):
         checks["health"] += 1
-        if current >= 2:
+        if current_ratio >= 2:
             health += 15
-        elif current >= 1.5:
+        elif current_ratio >= 1.5:
             health += 10
-        elif current < 1:
+        elif current_ratio < 1:
             health -= 10
-    
-    fcf = _parse_num(data.get("free_cash_flow", 0))
+
+    fcf = _num(data.get("free_cash_flow"), 0)
     if _has_value(data.get("free_cash_flow")):
         checks["health"] += 1
         if fcf > 0:
             health += 15
         else:
             health -= 10
-    
-    scores["health"] = max(0, min(100, health))
-    
-    # 종합
-    total = (scores["profitability"] * 0.4 + scores["growth"] * 0.35 + scores["health"] * 0.25)
+    scores["health"] = _clamp(health)
 
+    total = scores["profitability"] * 0.4 + scores["growth"] * 0.35 + scores["health"] * 0.25
     coverage = sum(checks.values()) / 6
-    return {"score": round(total, 1), "details": scores, "coverage": round(coverage, 2)}
+    return {"score": round(_clamp(total), 1), "details": scores, "coverage": round(coverage, 2)}
 
 
-def calculate_risk_score(data: dict) -> dict:
-    """위험도 점수 (0-100, 높을수록 위험)"""
-    risk = 0
-    warnings = []
-    
-    # RSI 과매수
-    rsi = data.get("rsi", 50)
+def calculate_risk_score(data: dict[str, Any]) -> dict[str, Any]:
+    """Risk score (0..100, higher means riskier)."""
+    risk = 0.0
+    warnings: list[str] = []
+
+    rsi = _num(data.get("rsi"), 50)
+    bb_pos = _num(data.get("bb_position"), 50)
+    pos_52w = _num(data.get("position_52w"), 50)
+    ma50_gap = _num(data.get("ma50_gap"), 0)
+    change_5d = _num(data.get("change_5d"), 0)
+    vol_ratio = _num(data.get("volume_ratio"), 1)
+    atr_pct = _num(data.get("atr_pct"), 0)
+    beta = _num(data.get("beta"), 1)
+    days_to_earnings = int(_num(data.get("days_to_earnings"), 999))
+    avg_dollar_volume_m = _num(data.get("avg_dollar_volume_m"), 0)
+
     if rsi >= 70:
         risk += 25
         warnings.append(f"RSI {rsi:.0f} 과매수")
-    elif rsi >= 60:
+    elif rsi >= 62:
         risk += 10
-    
-    # RSI 과매도 (반등 가능하나 위험)
+
     if rsi <= 30:
         risk += 15
         warnings.append(f"RSI {rsi:.0f} 과매도")
-    
-    # 볼린저 상단
-    bb_pos = data.get("bb_position", 50)
+
     if bb_pos >= 95:
         risk += 20
-        warnings.append("볼린저 상단 돌파")
+        warnings.append("볼린저밴드 상단 과열")
     elif bb_pos >= 80:
         risk += 10
-    
-    # 52주 고점
-    pos_52w = data.get("position_52w", 50)
+
     if pos_52w >= 95:
-        risk += 20
-        warnings.append("52주 최고점 근접")
-    
-    # 52주 저점
-    if pos_52w <= 10:
-        risk += 15
-        warnings.append("52주 최저점 근접")
-    
-    # 50일선 괴리
-    ma50_gap = data.get("ma50_gap", 0)
+        risk += 18
+        warnings.append("52주 최고가 근접")
+    elif pos_52w <= 10:
+        risk += 14
+        warnings.append("52주 최저가 근접")
+
     if ma50_gap >= 20:
-        risk += 20
-        warnings.append(f"50일선 대비 +{ma50_gap:.0f}%")
+        risk += 18
+        warnings.append(f"50일선 대비 +{ma50_gap:.0f}% 이격")
     elif ma50_gap <= -20:
-        risk += 25
-        warnings.append(f"50일선 대비 {ma50_gap:.0f}%")
-    
-    # 5일 급등/급락
-    change_5d = data.get("change_5d", 0)
+        risk += 22
+        warnings.append(f"50일선 대비 {ma50_gap:.0f}% 이격")
+
     if change_5d >= 20:
-        risk += 15
-        warnings.append(f"5일간 +{change_5d:.0f}% 급등")
+        risk += 14
+        warnings.append(f"5일 +{change_5d:.0f}% 급등")
     elif change_5d <= -15:
-        risk += 20
-        warnings.append(f"5일간 {change_5d:.0f}% 급락")
-    
-    risk = min(100, risk)
-    
+        risk += 18
+        warnings.append(f"5일 {change_5d:.0f}% 급락")
+
+    if vol_ratio >= 4:
+        risk += 8
+        warnings.append("거래량 급증")
+
+    if atr_pct >= 8:
+        risk += 18
+        warnings.append(f"ATR 변동성 높음 ({atr_pct:.1f}%)")
+    elif atr_pct >= 6:
+        risk += 10
+
+    if beta >= 2.0:
+        risk += 10
+        warnings.append(f"베타 높음 ({beta:.2f})")
+    elif beta >= 1.5:
+        risk += 5
+
+    if 0 <= days_to_earnings <= 1:
+        risk += 18
+        warnings.append("실적 발표 임박")
+    elif 2 <= days_to_earnings <= 3:
+        risk += 12
+        warnings.append("실적 발표 3일 이내")
+    elif 4 <= days_to_earnings <= 7:
+        risk += 6
+
+    if 0 < avg_dollar_volume_m < 3:
+        risk += 12
+        warnings.append(f"유동성 낮음 ({avg_dollar_volume_m:.1f}M)")
+    elif 3 <= avg_dollar_volume_m < 8:
+        risk += 6
+
+    risk = round(_clamp(risk), 1)
     if risk >= 50:
         grade = "🔴 고위험"
     elif risk >= 30:
         grade = "🟡 주의"
     else:
         grade = "🟢 양호"
-    
-    return {"score": risk, "grade": grade, "warnings": warnings}
+    return {"score": risk, "grade": grade, "warnings": warnings[:4]}
 
 
-def _parse_pct(value) -> float:
-    """퍼센트 값 파싱"""
-    if isinstance(value, str):
-        value = value.replace("%", "").replace(",", "")
-    try:
-        v = float(value or 0)
-        return v * 100 if abs(v) < 1 else v  # 0.15 → 15%
-    except:
-        return 0
-
-
-def _parse_num(value) -> float:
-    """숫자 파싱"""
-    if isinstance(value, str):
-        value = value.replace(",", "").replace("N/A", "0").replace("-", "0")
-    try:
-        return float(value or 0)
-    except:
-        return 0
-
-
-def _has_value(value) -> bool:
-    """결측값 여부"""
-    if value is None:
-        return False
-    if isinstance(value, str) and value.strip().upper() in {"", "N/A", "NONE", "NULL", "-"}:
-        return False
-    return True
+__all__ = [
+    "calculate_score",
+    "calculate_factor_score",
+    "calculate_financial_score",
+    "calculate_risk_score",
+]

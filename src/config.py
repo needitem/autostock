@@ -1,106 +1,133 @@
 # -*- coding: utf-8 -*-
-import os
+"""
+Runtime configuration and universe builders.
+
+Design goals:
+- Keep import-time cost low (no mandatory network calls on module import).
+- Preserve legacy names (`NASDAQ_100`, `ALL_US_STOCKS`, etc.) for compatibility.
+- Provide explicit lazy loaders for runtime paths that need full data.
+"""
+
+from __future__ import annotations
+
 import json
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+from functools import lru_cache
+from io import StringIO
+from typing import Any, Callable
+
+import pandas as pd
+import requests
+from dotenv import load_dotenv
+
 
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# 캐시 파일 경로
+# Cache files
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 NASDAQ_CACHE_FILE = os.path.join(CACHE_DIR, "nasdaq100_cache.json")
 SP500_CACHE_FILE = os.path.join(CACHE_DIR, "sp500_cache.json")
 ALL_STOCKS_CACHE_FILE = os.path.join(CACHE_DIR, "all_stocks_cache.json")
 SECTOR_CACHE_FILE = os.path.join(CACHE_DIR, "sector_cache.json")
-CACHE_DAYS = 7  # 7일마다 갱신
+CACHE_DAYS = 7
+
+MARKET_INDICATOR = "QQQ"
+
+
+def _normalize_symbol(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    symbol = value.strip().upper()
+    if not symbol:
+        return None
+    return symbol.replace(".", "-")
+
+
+def _fetch_table_symbols(url: str, columns: list[str]) -> list[str]:
+    try:
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        response.raise_for_status()
+        tables = pd.read_html(StringIO(response.text))
+    except Exception:
+        return []
+
+    for table in tables:
+        for col in columns:
+            if col in table.columns:
+                out: list[str] = []
+                seen: set[str] = set()
+                for raw in table[col].tolist():
+                    symbol = _normalize_symbol(raw)
+                    if not symbol or symbol in seen:
+                        continue
+                    seen.add(symbol)
+                    out.append(symbol)
+                return out
+    return []
 
 
 def fetch_nasdaq_100() -> list[str]:
-    """위키피디아에서 나스닥 100 종목 가져오기"""
-    import pandas as pd
-    import requests
-    from io import StringIO
-    
-    try:
-        url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        
-        tables = pd.read_html(StringIO(response.text))
-        
-        for table in tables:
-            if "Ticker" in table.columns:
-                symbols = table["Ticker"].tolist()
-                return [s for s in symbols if isinstance(s, str)]
-        return []
-    except Exception as e:
-        print(f"나스닥 100 가져오기 실패: {e}")
-        return []
+    """Fetch Nasdaq-100 symbols from Wikipedia."""
+    return _fetch_table_symbols(
+        "https://en.wikipedia.org/wiki/Nasdaq-100",
+        columns=["Ticker", "Ticker symbol", "Symbol"],
+    )
 
 
 def fetch_sp500() -> list[str]:
-    """위키피디아에서 S&P 500 종목 가져오기"""
-    import pandas as pd
-    import requests
-    from io import StringIO
-    
-    try:
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        
-        tables = pd.read_html(StringIO(response.text))
-        
-        # 첫 번째 테이블이 S&P 500 목록
-        if tables and "Symbol" in tables[0].columns:
-            symbols = tables[0]["Symbol"].tolist()
-            # BRK.B -> BRK-B 형식 변환 (yfinance 호환)
-            return [s.replace(".", "-") for s in symbols if isinstance(s, str)]
-        return []
-    except Exception as e:
-        print(f"S&P 500 가져오기 실패: {e}")
-        return []
+    """Fetch S&P 500 symbols from Wikipedia."""
+    return _fetch_table_symbols(
+        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        columns=["Symbol", "Ticker", "Ticker symbol"],
+    )
 
 
-def get_cached_list(cache_file: str, fetch_func, name: str) -> list[str]:
-    """캐시된 종목 목록 반환"""
+def get_cached_list(cache_file: str, fetch_func: Callable[[], list[str]], name: str) -> list[str]:
+    """Return cached symbol list or refresh cache when stale."""
     os.makedirs(CACHE_DIR, exist_ok=True)
-    
+
     if os.path.exists(cache_file):
         try:
-            with open(cache_file, "r") as f:
-                cache = json.load(f)
-                cached_date = datetime.fromisoformat(cache["date"])
-                
-                if datetime.now() - cached_date < timedelta(days=CACHE_DAYS):
-                    return cache["symbols"]
-        except:
+            with open(cache_file, "r", encoding="utf-8") as fh:
+                cache = json.load(fh)
+            cached_date = datetime.fromisoformat(cache.get("date", "1970-01-01T00:00:00"))
+            if datetime.now() - cached_date < timedelta(days=CACHE_DAYS):
+                symbols = cache.get("symbols", [])
+                if isinstance(symbols, list):
+                    return [s for s in symbols if isinstance(s, str)]
+        except Exception:
             pass
-    
-    print(f"{name} 목록 가져오는 중...")
-    symbols = fetch_func()
-    
+
+    print(f"Loading {name} list...")
+    symbols = fetch_func() or []
+
     if symbols:
-        with open(cache_file, "w") as f:
-            json.dump({"date": datetime.now().isoformat(), "symbols": symbols}, f)
-        print(f"  ✅ {len(symbols)}개 종목")
+        try:
+            with open(cache_file, "w", encoding="utf-8") as fh:
+                json.dump({"date": datetime.now().isoformat(), "symbols": symbols}, fh)
+            print(f"  -> {len(symbols)} symbols")
+        except Exception:
+            pass
         return symbols
-    
-    # 실패 시 기존 캐시 사용
+
+    # Fallback to stale cache when fetch failed.
     if os.path.exists(cache_file):
-        with open(cache_file, "r") as f:
-            return json.load(f).get("symbols", [])
-    
+        try:
+            with open(cache_file, "r", encoding="utf-8") as fh:
+                stale = json.load(fh).get("symbols", [])
+            if isinstance(stale, list):
+                return [s for s in stale if isinstance(s, str)]
+        except Exception:
+            pass
     return []
 
 
 def get_nasdaq_100() -> list[str]:
-    return get_cached_list(NASDAQ_CACHE_FILE, fetch_nasdaq_100, "나스닥 100")
+    return get_cached_list(NASDAQ_CACHE_FILE, fetch_nasdaq_100, "Nasdaq-100")
 
 
 def get_sp500() -> list[str]:
@@ -108,205 +135,220 @@ def get_sp500() -> list[str]:
 
 
 def get_all_us_stocks() -> list[str]:
-    """나스닥 100 + S&P 500 통합 (중복 제거)"""
+    """Union of Nasdaq-100 + S&P 500."""
     os.makedirs(CACHE_DIR, exist_ok=True)
-    
+
     if os.path.exists(ALL_STOCKS_CACHE_FILE):
         try:
-            with open(ALL_STOCKS_CACHE_FILE, "r") as f:
-                cache = json.load(f)
-                cached_date = datetime.fromisoformat(cache["date"])
-                
-                if datetime.now() - cached_date < timedelta(days=CACHE_DAYS):
-                    return cache["symbols"]
-        except:
+            with open(ALL_STOCKS_CACHE_FILE, "r", encoding="utf-8") as fh:
+                cache = json.load(fh)
+            cached_date = datetime.fromisoformat(cache.get("date", "1970-01-01T00:00:00"))
+            if datetime.now() - cached_date < timedelta(days=CACHE_DAYS):
+                symbols = cache.get("symbols", [])
+                if isinstance(symbols, list):
+                    return [s for s in symbols if isinstance(s, str)]
+        except Exception:
             pass
-    
+
     nasdaq = get_nasdaq_100()
     sp500 = get_sp500()
-    
-    # 중복 제거 후 합치기
-    all_stocks = list(set(nasdaq + sp500))
-    all_stocks.sort()
-    
-    with open(ALL_STOCKS_CACHE_FILE, "w") as f:
-        json.dump({"date": datetime.now().isoformat(), "symbols": all_stocks}, f)
-    
-    print(f"📊 전체 종목: {len(all_stocks)}개 (나스닥100: {len(nasdaq)}, S&P500: {len(sp500)}, 중복제거)")
+    all_stocks = sorted(set(nasdaq + sp500))
+
+    try:
+        with open(ALL_STOCKS_CACHE_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"date": datetime.now().isoformat(), "symbols": all_stocks}, fh)
+        print(
+            f"Universe: {len(all_stocks)} symbols "
+            f"(Nasdaq100={len(nasdaq)}, S&P500={len(sp500)}, deduped)"
+        )
+    except Exception:
+        pass
     return all_stocks
 
 
-def fetch_stock_sector(symbol: str) -> dict:
-    """yfinance에서 종목의 섹터/산업 정보 가져오기"""
+def fetch_stock_sector(symbol: str) -> dict[str, str]:
+    """Fetch sector/industry metadata from yfinance."""
     import yfinance as yf
-    
+
+    symbol = _normalize_symbol(symbol) or ""
+    if not symbol:
+        return {"symbol": "", "sector": "Unknown", "industry": "Unknown", "name": ""}
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
+        info = yf.Ticker(symbol).info or {}
         return {
             "symbol": symbol,
-            "sector": info.get("sector", "Unknown"),
-            "industry": info.get("industry", "Unknown"),
-            "name": info.get("shortName", symbol),
+            "sector": str(info.get("sector") or "Unknown"),
+            "industry": str(info.get("industry") or "Unknown"),
+            "name": str(info.get("shortName") or symbol),
         }
-    except:
-        return {
-            "symbol": symbol,
-            "sector": "Unknown",
-            "industry": "Unknown",
-            "name": symbol,
-        }
+    except Exception:
+        return {"symbol": symbol, "sector": "Unknown", "industry": "Unknown", "name": symbol}
 
 
-def fetch_all_sectors(symbols: list[str], max_workers: int = 10) -> dict:
-    """모든 종목의 섹터 정보 병렬 수집"""
-    results = {}
-    
-    print(f"섹터 정보 수집 중... ({len(symbols)}개 종목)")
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+def fetch_all_sectors(symbols: list[str], max_workers: int = 10) -> dict[str, dict[str, str]]:
+    """Fetch sector metadata for symbols in parallel."""
+    results: dict[str, dict[str, str]] = {}
+    if not symbols:
+        return results
+
+    workers = min(max(2, max_workers), 16)
+    print(f"Loading sector metadata for {len(symbols)} symbols...")
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(fetch_stock_sector, s): s for s in symbols}
-        
         for i, future in enumerate(as_completed(futures), 1):
-            result = future.result()
-            results[result["symbol"]] = result
-            if i % 20 == 0:
-                print(f"  {i}/{len(symbols)} 완료...")
-    
+            item = future.result()
+            symbol = item.get("symbol")
+            if symbol:
+                results[symbol] = item
+            if i % 25 == 0 or i == len(symbols):
+                print(f"  -> {i}/{len(symbols)}")
     return results
 
 
-def get_sector_data(symbols: list[str] = None) -> dict:
-    """캐시된 섹터 데이터 반환 (없으면 수집)"""
+def get_sector_data(symbols: list[str] | None = None) -> dict[str, dict[str, str]]:
+    """Return cached sector metadata; fetch only missing entries when needed."""
     os.makedirs(CACHE_DIR, exist_ok=True)
-    
-    if symbols is None:
-        symbols = get_all_us_stocks()
-    
+    symbols = symbols or get_all_us_stocks()
+
     if os.path.exists(SECTOR_CACHE_FILE):
         try:
-            with open(SECTOR_CACHE_FILE, "r", encoding="utf-8") as f:
-                cache = json.load(f)
-                cached_date = datetime.fromisoformat(cache["date"])
-                cached_symbols = set(cache["data"].keys())
-                
-                # 캐시가 유효하고 모든 종목이 포함되어 있으면 사용
-                if datetime.now() - cached_date < timedelta(days=CACHE_DAYS):
-                    missing = set(symbols) - cached_symbols
-                    if not missing:
-                        return cache["data"]
-                    # 누락된 종목만 추가 수집
-                    print(f"누락된 {len(missing)}개 종목 섹터 정보 수집 중...")
-                    new_data = fetch_all_sectors(list(missing))
-                    cache["data"].update(new_data)
-                    with open(SECTOR_CACHE_FILE, "w", encoding="utf-8") as f:
-                        json.dump(cache, f, ensure_ascii=False, indent=2)
-                    return cache["data"]
-        except:
+            with open(SECTOR_CACHE_FILE, "r", encoding="utf-8") as fh:
+                cache = json.load(fh)
+            cached_date = datetime.fromisoformat(cache.get("date", "1970-01-01T00:00:00"))
+            data = cache.get("data", {})
+            if isinstance(data, dict) and datetime.now() - cached_date < timedelta(days=CACHE_DAYS):
+                cached_symbols = set(data.keys())
+                missing = [s for s in symbols if s not in cached_symbols]
+                if not missing:
+                    return data
+
+                print(f"Loading sector metadata for missing {len(missing)} symbols...")
+                data.update(fetch_all_sectors(missing))
+                with open(SECTOR_CACHE_FILE, "w", encoding="utf-8") as fh:
+                    json.dump({"date": datetime.now().isoformat(), "data": data}, fh, ensure_ascii=False, indent=2)
+                return data
+        except Exception:
             pass
-    
-    # 새로 수집
+
     data = fetch_all_sectors(symbols)
-    
     if data:
-        with open(SECTOR_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump({
-                "date": datetime.now().isoformat(),
-                "data": data
-            }, f, ensure_ascii=False, indent=2)
-    
+        try:
+            with open(SECTOR_CACHE_FILE, "w", encoding="utf-8") as fh:
+                json.dump({"date": datetime.now().isoformat(), "data": data}, fh, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
     return data
 
 
-def build_stock_categories(symbols: list[str] = None) -> dict:
-    """섹터별 종목 카테고리 동적 생성"""
-    if symbols is None:
-        symbols = get_all_us_stocks()
-    
+def build_stock_categories(symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    """Build dynamic category map from sector metadata."""
+    symbols = symbols or get_all_us_stocks()
     sector_data = get_sector_data(symbols)
-    
-    # 섹터별 이모지 및 ETF 매핑
-    SECTOR_INFO = {
-        "Technology": {"emoji": "💻", "etf": "XLK", "name": "기술"},
-        "Communication Services": {"emoji": "📡", "etf": "XLC", "name": "통신서비스"},
-        "Consumer Cyclical": {"emoji": "🛒", "etf": "XLY", "name": "경기소비재"},
-        "Consumer Defensive": {"emoji": "🏪", "etf": "XLP", "name": "필수소비재"},
-        "Healthcare": {"emoji": "🏥", "etf": "XLV", "name": "헬스케어"},
-        "Financial Services": {"emoji": "💳", "etf": "XLF", "name": "금융"},
-        "Industrials": {"emoji": "🏭", "etf": "XLI", "name": "산업재"},
-        "Energy": {"emoji": "⛽", "etf": "XLE", "name": "에너지"},
-        "Utilities": {"emoji": "💡", "etf": "XLU", "name": "유틸리티"},
-        "Real Estate": {"emoji": "🏠", "etf": "XLRE", "name": "부동산"},
-        "Basic Materials": {"emoji": "🧱", "etf": "XLB", "name": "소재"},
-        "Unknown": {"emoji": "❓", "etf": "SPY", "name": "기타"},
+
+    sector_info: dict[str, dict[str, str]] = {
+        "Technology": {"emoji": "💻", "etf": "XLK", "name": "Technology"},
+        "Communication Services": {"emoji": "📡", "etf": "XLC", "name": "Communication"},
+        "Consumer Cyclical": {"emoji": "🛍️", "etf": "XLY", "name": "Consumer Cyclical"},
+        "Consumer Defensive": {"emoji": "🛒", "etf": "XLP", "name": "Consumer Defensive"},
+        "Healthcare": {"emoji": "🏥", "etf": "XLV", "name": "Healthcare"},
+        "Financial Services": {"emoji": "🏦", "etf": "XLF", "name": "Financials"},
+        "Industrials": {"emoji": "🏭", "etf": "XLI", "name": "Industrials"},
+        "Energy": {"emoji": "⚡", "etf": "XLE", "name": "Energy"},
+        "Utilities": {"emoji": "🔌", "etf": "XLU", "name": "Utilities"},
+        "Real Estate": {"emoji": "🏘️", "etf": "XLRE", "name": "Real Estate"},
+        "Basic Materials": {"emoji": "🧱", "etf": "XLB", "name": "Materials"},
+        "Unknown": {"emoji": "❓", "etf": "SPY", "name": "Other"},
     }
-    
-    # 섹터별로 종목 그룹화
-    categories = {}
-    
+
+    categories: dict[str, dict[str, Any]] = {}
     for symbol in symbols:
         info = sector_data.get(symbol, {"sector": "Unknown", "industry": "Unknown"})
-        sector = info.get("sector", "Unknown")
-        
+        sector = str(info.get("sector") or "Unknown")
+        industry = str(info.get("industry") or "Unknown")
+
         if sector not in categories:
-            sector_info = SECTOR_INFO.get(sector, SECTOR_INFO["Unknown"])
+            meta = sector_info.get(sector, sector_info["Unknown"])
             categories[sector] = {
-                "emoji": sector_info["emoji"],
-                "etf": sector_info["etf"],
-                "name": sector_info["name"],
+                "emoji": meta["emoji"],
+                "etf": meta["etf"],
+                "name": meta["name"],
                 "stocks": [],
                 "industries": {},
             }
-        
+
         categories[sector]["stocks"].append(symbol)
-        
-        # 산업별로도 그룹화
-        industry = info.get("industry", "Unknown")
-        if industry not in categories[sector]["industries"]:
-            categories[sector]["industries"][industry] = []
-        categories[sector]["industries"][industry].append(symbol)
-    
-    # 종목 수 기준 정렬
+        categories[sector]["industries"].setdefault(industry, []).append(symbol)
+
     for sector in categories:
         categories[sector]["stocks"].sort()
-        categories[sector]["description"] = f"{len(categories[sector]['stocks'])}개 종목"
-    
+        categories[sector]["description"] = f"{len(categories[sector]['stocks'])} symbols"
+
     return categories
 
 
-# ===== 전역 변수 =====
+# ===== Runtime lazy loaders =====
 
-# 나스닥 100 종목
-NASDAQ_100 = get_nasdaq_100()
 
-# S&P 500 종목
-SP500 = get_sp500()
+@lru_cache(maxsize=1)
+def load_nasdaq_100() -> list[str]:
+    return get_nasdaq_100()
 
-# 전체 미국 주식 (나스닥 100 + S&P 500)
-ALL_US_STOCKS = get_all_us_stocks()
 
-# 시장 지표
-MARKET_INDICATOR = "QQQ"
+@lru_cache(maxsize=1)
+def load_sp500() -> list[str]:
+    return get_sp500()
 
-# 섹터별 카테고리 (동적 생성, 전체 종목 기준)
-try:
-    STOCK_CATEGORIES = build_stock_categories(ALL_US_STOCKS)
-except Exception as e:
-    print(f"섹터 카테고리 생성 실패: {e}")
-    STOCK_CATEGORIES = {}
 
-# 전체 카테고리 종목
-ALL_CATEGORY_STOCKS = ALL_US_STOCKS
+@lru_cache(maxsize=1)
+def load_all_us_stocks() -> list[str]:
+    return get_all_us_stocks()
+
+
+@lru_cache(maxsize=1)
+def load_stock_categories() -> dict[str, dict[str, Any]]:
+    try:
+        return build_stock_categories(load_all_us_stocks())
+    except Exception as exc:
+        print(f"Category build failed: {exc}")
+        return {}
+
+
+def load_all_category_stocks() -> list[str]:
+    return load_all_us_stocks()
+
+
+# ===== Backward-compatible globals =====
+#
+# Legacy modules/tests import these names directly. Keep them as lightweight
+# defaults and allow explicit eager mode for users who still prefer it.
+
+NASDAQ_100: list[str] = []
+SP500: list[str] = []
+ALL_US_STOCKS: list[str] = []
+STOCK_CATEGORIES: dict[str, dict[str, Any]] = {}
+ALL_CATEGORY_STOCKS: list[str] = []
+
+if os.getenv("CONFIG_EAGER_LOAD", "false").lower() == "true":
+    NASDAQ_100 = load_nasdaq_100()
+    SP500 = load_sp500()
+    ALL_US_STOCKS = load_all_us_stocks()
+    STOCK_CATEGORIES = load_stock_categories()
+    ALL_CATEGORY_STOCKS = load_all_category_stocks()
 
 
 def get_category_summary() -> str:
-    """카테고리 요약 출력"""
-    lines = ["📂 섹터별 종목 분류:"]
-    for sector, info in sorted(STOCK_CATEGORIES.items(), key=lambda x: -len(x[1]["stocks"])):
-        lines.append(f"  {info['emoji']} {info['name']} ({sector}): {len(info['stocks'])}개")
+    categories = load_stock_categories()
+    lines = ["Sector summary:"]
+    for sector, info in sorted(categories.items(), key=lambda x: -len(x[1].get("stocks", []))):
+        lines.append(
+            f"  {info.get('emoji', '')} {info.get('name', sector)} "
+            f"({sector}): {len(info.get('stocks', []))}"
+        )
     return "\n".join(lines)
 
 
 if __name__ == "__main__":
+    universe = load_all_category_stocks()
     print(get_category_summary())
-    print(f"\n총 {len(ALL_CATEGORY_STOCKS)}개 종목")
+    print(f"\nTotal symbols: {len(universe)}")

@@ -1,600 +1,648 @@
-"""
-텔레그램 콜백 핸들러 모듈
-"""
+# -*- coding: utf-8 -*-
+"""Telegram callback handlers."""
+
+from __future__ import annotations
+
 import os
 import sys
-
-# src 폴더를 path에 추가
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from bot import keyboards as kb
-from bot import formatters as fmt
-from core.stock_data import get_stock_data, get_stock_info, get_market_condition, get_fear_greed_index
-from core.indicators import calculate_indicators, get_full_analysis
-from core.scoring import calculate_score
-from core.signals import check_entry_signal, scan_stocks
-from trading.kis_api import kis
-from trading.watchlist import watchlist
-from trading.portfolio import portfolio
-from trading.monitor import monitor
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from ai.analyzer import ai
+from bot import formatters as fmt
+from bot import keyboards as kb
+from bot.scan_cache import get_scan_result
+from bot.user_prefs import get_chat_style, normalize_style, set_chat_style, style_label
+from core.indicators import get_full_analysis
+from core.scoring import calculate_score
+from core.stock_data import get_fear_greed_index, get_market_condition
+from trading.kis_api import kis
+from trading.monitor import monitor
+from trading.portfolio import portfolio
+from trading.watchlist import watchlist
 
 
-# ===== 헬퍼 함수 =====
-async def send_long_message(query, text: str, max_len: int = 4000):
-    """긴 메시지 분할 전송"""
+def _chat_id_from_query(query) -> str:
+    if getattr(query, "message", None) and getattr(query.message, "chat_id", None) is not None:
+        return str(query.message.chat_id)
+    if getattr(query, "from_user", None) and getattr(query.from_user, "id", None) is not None:
+        return str(query.from_user.id)
+    return ""
+
+
+def _style_from_query(query) -> str:
+    return get_chat_style(_chat_id_from_query(query))
+
+
+async def send_long_message(query, text: str, max_len: int = 4000, reply_markup=None) -> None:
+    """Send long HTML text by splitting on newline boundaries."""
+    final_markup = reply_markup if reply_markup is not None else kb.back()
+
     if len(text) <= max_len:
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=final_markup)
         return
-    
-    # 첫 메시지는 edit, 나머지는 reply
-    parts = []
-    while text:
-        if len(text) <= max_len:
-            parts.append(text)
+
+    parts: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= max_len:
+            parts.append(remaining)
             break
-        # 줄바꿈 기준으로 자르기
-        cut_pos = text.rfind('\n', 0, max_len)
+        cut_pos = remaining.rfind("\n", 0, max_len)
         if cut_pos == -1:
             cut_pos = max_len
-        parts.append(text[:cut_pos])
-        text = text[cut_pos:].lstrip('\n')
-    
-    # 첫 파트는 edit
+        parts.append(remaining[:cut_pos])
+        remaining = remaining[cut_pos:].lstrip("\n")
+
     await query.edit_message_text(parts[0], parse_mode="HTML")
-    
-    # 나머지는 새 메시지로 전송
-    for i, part in enumerate(parts[1:], 2):
-        if i == len(parts):  # 마지막 메시지에만 키보드 추가
-            await query.message.reply_text(part, parse_mode="HTML", reply_markup=kb.back())
+    for idx, part in enumerate(parts[1:], 1):
+        if idx == len(parts) - 1:
+            await query.message.reply_text(part, parse_mode="HTML", reply_markup=final_markup)
         else:
             await query.message.reply_text(part, parse_mode="HTML")
 
 
-# ===== 메인 메뉴 핸들러 =====
-async def handle_main(query):
-    await query.edit_message_text("메인 메뉴 👇", reply_markup=kb.main_menu())
+async def _guard_trading_ready(query) -> bool:
+    if kb.trading_enabled():
+        return True
+
+    text = "❌ <b>트레이딩 비활성화</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "KIS API 키가 설정되지 않았습니다.\n\n"
+    text += "필수 환경변수: <code>KIS_APP_KEY</code>, <code>KIS_APP_SECRET</code>, <code>KIS_ACCOUNT_NO</code>"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
+    return False
 
 
-async def handle_recommend(query):
-    """추천 종목"""
-    await query.edit_message_text("🌟 추천 종목 분석 중... (5~10분 소요)")
+def _diversify_by_sector(stocks: list[dict], limit: int = 10, max_per_sector: int = 3) -> list[dict]:
+    if not stocks:
+        return []
+
+    picked: list[dict] = []
+    counts: dict[str, int] = {}
+
+    for stock in stocks:
+        sector = str(stock.get("sector") or "Unknown")
+        if counts.get(sector, 0) >= max_per_sector:
+            continue
+        picked.append(stock)
+        counts[sector] = counts.get(sector, 0) + 1
+        if len(picked) >= limit:
+            return picked
+
+    seen = {s.get("symbol") for s in picked}
+    for stock in stocks:
+        symbol = stock.get("symbol")
+        if symbol in seen:
+            continue
+        picked.append(stock)
+        seen.add(symbol)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+async def handle_main(query) -> None:
+    data = watchlist.get_all()
+    settings = data.get("settings", {})
+
+    stock_count = len(data.get("stocks", {}))
+    monitor_on = settings.get("monitor_enabled", True)
+    auto_buy = settings.get("auto_buy", False)
+    auto_sell = settings.get("auto_sell", False)
+    style = _style_from_query(query)
+
+    text = "🏠 <b>AutoStock</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"관심종목: <b>{stock_count}</b>개\n"
+    text += f"모니터링: {'ON' if monitor_on else 'OFF'}\n"
+    text += f"자동매수/손절: {'ON' if auto_buy else 'OFF'} / {'ON' if auto_sell else 'OFF'}\n"
+    text += f"표시 스타일: {style_label(style)}\n"
+    text += f"트레이딩: {'사용 가능' if kb.trading_enabled() else '비활성'}\n\n"
+    text += "심볼을 직접 보내도 바로 분석됩니다. (예: <code>AAPL</code>)"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
+
+
+async def handle_help(query) -> None:
+    text = "📌 <b>빠른 사용법</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "• 추천 종목: 조건 기반 상위 후보\n"
+    text += "• 빠른 스캔: 전체 유니버스 상위 요약\n"
+    text += "• AI 리포트: 시장+뉴스+스캔 종합\n"
+    text += "• 종목 분석: 개별 차트/점수 확인\n"
+    text += "• 관심종목: 모니터링/알림 관리\n"
+    text += "• 표시 설정: 초간단/표준/상세"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
+
+
+async def handle_display_settings(query) -> None:
+    style = _style_from_query(query)
+    text = "⚙️ <b>표시 설정</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"현재 스타일: <b>{style_label(style)}</b>\n\n"
+    text += "• 초간단: 핵심 숫자만\n"
+    text += "• 표준: 매매 정보 포함\n"
+    text += "• 상세: 보조 지표/추가 경고 포함"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(style))
+
+
+async def handle_set_style(query, data: str) -> None:
+    chat_id = _chat_id_from_query(query)
+    requested = data[6:]
+    style = normalize_style(requested)
+
+    if not chat_id:
+        await query.answer("채팅 정보를 찾을 수 없습니다.")
+        return
+
+    saved = set_chat_style(chat_id, style)
+    await query.answer(f"표시 스타일: {style_label(saved)}")
+    await handle_display_settings(query)
+
+
+async def handle_recommend(query) -> None:
+    await query.edit_message_text("📈 추천 종목 생성 중... (약 5~10분)")
+
     try:
-        from config import ALL_US_STOCKS
-        result = scan_stocks(ALL_US_STOCKS)  # 전체 스캔
-        
-        # 추천 품질 필터: 기술 신호 또는 높은 점수 + 과도한 위험 제외
-        filtered = [
-            s for s in result["results"]
-            if s.get("strategy_count", 0) > 0 or s.get("score", {}).get("total_score", 0) >= 65
-        ]
-        filtered = [
-            s for s in filtered
-            if s.get("score", {}).get("risk", {}).get("score", 100) < 70
-        ]
-        filtered = [
-            s for s in filtered
-            if s.get("score", {}).get("confidence", {}).get("score", 0) >= 55
-        ]
+        from config import load_all_us_stocks
 
-        # 품질 점수 기준 정렬, 상위 20개
-        stocks = sorted(filtered, key=lambda x: -x.get("quality_score", x["score"]["total_score"]))[:20]
-        text = fmt.format_recommendations(stocks, result["total"])
+        style = _style_from_query(query)
+        result, used_cache = get_scan_result(load_all_us_stocks(), max_age_sec=300)
+
+        filtered: list[dict] = []
+        for stock in result["results"]:
+            score = stock.get("score", {})
+            plan = stock.get("trade_plan", {})
+
+            rr2 = float(plan.get("risk_reward", {}).get("rr2", 0) or 0)
+            stage = str(plan.get("positioning", {}).get("stage", ""))
+            position_pct = float(plan.get("execution", {}).get("position_pct", 0) or 0)
+            liq = float(stock.get("liquidity_score", 0) or 0)
+            event_level = stock.get("event_risk_level", "unknown")
+
+            if score.get("risk", {}).get("score", 100) >= 68:
+                continue
+            if score.get("confidence", {}).get("score", 0) < 55:
+                continue
+            if not plan.get("tradeable", False):
+                continue
+            if rr2 < 1.25:
+                continue
+            if stage == "right_shoulder":
+                continue
+            if liq < 50:
+                continue
+            if position_pct < 1.2:
+                continue
+            if event_level == "imminent":
+                continue
+            filtered.append(stock)
+
+        if len(filtered) < 8:
+            relaxed: list[dict] = []
+            for stock in result["results"]:
+                score = stock.get("score", {})
+                plan = stock.get("trade_plan", {})
+                rr2 = float(plan.get("risk_reward", {}).get("rr2", 0) or 0)
+                stage = str(plan.get("positioning", {}).get("stage", ""))
+                liq = float(stock.get("liquidity_score", 0) or 0)
+                event_level = stock.get("event_risk_level", "unknown")
+
+                if score.get("risk", {}).get("score", 100) >= 72:
+                    continue
+                if score.get("confidence", {}).get("score", 0) < 50:
+                    continue
+                if stage == "right_shoulder":
+                    continue
+                if rr2 < 1.1:
+                    continue
+                if liq < 45:
+                    continue
+                if event_level == "imminent":
+                    continue
+                relaxed.append(stock)
+            filtered = relaxed
+
+        ranked = sorted(
+            filtered,
+            key=lambda x: -x.get(
+                "investability_score",
+                x.get("quality_score", x.get("score", {}).get("total_score", 0)),
+            ),
+        )
+
+        picks = _diversify_by_sector(ranked, limit=10, max_per_sector=3)
+        text = fmt.format_recommendations(picks, result["total"], style=style)
+        if used_cache:
+            text += "\n\n<i>최근 스캔 캐시 사용</i>"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
-    except Exception as e:
-        await query.edit_message_text(f"추천 실패: {e}", reply_markup=kb.back())
+    except Exception as exc:
+        await query.edit_message_text(f"추천 생성 실패: {exc}", reply_markup=kb.back())
 
 
-async def handle_scan(query):
-    """전체 스캔"""
-    await query.edit_message_text("🔍 전체 스캔 중... (5~10분 소요)")
+async def handle_scan(query) -> None:
+    await query.edit_message_text("🔎 전체 스캔 중... (약 5~10분)")
+
     try:
-        from config import ALL_US_STOCKS
-        result = scan_stocks(ALL_US_STOCKS)  # 전체 스캔
+        from config import load_all_us_stocks
 
-        text = f"🔍 <b>스캔 결과</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-        text += f"분석: {result['total']}개\n\n"
-        
-        for r in result["results"][:10]:
-            if r.get("strategies"):
-                strats = ", ".join([s["emoji"] for s in r["strategies"]])
-                text += f"• {r['symbol']} ${r['price']} | {strats}\n"
-        
+        style = _style_from_query(query)
+        result, used_cache = get_scan_result(load_all_us_stocks(), max_age_sec=240)
+        text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
+        if used_cache:
+            text += "\n\n<i>최근 스캔 캐시 사용</i>"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
-    except Exception as e:
-        await query.edit_message_text(f"스캔 실패: {e}", reply_markup=kb.back())
+    except Exception as exc:
+        await query.edit_message_text(f"스캔 실패: {exc}", reply_markup=kb.back())
 
 
-async def handle_ai_recommend(query):
-    """AI 추천 (전체 종목 + 모든 뉴스 통합)"""
-    await query.edit_message_text("🤖 AI 분석 중... (10~15분 소요)\n\n1️⃣ 전체 종목 스캔...")
+async def handle_ai_recommend(query) -> None:
+    await query.edit_message_text("🤖 AI 리포트 생성 중...\n1/4 스캔")
+
     try:
-        from config import ALL_US_STOCKS, STOCK_CATEGORIES
+        from config import load_all_us_stocks, load_stock_categories
         from core.news import get_bulk_news, get_market_news
-        
-        # 1. 전체 종목 스캔
-        result = scan_stocks(ALL_US_STOCKS)
+
+        style = _style_from_query(query)
+        universe = load_all_us_stocks()
+        categories = load_stock_categories()
+
+        result, used_cache = get_scan_result(universe, max_age_sec=300)
         stocks = result["results"]
-        
-        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 수집...")
-        
-        # 2. 시장 데이터
+
+        cache_note = " (캐시)" if used_cache else ""
+        await query.edit_message_text(
+            f"🤖 AI 리포트 생성 중...\n1/4 스캔 완료{cache_note} ({len(stocks)}개)\n2/4 시장 데이터"
+        )
+
         market_data = {
             "fear_greed": get_fear_greed_index(),
             "market_condition": get_market_condition(),
             "market_news": get_market_news(),
         }
-        
-        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 주요 종목 뉴스 수집...")
-        
-        # 3. 상위 100개 종목 뉴스 수집
-        top_stocks = sorted(stocks, key=lambda x: -x.get("score", {}).get("total_score", 0))[:100]
-        top_symbols = [s['symbol'] for s in top_stocks]
-        news_data = get_bulk_news(top_symbols, days=3)
-        
-        await query.edit_message_text(f"🤖 AI 분석 중...\n\n1️⃣ 스캔 완료 ({len(stocks)}개)\n2️⃣ 시장 데이터 완료\n3️⃣ 뉴스 수집 완료 ({len(news_data)}개)\n4️⃣ AI 종합 분석 중...")
-        
-        # 4. AI 분석
-        ai_result = ai.analyze_full_market(stocks, news_data, market_data, STOCK_CATEGORIES)
-        
+
+        await query.edit_message_text(
+            "🤖 AI 리포트 생성 중...\n1/4 스캔 완료\n2/4 시장 데이터 완료\n3/4 뉴스 수집"
+        )
+
+        news_symbols = ai.select_news_symbols(stocks, limit=60)
+        news_data = get_bulk_news(news_symbols, days=3)
+
+        await query.edit_message_text(
+            "🤖 AI 리포트 생성 중...\n"
+            "1/4 스캔 완료\n"
+            "2/4 시장 데이터 완료\n"
+            f"3/4 뉴스 수집 완료 ({len(news_data)}/{len(news_symbols)})\n"
+            "4/4 AI 분석"
+        )
+
+        ai_result = ai.analyze_full_market(stocks, news_data, market_data, categories)
         if "error" in ai_result:
-            text = f"❌ {ai_result['error']}"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
-        else:
-            stats = ai_result.get("stats", {})
-            header = f"🤖 <b>AI 종합 추천</b> ({ai_result['total']}개 분석)\n"
-            header += f"📊 평균RSI: {stats.get('avg_rsi', 0):.0f} | 평균점수: {stats.get('avg_score', 0):.0f}\n"
-            header += f"📉 과매도: {stats.get('oversold', 0)}개 | 과매수: {stats.get('overbought', 0)}개\n"
-            header += "━━━━━━━━━━━━━━━━━━\n\n"
-            text = header + ai_result['analysis']
-            await send_long_message(query, text)
-    except Exception as e:
-        await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=kb.back())
+            await query.edit_message_text(f"❌ {ai_result['error']}", reply_markup=kb.back())
+            return
+
+        stats = ai_result.get("stats", {})
+        header = f"🤖 <b>AI 리포트</b> ({ai_result.get('total', 0)}개 분석)\n"
+        header += f"평균 RSI {stats.get('avg_rsi', 0):.0f} │ 평균 점수 {stats.get('avg_score', 0):.0f}\n"
+        header += f"과매도 {stats.get('oversold', 0)} │ 과매수 {stats.get('overbought', 0)}\n"
+        header += f"강한 추세 {stats.get('strong_trend', 0)} │ 트레이드 가능 {stats.get('tradeable_count', 0)}\n"
+        header += f"표시 스타일: {style_label(style)}\n"
+        header += "━━━━━━━━━━━━━━━━━━\n\n"
+
+        await send_long_message(query, header + ai_result["analysis"], reply_markup=kb.back())
+    except Exception as exc:
+        await query.edit_message_text(f"AI 분석 실패: {exc}", reply_markup=kb.back())
 
 
-async def handle_analyze_menu(query):
-    await query.edit_message_text("📊 분석할 종목 선택:", reply_markup=kb.analyze_menu())
+async def handle_analyze_menu(query) -> None:
+    text = "📊 <b>종목 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "버튼으로 선택하거나 심볼을 직접 입력하세요.\n"
+    text += "예: <code>AAPL</code>, <code>TSLA</code>"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.analyze_menu())
 
 
-async def handle_analyze_input(query):
-    """직접 입력 모드"""
-    text = "✏️ <b>종목 직접 입력</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "분석할 종목 심볼을 입력하세요.\n\n"
-    text += "예시: <code>AAPL</code>, <code>TSLA</code>, <code>NVDA</code>\n\n"
-    text += "💡 그냥 심볼만 입력하면 됩니다!"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back("analyze_menu", "종목분석"))
+async def handle_analyze_input(query) -> None:
+    text = "⌨️ <b>직접 입력 모드</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "채팅창에 심볼만 입력하면 됩니다.\n"
+    text += "예: <code>NVDA</code>, <code>MSFT</code>"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back("analyze_menu", "종목 분석"))
 
 
-async def handle_fear_greed(query):
-    """공포탐욕 지수"""
-    await query.edit_message_text("😱 공포탐욕 지수 로딩...")
+async def handle_fear_greed(query) -> None:
+    await query.edit_message_text("😱 시장 심리 불러오는 중...")
     try:
+        style = _style_from_query(query)
         fg = get_fear_greed_index()
-        text = fmt.format_fear_greed(fg)
+        text = fmt.format_fear_greed(fg, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
-    except Exception as e:
-        await query.edit_message_text(f"로딩 실패: {e}", reply_markup=kb.back())
+    except Exception as exc:
+        await query.edit_message_text(f"조회 실패: {exc}", reply_markup=kb.back())
 
 
-async def handle_category_menu(query):
-    await query.edit_message_text("📂 카테고리별 추천 - 선택하세요:", reply_markup=kb.category_menu())
+async def handle_trading_menu(query) -> None:
+    if not await _guard_trading_ready(query):
+        return
 
-
-# ===== 자동매매 핸들러 =====
-async def handle_trading_menu(query):
-    text = "💰 <b>자동매매</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "한국투자증권 API를 통한 해외주식 자동매매\n\n"
-    text += "⚠️ 자동매매 활성화 시 실제 주문이 실행됩니다!"
+    text = "💰 <b>트레이딩</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "KIS API를 통한 주문/자동매매 설정 메뉴입니다.\n"
+    text += "자동매매는 반드시 모의계좌로 먼저 점검하세요."
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
 
 
-async def handle_auto_settings(query):
-    """자동매매 설정"""
+async def handle_auto_settings(query) -> None:
+    if not await _guard_trading_ready(query):
+        return
+
     auto_buy = watchlist.is_auto_buy()
-    auto_sell = watchlist._load()["settings"].get("auto_sell", False)
-    
+    auto_sell = watchlist._load().get("settings", {}).get("auto_sell", False)
+
     text = fmt.header("자동매매 설정", "⚙️")
-    text += "\n<b>🤖 자동매수</b>\n"
-    text += f"상태: {'✅ 활성화' if auto_buy else '❌ 비활성화'}\n"
-    text += "관심종목 저점 신호 시 자동 매수\n"
-    text += "\n<b>🛑 자동손절</b>\n"
-    text += f"상태: {'✅ 활성화' if auto_sell else '❌ 비활성화'}\n"
-    text += "보유종목 -7% 이하 시 자동 매도\n"
-    text += "\n💡 스케줄: 매일 21:00 자동 실행"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.auto_settings_menu(auto_buy, auto_sell))
+    text += f"\n자동매수: {'ON' if auto_buy else 'OFF'}"
+    text += f"\n자동손절: {'ON' if auto_sell else 'OFF'}\n"
+    text += "\n• 자동매수: 관심종목 저점 신호 기반"
+    text += "\n• 자동손절: 보유종목 -7% 이하"
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=kb.auto_settings_menu(auto_buy, auto_sell),
+    )
 
 
-async def handle_toggle_auto_buy(query):
-    """자동매수 토글"""
+async def handle_toggle_auto_buy(query) -> None:
+    if not await _guard_trading_ready(query):
+        return
+
     current = watchlist.is_auto_buy()
     watchlist.set_auto_buy(not current)
-    new_status = "활성화" if not current else "비활성화"
-    await query.answer(f"자동매수 {new_status}됨")
+    await query.answer(f"자동매수 {'ON' if not current else 'OFF'}")
     await handle_auto_settings(query)
 
 
-async def handle_toggle_auto_sell(query):
-    """자동손절 토글"""
+async def handle_toggle_auto_sell(query) -> None:
+    if not await _guard_trading_ready(query):
+        return
+
     data = watchlist._load()
-    current = data["settings"].get("auto_sell", False)
-    data["settings"]["auto_sell"] = not current
+    current = data.get("settings", {}).get("auto_sell", False)
+    data.setdefault("settings", {})["auto_sell"] = not current
     watchlist._save()
-    new_status = "활성화" if not current else "비활성화"
-    await query.answer(f"자동손절 {new_status}됨")
+
+    await query.answer(f"자동손절 {'ON' if not current else 'OFF'}")
     await handle_auto_settings(query)
 
 
-async def handle_trade_history(query):
-    """매매 기록"""
-    text = fmt.header("매매 기록", "📜")
-    text += "\n최근 자동매매 기록이 여기에 표시됩니다.\n"
-    text += "(추후 구현 예정)"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back("auto_settings", "자동매매"))
+async def handle_balance(query) -> None:
+    if not await _guard_trading_ready(query):
+        return
 
-
-async def handle_balance(query):
-    """잔고 조회"""
-    await query.edit_message_text("📊 잔고 조회 중...")
+    await query.edit_message_text("💵 잔고 조회 중...")
     try:
+        style = _style_from_query(query)
         result = portfolio.get_status()
         if "error" in result:
             await query.edit_message_text(f"❌ {result['error']}", reply_markup=kb.trading_menu())
             return
-        text = fmt.format_balance(result)
+
+        text = fmt.format_balance(result, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
-    except Exception as e:
-        await query.edit_message_text(f"잔고 조회 실패: {e}", reply_markup=kb.trading_menu())
+    except Exception as exc:
+        await query.edit_message_text(f"잔고 조회 실패: {exc}", reply_markup=kb.trading_menu())
 
 
-async def handle_orders(query):
-    """미체결 주문"""
+async def handle_orders(query) -> None:
+    if not await _guard_trading_ready(query):
+        return
+
     await query.edit_message_text("📋 미체결 주문 조회 중...")
     try:
+        style = _style_from_query(query)
         result = kis.get_orders()
         if "error" in result:
             await query.edit_message_text(f"❌ {result['error']}", reply_markup=kb.trading_menu())
             return
-        text = fmt.format_orders(result.get("orders", []))
+
+        text = fmt.format_orders(result.get("orders", []), style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
-    except Exception as e:
-        await query.edit_message_text(f"주문 조회 실패: {e}", reply_markup=kb.trading_menu())
+    except Exception as exc:
+        await query.edit_message_text(f"주문 조회 실패: {exc}", reply_markup=kb.trading_menu())
 
 
-async def handle_api_status(query):
-    """API 상태"""
+async def handle_api_status(query) -> None:
+    if not await _guard_trading_ready(query):
+        return
+
     try:
+        style = _style_from_query(query)
         status = kis.check_status()
-        text = fmt.format_api_status(status)
+        text = fmt.format_api_status(status, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
-    except Exception as e:
-        await query.edit_message_text(f"상태 확인 실패: {e}", reply_markup=kb.trading_menu())
+    except Exception as exc:
+        await query.edit_message_text(f"상태 확인 실패: {exc}", reply_markup=kb.trading_menu())
 
 
-# ===== 관심종목 핸들러 =====
-async def handle_watchlist_main(query):
-    """관심종목 메인"""
+async def handle_watchlist_main(query) -> None:
     data = watchlist.get_all()
-    stock_count = len(data.get("stocks", {}))
     settings = data.get("settings", {})
+
+    stock_count = len(data.get("stocks", {}))
     monitor_on = settings.get("monitor_enabled", True)
     interval = settings.get("monitor_interval", 30)
-    
+    auto_buy = settings.get("auto_buy", False)
+
     text = "👀 <b>관심종목</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += f"📌 등록 종목: {stock_count}개\n"
-    text += f"🔔 모니터링: {'ON' if monitor_on else 'OFF'}\n"
-    text += f"⏱️ 체크 간격: {interval}분\n\n"
-    text += "<b>알림 조건:</b>\n"
-    text += "• 가격 ±3% 변동\n"
-    text += "• RSI 과매도(30↓) / 과매수(70↑)\n"
-    text += "• 지지선/저항선 돌파\n"
-    text += "• 골든크로스/데드크로스\n"
-    text += "• 거래량 급증 (2배↑)\n"
-    text += "• 캔들 패턴 감지"
+    text += f"등록 종목: {stock_count}개\n"
+    text += f"모니터링: {'ON' if monitor_on else 'OFF'} ({interval}분)\n"
+    text += f"자동매수: {'ON' if auto_buy else 'OFF'}\n\n"
+    text += "신호 기준: RSI, BB 위치, 단기 하락, 이평 괴리"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
 
 
-async def handle_watchlist(query):
-    """관심종목 (자동매매 메뉴에서)"""
-    await handle_watchlist_main(query)
+async def handle_watchlist_status(query) -> None:
+    await query.edit_message_text("📋 관심종목 상태 불러오는 중...")
 
-
-async def handle_watchlist_status(query):
-    """관심종목 현황"""
-    await query.edit_message_text("📋 관심종목 현황 조회 중...")
     try:
+        style = _style_from_query(query)
         stocks = watchlist.get_status()
-        if not stocks:
-            text = "👀 <b>관심종목 현황</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-            text += "등록된 종목이 없습니다.\n\n➕ 종목추가 버튼으로 추가하세요!"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
-            return
-        
-        text = "👀 <b>관심종목 현황</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-        
-        for s in stocks:
-            # 상태 이모지
-            if s["is_signal"]:
-                status_emoji = "🟢"  # 매수 신호
-            elif s.get("rsi", 50) > 70:
-                status_emoji = "🔴"  # 과매수
-            else:
-                status_emoji = "⚪"  # 중립
-            
-            text += f"{status_emoji} <b>{s['symbol']}</b>\n"
-            text += f"   현재: ${s['price']:.2f} ({s['change_pct']:+.1f}%)\n"
-            text += f"   RSI: {s['rsi']:.0f} | BB: {s['bb_position']:.0f}%\n"
-            
-            if s["is_signal"]:
-                text += f"   🚨 <b>저점 신호! ({s['strength']})</b>\n"
-            text += "\n"
-        
-        text += f"━━━━━━━━━━━━━━━━━━\n"
-        text += f"🟢 매수신호 | ⚪ 중립 | 🔴 과매수"
-        
+        text = fmt.format_watchlist(stocks, watchlist.is_auto_buy(), style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
-    except Exception as e:
-        await query.edit_message_text(f"조회 실패: {e}", reply_markup=kb.watchlist_main_menu())
+    except Exception as exc:
+        await query.edit_message_text(f"조회 실패: {exc}", reply_markup=kb.watchlist_main_menu())
 
 
-async def handle_watchlist_check_now(query):
-    """지금 바로 체크"""
-    await query.edit_message_text("🔍 관심종목 체크 중...")
+async def handle_watchlist_check_now(query) -> None:
+    await query.edit_message_text("⚡ 관심종목 즉시 체크 중...")
+
     try:
+        style = _style_from_query(query)
         results = monitor.check_all_watchlist()
-        
-        if not results:
-            # 알림 없으면 현황 표시
-            stocks = watchlist.get_status()
-            if not stocks:
-                text = "👀 등록된 관심종목이 없습니다."
-            else:
-                text = "✅ <b>체크 완료</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-                text += "특별한 알림 조건 없음\n\n"
-                for s in stocks:
-                    summary = monitor.get_summary(s['symbol'])
-                    text += summary + "\n"
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+        if results:
+            text = monitor.format_alert_message(results)
+            await send_long_message(query, text, reply_markup=kb.watchlist_main_menu())
             return
-        
-        # 알림 있으면 표시
-        text = monitor.format_alert_message(results)
-        await send_long_message(query, text)
-    except Exception as e:
-        await query.edit_message_text(f"체크 실패: {e}", reply_markup=kb.watchlist_main_menu())
+
+        total = len(watchlist.get_all().get("stocks", {}))
+        text = fmt.format_watchlist_signals([], total, style=style)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+    except Exception as exc:
+        await query.edit_message_text(f"체크 실패: {exc}", reply_markup=kb.watchlist_main_menu())
 
 
-async def handle_watchlist_add_menu(query):
-    """종목 추가 메뉴"""
+async def handle_watchlist_add_menu(query) -> None:
     text = "➕ <b>관심종목 추가</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "추가할 종목을 선택하거나\n심볼을 직접 입력하세요.\n\n"
-    text += "예: <code>AAPL</code>, <code>TSLA</code>"
+    text += "버튼으로 선택하거나, 심볼을 직접 입력해도 됩니다."
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_add())
 
 
-async def handle_watchlist_remove_menu(query):
-    """종목 삭제 메뉴"""
-    data = watchlist.get_all()
-    stocks = list(data.get("stocks", {}).keys())
-    
+async def handle_watchlist_remove_menu(query) -> None:
+    stocks = list(watchlist.get_all().get("stocks", {}).keys())
     if not stocks:
-        text = "❌ 삭제할 종목이 없습니다."
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+        await query.edit_message_text("삭제할 종목이 없습니다.", reply_markup=kb.watchlist_main_menu())
         return
-    
+
     text = "➖ <b>관심종목 삭제</b>\n━━━━━━━━━━━━━━━━━━\n\n삭제할 종목을 선택하세요."
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_remove_menu(stocks))
 
 
-async def handle_watchlist_remove(query, data):
-    """종목 삭제 실행"""
-    symbol = data[9:]  # watchdel_ 제거
+async def handle_watchlist_remove(query, data: str) -> None:
+    symbol = data[9:]
     result = watchlist.remove(symbol)
-    
+
     if result.get("success"):
-        text = f"✅ {symbol} 삭제 완료"
+        await query.answer(f"{symbol} 삭제 완료")
     else:
-        text = f"❌ 삭제 실패: {result.get('error')}"
-    
-    await query.answer(text)
+        await query.answer(f"삭제 실패: {result.get('error', 'unknown')}"[:180])
+
     await handle_watchlist_remove_menu(query)
 
 
-async def handle_watchlist_alert_settings(query):
-    """알림 설정"""
-    data = watchlist.get_all()
-    settings = data.get("settings", {})
-    
-    text = "⚙️ <b>알림 설정</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "<b>모니터링</b>\n"
-    text += "ON: 30분마다 자동 체크 후 알림\n"
-    text += "OFF: 수동 체크만 가능\n\n"
-    text += "<b>체크 간격</b>\n"
-    text += "관심종목을 체크하는 주기\n"
-    text += "(미국장 개장 시간에만 작동)"
-    
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_alert_settings(settings))
+async def handle_watchlist_alert_settings(query) -> None:
+    settings = watchlist.get_all().get("settings", {})
+    monitor_on = settings.get("monitor_enabled", True)
+    interval = settings.get("monitor_interval", 30)
+
+    text = fmt.header("관심종목 알림 설정", "⚙️")
+    text += f"\n모니터링: {'ON' if monitor_on else 'OFF'}"
+    text += f"\n체크 간격: {interval}분\n"
+    text += "\n간격 변경은 15 → 30 → 60분 순환입니다."
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=kb.watchlist_alert_settings(settings),
+    )
 
 
-async def handle_toggle_monitor(query):
-    """모니터링 토글"""
+async def handle_toggle_monitor(query) -> None:
     data = watchlist._load()
-    current = data["settings"].get("monitor_enabled", True)
-    data["settings"]["monitor_enabled"] = not current
+    settings = data.setdefault("settings", {})
+
+    current = settings.get("monitor_enabled", True)
+    settings["monitor_enabled"] = not current
     watchlist._save()
-    
-    status = "활성화" if not current else "비활성화"
-    await query.answer(f"모니터링 {status}됨")
+
+    await query.answer(f"모니터링 {'ON' if not current else 'OFF'}")
     await handle_watchlist_alert_settings(query)
 
 
-async def handle_change_interval(query):
-    """체크 간격 변경 (30 → 60 → 15 → 30)"""
+async def handle_change_interval(query) -> None:
     data = watchlist._load()
-    current = data["settings"].get("monitor_interval", 30)
-    
+    settings = data.setdefault("settings", {})
+
+    current = settings.get("monitor_interval", 30)
     intervals = [15, 30, 60]
-    idx = intervals.index(current) if current in intervals else 0
+    idx = intervals.index(current) if current in intervals else 1
     new_interval = intervals[(idx + 1) % len(intervals)]
-    
-    data["settings"]["monitor_interval"] = new_interval
+
+    settings["monitor_interval"] = new_interval
     watchlist._save()
-    
-    await query.answer(f"체크 간격: {new_interval}분")
+
+    await query.answer(f"체크 간격 {new_interval}분")
     await handle_watchlist_alert_settings(query)
 
 
-# ===== Prefix 핸들러 =====
-async def handle_analyze_stock(query, data):
+async def handle_analyze_stock(query, data: str) -> None:
     symbol = data[2:]
-    await query.edit_message_text(f"🔍 {symbol} 분석 중...")
+    await query.edit_message_text(f"🔎 {symbol} 분석 중...")
+
     try:
+        style = _style_from_query(query)
         analysis = get_full_analysis(symbol)
         if analysis is None:
             await query.edit_message_text(f"'{symbol}' 데이터 없음", reply_markup=kb.back())
             return
-        score = calculate_score(analysis)
-        analysis["score"] = score
-        text = fmt.format_analysis(analysis)
+
+        analysis["score"] = calculate_score(analysis)
+        text = fmt.format_analysis(analysis, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
-    except Exception as e:
-        await query.edit_message_text(f"분석 실패: {e}", reply_markup=kb.back())
+    except Exception as exc:
+        await query.edit_message_text(f"분석 실패: {exc}", reply_markup=kb.back())
 
 
-async def handle_ai_stock(query, data):
+async def handle_ai_stock(query, data: str) -> None:
     symbol = data[3:]
-    await query.edit_message_text(f"🤖 {symbol} AI 분석 중... (뉴스 포함)")
+    await query.edit_message_text(f"🤖 {symbol} AI 요약 생성 중...")
+
     try:
         from core.news import get_company_news
-        
+
         analysis = get_full_analysis(symbol)
         if analysis is None:
             await query.edit_message_text(f"'{symbol}' 데이터 없음", reply_markup=kb.back())
             return
-        
-        # 뉴스 수집
+
         news = get_company_news(symbol, days=3)
-        analysis["news"] = news
-        
         score = calculate_score(analysis)
-        analysis["total_score"] = score["total_score"]
+        analysis["score"] = score
+        analysis["total_score"] = score.get("total_score", 0)
+        analysis["news"] = news
+
         result = ai.analyze_stock(symbol, analysis)
         if "error" in result:
-            text = f"❌ {result['error']}"
-        else:
-            news_count = len(news)
-            text = f"🤖 <b>{symbol} AI 분석</b> (뉴스 {news_count}건 반영)\n━━━━━━━━━━━━━━━━━━\n\n{result['analysis']}"
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
-    except Exception as e:
-        await query.edit_message_text(f"AI 분석 실패: {e}", reply_markup=kb.back())
+            await query.edit_message_text(f"❌ {result['error']}", reply_markup=kb.stock_detail(symbol))
+            return
+
+        header = f"🤖 <b>{symbol} AI 요약</b>\n━━━━━━━━━━━━━━━━━━\n"
+        header += f"뉴스 반영: {len(news)}건\n\n"
+        await send_long_message(query, header + result["analysis"], reply_markup=kb.stock_detail(symbol))
+    except Exception as exc:
+        await query.edit_message_text(f"AI 분석 실패: {exc}", reply_markup=kb.back())
 
 
-async def handle_watchlist_add(query, data):
+async def handle_watchlist_add(query, data: str) -> None:
     symbol = data[9:]
     await query.edit_message_text(f"➕ {symbol} 추가 중...")
+
     try:
         result = watchlist.add(symbol)
         if result.get("success"):
-            text = f"✅ <b>관심종목 추가 완료</b>\n\n종목: {symbol}\n현재가: ${result['price']}\n목표가: ${result['target_price']}"
+            text = "✅ <b>관심종목 추가 완료</b>\n\n"
+            text += f"종목: {symbol}\n"
+            text += f"현재가: ${result['price']}\n"
+            text += f"목표가: ${result['target_price']}"
         else:
-            text = f"❌ 추가 실패: {result.get('error')}"
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_menu())
-    except Exception as e:
-        await query.edit_message_text(f"추가 실패: {e}", reply_markup=kb.watchlist_menu())
+            text = f"❌ 추가 실패: {result.get('error', 'unknown')}"
+
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
+    except Exception as exc:
+        await query.edit_message_text(f"추가 실패: {exc}", reply_markup=kb.watchlist_main_menu())
 
 
-async def handle_category(query, data):
-    category = data[4:]
-    await query.edit_message_text(f"📊 {category} 분석 중... (1~2분 소요)")
-    try:
-        from config import STOCK_CATEGORIES
-        cat_info = STOCK_CATEGORIES.get(category)
-        if not cat_info:
-            await query.edit_message_text(f"❌ 카테고리 없음: {category}", reply_markup=kb.category_menu())
-            return
-        result = scan_stocks(cat_info["stocks"][:20])
-        stocks = sorted(result["results"], key=lambda x: -x["score"]["total_score"])[:10]
-        text = f"{cat_info['emoji']} <b>{category} 추천</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-        text += f"📌 {cat_info['description']}\n📈 대표 ETF: {cat_info['etf']}\n\n"
-        if stocks:
-            text += f"<b>🌟 추천 종목 ({len(stocks)}개)</b>\n"
-            for i, s in enumerate(stocks, 1):
-                score = s.get("score", {})
-                text += f"{i}. <b>{s['symbol']}</b> ${s.get('price', 0)} | 점수: {score.get('total_score', 0):.0f}\n"
-        else:
-            text += "😢 추천 종목 없음\n"
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.category_menu())
-    except Exception as e:
-        await query.edit_message_text(f"분석 실패: {e}", reply_markup=kb.category_menu())
-
-
-async def handle_category_all(query):
-    await query.edit_message_text("📊 전체 카테고리 분석 중... (3~5분 소요)")
-    try:
-        from config import STOCK_CATEGORIES
-        text = "📂 <b>전체 카테고리 추천 요약</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-        for cat_name, cat_info in STOCK_CATEGORIES.items():
-            result = scan_stocks(cat_info["stocks"][:10])
-            top = sorted(result["results"], key=lambda x: -x["score"]["total_score"])[:2]
-            text += f"{cat_info['emoji']} <b>{cat_name}</b>\n"
-            if top:
-                for s in top:
-                    text += f"  • {s['symbol']} ${s.get('price', 0)} (점수: {s['score']['total_score']:.0f})\n"
-            else:
-                text += "  • 추천 없음\n"
-            text += "\n"
-        await send_long_message_category(query, text)
-    except Exception as e:
-        await query.edit_message_text(f"분석 실패: {e}", reply_markup=kb.category_menu())
-
-
-async def send_long_message_category(query, text: str, max_len: int = 4000):
-    """카테고리용 긴 메시지 분할 전송"""
-    if len(text) <= max_len:
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.category_menu())
-        return
-    
-    parts = []
-    while text:
-        if len(text) <= max_len:
-            parts.append(text)
-            break
-        cut_pos = text.rfind('\n', 0, max_len)
-        if cut_pos == -1:
-            cut_pos = max_len
-        parts.append(text[:cut_pos])
-        text = text[cut_pos:].lstrip('\n')
-    
-    await query.edit_message_text(parts[0], parse_mode="HTML")
-    for i, part in enumerate(parts[1:], 2):
-        if i == len(parts):
-            await query.message.reply_text(part, parse_mode="HTML", reply_markup=kb.category_menu())
-        else:
-            await query.message.reply_text(part, parse_mode="HTML")
-
-
-# ===== 핸들러 매핑 =====
 EXACT_HANDLERS = {
     "main": handle_main,
+    "help": handle_help,
+    "display_settings": handle_display_settings,
     "recommend": handle_recommend,
     "scan": handle_scan,
     "ai_recommend": handle_ai_recommend,
     "analyze_menu": handle_analyze_menu,
     "analyze_input": handle_analyze_input,
     "fear_greed": handle_fear_greed,
-    "category_menu": handle_category_menu,
-    "cat_all": handle_category_all,
     "trading_menu": handle_trading_menu,
     "auto_settings": handle_auto_settings,
     "toggle_auto_buy": handle_toggle_auto_buy,
     "toggle_auto_sell": handle_toggle_auto_sell,
-    "trade_history": handle_trade_history,
     "balance": handle_balance,
     "orders": handle_orders,
     "api_status": handle_api_status,
-    "watchlist": handle_watchlist,
     "watchlist_main": handle_watchlist_main,
     "watchlist_status": handle_watchlist_status,
     "watchlist_add": handle_watchlist_add_menu,
@@ -608,23 +656,25 @@ EXACT_HANDLERS = {
 PREFIX_HANDLERS = [
     ("watchdel_", handle_watchlist_remove),
     ("watchadd_", handle_watchlist_add),
-    ("cat_", handle_category),
+    ("style_", handle_set_style),
     ("ai_", handle_ai_stock),
     ("a_", handle_analyze_stock),
 ]
 
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """콜백 쿼리 핸들러"""
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route callback queries by exact/prefix handlers."""
     query = update.callback_query
     await query.answer()
     data = query.data
-    
+
     if data in EXACT_HANDLERS:
         await EXACT_HANDLERS[data](query)
         return
-    
+
     for prefix, handler in PREFIX_HANDLERS:
         if data.startswith(prefix):
             await handler(query, data)
             return
+
+    await query.edit_message_text("알 수 없는 메뉴입니다.", reply_markup=kb.main_menu())

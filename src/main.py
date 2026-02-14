@@ -1,121 +1,198 @@
 """
-주식 분석 봇 메인 엔트리포인트
+Autostock main entrypoint.
 
-사용법:
-  python main.py              # 봇 실행 (스케줄러 포함)
-  python main.py --no-schedule # 봇 실행 (스케줄러 없음)
-  python main.py --scan       # 스캔 한 번 실행
-  python main.py --ai         # AI 추천 한 번 실행
+Usage:
+  python src/main.py                  # run telegram bot
+  python src/main.py --no-schedule    # run bot without scheduler
+  python src/main.py --scan           # one-time scan
+  python src/main.py --ai             # one-time market analysis
+  python src/main.py --backtest       # one-time strategy validation
 """
-import sys
+
+from __future__ import annotations
+
+import argparse
 import os
-
-# src 폴더를 path에 추가
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+import sys
 from datetime import datetime
 
 
-def run_scan_once():
-    """스캔 한 번 실행"""
-    print(f"[{datetime.now()}] 스캔 시작...")
-    
-    from core.signals import scan_stocks
-    from config import NASDAQ_100
-    
-    result = scan_stocks(NASDAQ_100[:50])
-    
-    print(f"\n📊 스캔 결과: {result['total']}개 분석")
-    print("=" * 50)
-    
-    for r in result["results"][:10]:
-        score = r.get("score", {})
-        strategies = r.get("strategies", [])
-        strats = ", ".join([s["emoji"] for s in strategies]) if strategies else "-"
-        
-        print(f"{r['symbol']:6} ${r['price']:8.2f} | "
-              f"점수: {score.get('total_score', 0):5.1f} | "
-              f"RSI: {r.get('rsi', 50):5.1f} | {strats}")
-    
-    print("=" * 50)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def run_ai_once():
-    """AI 추천 한 번 실행 (전체 카테고리 + 모든 뉴스 통합)"""
-    print(f"[{datetime.now()}] AI 추천 분석 시작...")
-    
+def _configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows terminals."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+def run_scan_once(limit: int = 50) -> None:
+    from config import load_nasdaq_100
     from core.signals import scan_stocks
-    from core.stock_data import get_market_condition, get_fear_greed_index
-    from core.news import get_bulk_news, get_market_news
+
+    print(f"[{datetime.now()}] scan started...")
+    symbols = load_nasdaq_100()[: max(1, limit)]
+    result = scan_stocks(symbols)
+    ranked = sorted(result["results"], key=lambda x: -x.get("investability_score", x.get("quality_score", 0)))
+
+    print(f"\nscan result: {result['total']} analyzed")
+    print("=" * 70)
+    for row in ranked[:10]:
+        score = row.get("score", {})
+        emojis = ", ".join(s.get("emoji", "") for s in row.get("strategies", [])) or "-"
+        print(
+            f"{row['symbol']:6} ${row.get('price', 0):8.2f} | "
+            f"inv {row.get('investability_score', 0):5.1f} | "
+            f"quality {row.get('quality_score', 0):5.1f} | "
+            f"score {score.get('total_score', 0):5.1f} | RSI {row.get('rsi', 50):5.1f} | "
+            f"fin {row.get('financial_coverage', 0):.2f} | {emojis}"
+        )
+        plan = row.get("trade_plan", {})
+        rr2 = plan.get("risk_reward", {}).get("rr2")
+        stage = plan.get("positioning", {}).get("stage")
+        pos_pct = plan.get("execution", {}).get("position_pct")
+        liq = row.get("avg_dollar_volume_m", 0)
+        evt = row.get("days_to_earnings")
+        if rr2 is not None and stage:
+            print(
+                f"         entry {plan.get('entry', {}).get('buy2', 0):.2f} "
+                f"stop {plan.get('stop_loss', 0):.2f} "
+                f"t2 {plan.get('targets', {}).get('target2', 0):.2f} "
+                f"RR2 {rr2:.2f} [{stage}] "
+                f"size {float(pos_pct or 0):.1f}% "
+                f"liq {float(liq):.1f}M "
+                f"earnings D{evt if evt is not None else '-'}"
+            )
+    print("=" * 70)
+
+
+def run_ai_once() -> None:
     from ai.analyzer import ai
-    from config import ALL_CATEGORY_STOCKS, STOCK_CATEGORIES
-    
-    # 1. 전체 카테고리 종목 스캔
-    print(f"[1/4] 전체 카테고리 종목 스캔 중... ({len(ALL_CATEGORY_STOCKS)}개)")
-    result = scan_stocks(ALL_CATEGORY_STOCKS)
+    from config import load_all_us_stocks, load_stock_categories
+    from core.news import get_bulk_news, get_market_news
+    from core.signals import scan_stocks
+    from core.stock_data import get_fear_greed_index, get_market_condition
+
+    universe = load_all_us_stocks()
+    categories = load_stock_categories()
+    print(f"[{datetime.now()}] market analysis started...")
+    print(f"[1/4] scanning symbols... ({len(universe)} tickers)")
+    result = scan_stocks(universe)
     stocks = result["results"]
-    print(f"  → {len(stocks)}개 종목 스캔 완료")
-    
-    # 2. 시장 데이터 수집
-    print("[2/4] 시장 데이터 수집 중...")
+    print(
+        f"  -> scan done: {len(stocks)} "
+        f"(fundamentals enriched: {result.get('fundamentals_enriched', 0)})"
+    )
+
+    print("[2/4] loading market context...")
     market_data = {
         "fear_greed": get_fear_greed_index(),
         "market_condition": get_market_condition(),
         "market_news": get_market_news(),
     }
-    print(f"  → 공포탐욕: {market_data['fear_greed'].get('score', 'N/A')}, 시장: {market_data['market_condition'].get('message', 'N/A')}")
-    
-    # 3. 모든 종목 뉴스 수집
-    print(f"[3/4] 전체 종목 뉴스 수집 중... ({len(stocks)}개)")
-    all_symbols = [s['symbol'] for s in stocks]
-    news_data = get_bulk_news(all_symbols, days=7)
-    print(f"  → {len(news_data)}개 종목 뉴스 수집 완료")
-    
-    # 4. AI 분석
-    print("[4/4] AI 분석 중...")
-    ai_result = ai.analyze_full_market(stocks, news_data, market_data, STOCK_CATEGORIES)
-    
-    if "error" in ai_result:
-        print(f"❌ AI 분석 실패: {ai_result['error']}")
+    print(
+        "  -> "
+        f"fear-greed {market_data['fear_greed'].get('score', 'N/A')}, "
+        f"regime {market_data['market_condition'].get('message', 'N/A')}"
+    )
+
+    news_symbols = ai.select_news_symbols(stocks, limit=min(80, max(24, len(stocks) // 6)))
+    print(f"[3/4] loading stock news... ({len(news_symbols)} tickers)")
+    news_data = get_bulk_news(news_symbols, days=3)
+    print(f"  -> news done: {len(news_data)} / requested {len(news_symbols)}")
+
+    print("[4/4] generating analysis...")
+    result = ai.analyze_full_market(stocks, news_data, market_data, categories)
+    if "error" in result:
+        print(f"analysis failed: {result['error']}")
         return
-    
-    print("\n🤖 AI 추천")
-    print("=" * 60)
-    print(ai_result["analysis"])
-    print("=" * 60)
-    
-    # 통계 출력
-    stats = ai_result.get("stats", {})
+
+    print("\nAI market report")
+    print("=" * 70)
+    print(result["analysis"])
+    print("=" * 70)
+
+    stats = result.get("stats", {})
     if stats:
-        print(f"\n📊 분석 통계: {ai_result['total']}개 종목")
-        print(f"   평균RSI: {stats.get('avg_rsi', 0):.0f}, 평균점수: {stats.get('avg_score', 0):.0f}")
-        print(f"   과매도: {stats.get('oversold', 0)}개, 과매수: {stats.get('overbought', 0)}개")
+        print(f"\nsummary: {result.get('total', 0)} symbols")
+        print(
+            f"avg RSI {stats.get('avg_rsi', 0):.1f}, "
+            f"avg score {stats.get('avg_score', 0):.1f}, "
+            f"avg quality {stats.get('avg_quality', 0):.1f}, "
+            f"avg inv {stats.get('avg_investability', 0):.1f}"
+        )
+        print(
+            f"oversold {stats.get('oversold', 0)}, "
+            f"overbought {stats.get('overbought', 0)}, "
+            f"strong trend {stats.get('strong_trend', 0)}, "
+            f"tradeable {stats.get('tradeable_count', 0)}"
+        )
 
 
-def run_bot(with_scheduler: bool = True):
-    """텔레그램 봇 실행"""
-    from bot import run_bot as bot_run
-    bot_run(with_scheduler=with_scheduler)
+def run_backtest_once(limit: int = 40) -> None:
+    from config import load_nasdaq_100
+    from core.backtest import backtest_symbols
+
+    symbols = load_nasdaq_100()[: max(1, limit)]
+    print(f"[{datetime.now()}] backtest started... ({len(symbols)} tickers)")
+    result = backtest_symbols(symbols, period="3y")
+
+    summary = result.get("summary", {})
+    ranked = result.get("ranked", [])
+    print("\nbacktest summary")
+    print("=" * 70)
+    print(f"symbols: {summary.get('symbol_count', 0)}")
+    print(f"avg win-rate: {summary.get('avg_win_rate', 0)}%")
+    print(f"avg return/trade: {summary.get('avg_return', 0)}%")
+    print(f"avg max-drawdown: {summary.get('avg_drawdown', 0)}%")
+    print("-" * 70)
+    for row in ranked[:10]:
+        print(
+            f"{row['symbol']:6} score {row['score']:6.2f} | "
+            f"wr {row['win_rate']:5.1f}% | "
+            f"avg {row['avg_return']:6.2f}% | "
+            f"mdd {row['max_drawdown']:6.2f}% | trades {row['trade_count']:3}"
+        )
+    print("=" * 70)
 
 
-def main():
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
-        
-        if arg == "--scan":
-            run_scan_once()
-        elif arg == "--ai":
-            run_ai_once()
-        elif arg == "--no-schedule":
-            run_bot(with_scheduler=False)
-        elif arg == "--help":
-            print(__doc__)
-        else:
-            print(f"알 수 없는 옵션: {arg}")
-            print(__doc__)
-    else:
-        # 기본: 봇 실행 (스케줄러 포함)
-        run_bot(with_scheduler=True)
+def run_bot(with_scheduler: bool = True) -> None:
+    from bot import run_bot
+
+    run_bot(with_scheduler=with_scheduler)
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Autostock runner")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--scan", action="store_true", help="Run one-time scan")
+    mode.add_argument("--ai", action="store_true", help="Run one-time AI report")
+    mode.add_argument("--backtest", action="store_true", help="Run one-time backtest")
+    parser.add_argument("--no-schedule", action="store_true", help="Run bot without scheduler")
+    parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan/backtest mode")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    _configure_console_output()
+    args = _parse_args(argv or sys.argv[1:])
+
+    if args.scan:
+        run_scan_once(limit=args.limit)
+        return
+    if args.ai:
+        run_ai_once()
+        return
+    if args.backtest:
+        run_backtest_once(limit=args.limit)
+        return
+
+    run_bot(with_scheduler=not args.no_schedule)
 
 
 if __name__ == "__main__":
