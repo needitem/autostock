@@ -141,8 +141,21 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
         )
         if days is not None
     ]
+    # We only expose upcoming earnings D-day. Past events should not produce negative D values.
     future_days = [days for days in earnings_days_candidates if days >= 0]
-    days_to_earnings = min(future_days) if future_days else (min(earnings_days_candidates) if earnings_days_candidates else None)
+    days_to_earnings = min(future_days) if future_days else None
+
+    price = _to_float(info.get("currentPrice") or info.get("regularMarketPrice"), 0.0)
+    target_price = _to_float(info.get("targetMeanPrice"), 0.0)
+    target_upside_pct = ((target_price - price) / price * 100) if price > 0 and target_price > 0 else 0.0
+
+    forward_eps = _to_float(info.get("forwardEps"), 0.0)
+    trailing_eps = _to_float(info.get("trailingEps"), 0.0)
+    forward_eps_growth_pct = (
+        ((forward_eps - trailing_eps) / abs(trailing_eps) * 100)
+        if trailing_eps != 0
+        else 0.0
+    )
 
     # yfinance values can be ratios (0.15) or percents (15). Keep raw form.
     return {
@@ -150,7 +163,7 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
         "name": info.get("shortName", symbol),
         "sector": info.get("sector", "N/A"),
         "industry": info.get("industry", "N/A"),
-        "price": _to_float(info.get("currentPrice") or info.get("regularMarketPrice"), 0.0),
+        "price": price,
         "market_cap": _to_float(info.get("marketCap"), 0.0),
         "avg_volume": _to_float(info.get("averageVolume") or info.get("averageDailyVolume10Day"), 0.0),
         "shares_outstanding": _to_float(info.get("sharesOutstanding"), 0.0),
@@ -169,8 +182,14 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
         "current_ratio": info.get("currentRatio", 0),
         "free_cash_flow": info.get("freeCashflow", 0),
         "dividend_yield": info.get("dividendYield", 0),
-        "target_price": info.get("targetMeanPrice", 0),
+        "target_price": target_price,
+        "target_upside_pct": round(target_upside_pct, 2),
         "recommendation": info.get("recommendationKey", "N/A"),
+        "recommendation_mean": _to_float(info.get("recommendationMean"), 0.0),
+        "analyst_count": int(_to_float(info.get("numberOfAnalystOpinions"), 0)),
+        "forward_eps": forward_eps,
+        "trailing_eps": trailing_eps,
+        "forward_eps_growth_pct": round(forward_eps_growth_pct, 2),
         "beta": info.get("beta", 1),
         "52w_high": info.get("fiftyTwoWeekHigh", 0),
         "52w_low": info.get("fiftyTwoWeekLow", 0),
@@ -241,11 +260,25 @@ def get_market_condition() -> dict[str, Any]:
 
     df = get_stock_data("QQQ")
     if df is None:
-        return {"status": "unknown", "emoji": "⚪", "message": "데이터 없음"}
+        return {
+            "status": "unknown",
+            "emoji": "⚪",
+            "message": "데이터 없음",
+            "benchmark": "QQQ",
+            "benchmark_return_21d": 0.0,
+            "benchmark_return_63d": 0.0,
+        }
 
     ind = calculate_indicators(df)
     if ind is None:
-        return {"status": "unknown", "emoji": "⚪", "message": "지표 계산 실패"}
+        return {
+            "status": "unknown",
+            "emoji": "⚪",
+            "message": "지표 계산 실패",
+            "benchmark": "QQQ",
+            "benchmark_return_21d": 0.0,
+            "benchmark_return_63d": 0.0,
+        }
 
     price = _to_float(ind.get("price"))
     ma50 = _to_float(ind.get("ma50"))
@@ -265,6 +298,9 @@ def get_market_condition() -> dict[str, Any]:
         "price": round(price, 2),
         "ma50": round(ma50, 2),
         "ma200": round(ma200, 2),
+        "benchmark": "QQQ",
+        "benchmark_return_21d": round(_to_float(ind.get("return_21d"), 0.0), 2),
+        "benchmark_return_63d": round(_to_float(ind.get("return_63d"), 0.0), 2),
     }
 
 

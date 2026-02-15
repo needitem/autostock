@@ -18,6 +18,9 @@ class AIAnalyzer:
         self.codex_bin = os.getenv("CODEX_BIN", "codex")
         self.base_url = None
         self.model = model or os.getenv("AI_MODEL", "gpt-5.2")
+        self.reasoning_effort = os.getenv("AI_REASONING_EFFORT", "medium").strip().lower() or "medium"
+        if self.reasoning_effort not in {"low", "medium", "high"}:
+            self.reasoning_effort = "medium"
 
     @property
     def has_api_access(self) -> bool:
@@ -53,7 +56,7 @@ class AIAnalyzer:
                 "-m",
                 self.model,
                 "-c",
-                'model_reasoning_effort="medium"',
+                f'model_reasoning_effort="{self.reasoning_effort}"',
                 "--ephemeral",
                 "--skip-git-repo-check",
                 "-s",
@@ -94,8 +97,17 @@ class AIAnalyzer:
         for item in news_items[:limit]:
             headline = str(item.get("headline", "")).strip()
             source = str(item.get("source", "")).strip()
+            impact = str(item.get("impact", "")).strip().lower()
+            age_h = item.get("age_hours")
+            tags = item.get("event_tags") or []
             if headline:
-                lines.append(f"- {headline[:140]} ({source})".strip())
+                tag_text = ",".join(str(t) for t in tags[:2]) if isinstance(tags, list) else ""
+                prefix = f"[{impact}]" if impact in {"high", "medium", "low"} else ""
+                age_text = f"{int(float(age_h))}h" if age_h is not None else "NAh"
+                meta = f"{source} | {age_text}"
+                if tag_text:
+                    meta += f" | {tag_text}"
+                lines.append(f"- {prefix} {headline[:140]} ({meta})".strip())
         return lines
 
     def select_news_symbols(self, stocks: list[dict[str, Any]], limit: int = 60) -> list[str]:
@@ -145,6 +157,10 @@ class AIAnalyzer:
             f"RSI: {data.get('rsi', 50)}\n"
             f"ADX: {data.get('adx', 0)}\n"
             f"MA50 gap(%): {data.get('ma50_gap', 0)}\n"
+            f"Return 21d(%): {data.get('return_21d', 0)}\n"
+            f"Return 63d(%): {data.get('return_63d', 0)}\n"
+            f"Relative strength 21d vs QQQ(%p): {data.get('relative_strength_21d', 0)}\n"
+            f"Relative strength 63d vs QQQ(%p): {data.get('relative_strength_63d', 0)}\n"
             f"Volume ratio: {data.get('volume_ratio', 1)}\n"
             f"Support: {data.get('support', [])}\n"
             f"Resistance: {data.get('resistance', [])}\n"
@@ -189,6 +205,7 @@ class AIAnalyzer:
         get_adx = lambda s: float(s.get("adx", 0))
         get_setup = lambda s: float((s.get("trade_plan") or {}).get("positioning", {}).get("setup_score", 0))
         get_rr2 = lambda s: float((s.get("trade_plan") or {}).get("risk_reward", {}).get("rr2", 0))
+        get_rs63 = lambda s: float(s.get("relative_strength_63d", (s.get("trade_plan") or {}).get("positioning", {}).get("relative_strength_63d", 0)))
         get_liq = lambda s: float(s.get("liquidity_score", (s.get("trade_plan") or {}).get("liquidity", {}).get("score", 0)))
         get_pos = lambda s: float((s.get("trade_plan") or {}).get("execution", {}).get("position_pct", s.get("position_size_pct", 0)))
 
@@ -197,6 +214,7 @@ class AIAnalyzer:
         avg_quality = sum(get_quality(s) for s in stocks) / n
         avg_inv = sum(get_inv(s) for s in stocks) / n
         avg_setup = sum(get_setup(s) for s in stocks) / n
+        avg_rs63 = sum(get_rs63(s) for s in stocks) / n
         avg_liq = sum(get_liq(s) for s in stocks) / n
         avg_pos = sum(get_pos(s) for s in stocks) / n
         grades = Counter(get_grade(s) for s in stocks)
@@ -209,7 +227,7 @@ class AIAnalyzer:
         top_lines = [
             f"- {s['symbol']} price={float(s.get('price', 0)):.2f} "
             f"score={get_score(s):.1f} inv={get_inv(s):.1f} setup={get_setup(s):.1f} "
-            f"rr2={get_rr2(s):.2f} liq={get_liq(s):.1f} pos={get_pos(s):.1f}% "
+            f"rr2={get_rr2(s):.2f} rs63={get_rs63(s):.1f} liq={get_liq(s):.1f} pos={get_pos(s):.1f}% "
             f"dte={s.get('days_to_earnings', 'NA')} rsi={get_rsi(s):.1f}"
             for s in top
         ]
@@ -249,6 +267,7 @@ class AIAnalyzer:
             f"Avg Quality: {avg_quality:.1f}\n"
             f"Avg Investability: {avg_inv:.1f}\n"
             f"Avg Setup Score: {avg_setup:.1f}\n"
+            f"Avg RS63 vs QQQ(%p): {avg_rs63:.1f}\n"
             f"Avg Liquidity Score: {avg_liq:.1f}\n"
             f"Avg Suggested Position(%): {avg_pos:.1f}\n"
             f"Oversold count: {oversold}\n"
@@ -283,6 +302,7 @@ class AIAnalyzer:
             "avg_quality": avg_quality,
             "avg_investability": avg_inv,
             "avg_setup_score": avg_setup,
+            "avg_rs63_vs_qqq": avg_rs63,
             "avg_liquidity": avg_liq,
             "avg_position_pct": avg_pos,
             "grade_dist": {

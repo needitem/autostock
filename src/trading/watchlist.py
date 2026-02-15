@@ -1,5 +1,5 @@
 """
-관심종목 관리 모듈
+Watchlist management module.
 """
 import os
 import sys
@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class Watchlist:
-    """관심종목 관리"""
+    """Watchlist manager."""
     
     def __init__(self):
         self.file = os.path.join(os.path.dirname(__file__), "..", "..", "data", "watchlist.json")
@@ -34,7 +34,7 @@ class Watchlist:
             json.dump(self._data, f, indent=2, ensure_ascii=False)
     
     def add(self, symbol: str, target_price: float = 0, memo: str = "") -> dict:
-        """관심종목 추가"""
+        """Add symbol to watchlist."""
         from core.stock_data import get_stock_data
         from core.indicators import calculate_indicators
         
@@ -68,7 +68,7 @@ class Watchlist:
         }
     
     def remove(self, symbol: str) -> dict:
-        """관심종목 제거"""
+        """Remove symbol from watchlist."""
         data = self._load()
         if symbol in data["stocks"]:
             del data["stocks"][symbol]
@@ -77,11 +77,11 @@ class Watchlist:
         return {"error": "종목 없음"}
     
     def get_all(self) -> dict:
-        """전체 목록"""
+        """Return full watchlist data."""
         return self._load()
     
     def get_status(self) -> list[dict]:
-        """현재 상태 (현재가 포함)"""
+        """Return current watchlist status (including latest price)."""
         from core.signals import check_entry_signal
         
         data = self._load()
@@ -110,22 +110,22 @@ class Watchlist:
         return result
     
     def scan_signals(self) -> list[dict]:
-        """저점 신호 스캔"""
+        """Scan watchlist for dip-entry signals."""
         status = self.get_status()
         return [s for s in status if s["is_signal"]]
     
     def set_auto_buy(self, enabled: bool):
-        """자동매수 설정"""
+        """Set auto-buy option."""
         data = self._load()
         data["settings"]["auto_buy"] = enabled
         self._save()
     
     def is_auto_buy(self) -> bool:
-        """자동매수 여부"""
+        """Return whether auto-buy is enabled."""
         return self._load()["settings"].get("auto_buy", False)
     
     def mark_bought(self, symbol: str, price: float, qty: int):
-        """매수 완료 표시"""
+        """Mark a symbol as bought."""
         data = self._load()
         if symbol in data["stocks"]:
             data["stocks"][symbol]["status"] = "bought"
@@ -135,5 +135,5 @@ class Watchlist:
             self._save()
 
 
-# 싱글톤
+# Singleton instance.
 watchlist = Watchlist()

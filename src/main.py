@@ -50,6 +50,7 @@ def run_scan_once(limit: int = 50) -> None:
             f"inv {row.get('investability_score', 0):5.1f} | "
             f"quality {row.get('quality_score', 0):5.1f} | "
             f"score {score.get('total_score', 0):5.1f} | RSI {row.get('rsi', 50):5.1f} | "
+            f"RS63 {row.get('relative_strength_63d', 0):+5.1f} | "
             f"fin {row.get('financial_coverage', 0):.2f} | {emojis}"
         )
         plan = row.get("trade_plan", {})

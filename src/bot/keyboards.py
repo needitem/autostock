@@ -62,10 +62,10 @@ def grid(items: list[str], prefix: str, cols: int = 4) -> list[list[InlineKeyboa
 
 def main_menu() -> InlineKeyboardMarkup:
     rows = [
-        [btn("📈 추천 종목", "recommend"), btn("🔎 빠른 스캔", "scan")],
-        [btn("🤖 AI 리포트", "ai_recommend"), btn("📊 종목 분석", "analyze_menu")],
-        [btn("👀 관심종목", "watchlist_main"), btn("😱 시장 심리", "fear_greed")],
-        [btn("⚙️ 표시 설정", "display_settings")],
+        [btn("🚀 오늘 뭐 살까", "recommend"), btn("🔎 시장 훑어보기", "scan")],
+        [btn("📊 종목 쉽게 보기", "analyze_menu"), btn("🤖 AI 요약", "ai_recommend")],
+        [btn("👀 관심종목", "watchlist_main"), btn("😱 시장 분위기", "fear_greed")],
+        [btn("⚙️ 초보/표준 설정", "display_settings")],
     ]
     if trading_enabled():
         rows.append([btn("💰 트레이딩", "trading_menu")])
@@ -80,7 +80,7 @@ def back(to: str = "main", label: str = "메인") -> InlineKeyboardMarkup:
 
 def analyze_menu() -> InlineKeyboardMarkup:
     kb = grid(TOP_STOCKS, "a_", cols=4)
-    kb.append([btn("⌨️ 심볼 직접 입력", "analyze_input")])
+    kb.append([btn("⌨️ 티커 직접 입력", "analyze_input")])
     kb.append([btn("🏠 메인", "main")])
     return InlineKeyboardMarkup(kb)
 
@@ -158,7 +158,9 @@ def auto_settings_menu(auto_buy: bool, auto_sell: bool) -> InlineKeyboardMarkup:
 
 
 def display_settings_menu(current_style: str) -> InlineKeyboardMarkup:
-    current = (current_style or "compact").strip().lower()
+    current = (current_style or "beginner").strip().lower()
+    if current == "compact":
+        current = "beginner"
 
     def style_btn(label: str, key: str) -> InlineKeyboardButton:
         mark = "✅ " if current == key else ""
@@ -166,7 +168,7 @@ def display_settings_menu(current_style: str) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            [style_btn("초간단", "compact"), style_btn("표준", "standard"), style_btn("상세", "detail")],
+            [style_btn("초보(권장)", "beginner"), style_btn("표준", "standard"), style_btn("상세", "detail")],
             [btn("🏠 메인", "main")],
         ]
     )

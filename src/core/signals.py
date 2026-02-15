@@ -24,6 +24,7 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 _SCORING_FINANCIAL_KEYS = (
     "pe",
+    "forward_pe",
     "peg",
     "pb",
     "roe",
@@ -38,6 +39,12 @@ _SCORING_FINANCIAL_KEYS = (
     "avg_volume",
     "market_cap",
     "sector",
+    "target_upside_pct",
+    "recommendation_mean",
+    "analyst_count",
+    "forward_eps_growth_pct",
+    "forward_eps",
+    "trailing_eps",
 )
 
 
@@ -52,6 +59,21 @@ def _build_score_payload(
             if key in fundamentals:
                 payload[key] = fundamentals.get(key)
     return payload
+
+
+def _apply_relative_strength(ind: dict[str, Any], market: dict[str, Any]) -> dict[str, Any]:
+    """Attach benchmark-relative return fields to indicator payload."""
+    ret_21d = _safe_float(ind.get("return_21d"), 0.0)
+    ret_63d = _safe_float(ind.get("return_63d"), 0.0)
+    bench_21d = _safe_float(market.get("benchmark_return_21d"), 0.0)
+    bench_63d = _safe_float(market.get("benchmark_return_63d"), 0.0)
+
+    out = dict(ind)
+    out["return_21d"] = round(ret_21d, 2)
+    out["return_63d"] = round(ret_63d, 2)
+    out["relative_strength_21d"] = round(ret_21d - bench_21d, 2)
+    out["relative_strength_63d"] = round(ret_63d - bench_63d, 2)
+    return out
 
 
 def _market_profile(status: str) -> dict[str, float]:
@@ -144,6 +166,117 @@ def _event_risk_profile(fundamentals: dict[str, Any] | None = None) -> dict[str,
     return {"days_to_earnings": days, "level": "distant", "penalty": 0.0}
 
 
+def _fundamental_conviction_profile(fundamentals: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    Build a forward-looking conviction profile from fundamentals.
+
+    The score is intentionally conservative: missing data does not create
+    false conviction, and severe forward headwinds can hard-block tradeability.
+    """
+    if not fundamentals:
+        return {"score": 50.0, "coverage": 0.0, "has_data": False, "hard_block": False, "reasons": []}
+
+    score = 50.0
+    checks = 0
+    max_checks = 5
+    reasons: list[str] = []
+    hard_block = False
+    analyst_count = int(_safe_float(fundamentals.get("analyst_count"), 0.0))
+    recommendation_mean = _safe_float(fundamentals.get("recommendation_mean"), 0.0)
+
+    target_upside = _safe_float(fundamentals.get("target_upside_pct"), 0.0)
+    if fundamentals.get("target_upside_pct") not in {None, ""} and analyst_count > 0:
+        checks += 1
+        if target_upside >= 20:
+            score += 16
+        elif target_upside >= 10:
+            score += 10
+        elif target_upside >= 5:
+            score += 6
+        elif target_upside <= -12:
+            score -= 18
+            reasons.append("negative_upside")
+        elif target_upside < 0:
+            score -= 10
+            reasons.append("limited_upside")
+
+    if recommendation_mean > 0 and analyst_count > 0:
+        checks += 1
+        if recommendation_mean <= 1.8:
+            score += 16
+        elif recommendation_mean <= 2.2:
+            score += 10
+        elif recommendation_mean <= 2.8:
+            score += 4
+        elif recommendation_mean <= 3.3:
+            score -= 10
+            reasons.append("mixed_consensus")
+        else:
+            score -= 18
+            reasons.append("weak_consensus")
+
+    if analyst_count > 0:
+        checks += 1
+        if analyst_count >= 20:
+            score += 8
+        elif analyst_count >= 10:
+            score += 5
+        elif analyst_count < 4:
+            score -= 5
+            reasons.append("thin_coverage")
+
+    forward_eps = _safe_float(fundamentals.get("forward_eps"), 0.0)
+    trailing_eps = _safe_float(fundamentals.get("trailing_eps"), 0.0)
+    has_eps_context = abs(forward_eps) > 0.0001 or abs(trailing_eps) > 0.0001
+    forward_eps_growth = _safe_float(fundamentals.get("forward_eps_growth_pct"), 0.0)
+    if fundamentals.get("forward_eps_growth_pct") not in {None, ""} and has_eps_context:
+        checks += 1
+        if forward_eps_growth >= 20:
+            score += 14
+        elif forward_eps_growth >= 10:
+            score += 9
+        elif forward_eps_growth >= 0:
+            score += 3
+        elif forward_eps_growth <= -25:
+            score -= 20
+            reasons.append("forward_eps_contraction")
+        else:
+            score -= 10
+            reasons.append("forward_eps_weak")
+
+    rev_growth = fundamentals.get("revenue_growth")
+    earn_growth = fundamentals.get("earnings_growth")
+    if rev_growth not in {None, ""} or earn_growth not in {None, ""}:
+        checks += 1
+        rg = _safe_float(rev_growth, 0.0) * (100 if abs(_safe_float(rev_growth, 0.0)) <= 1.5 else 1)
+        eg = _safe_float(earn_growth, 0.0) * (100 if abs(_safe_float(earn_growth, 0.0)) <= 1.5 else 1)
+        growth_combo = rg * 0.4 + eg * 0.6
+        if growth_combo >= 15:
+            score += 8
+        elif growth_combo >= 5:
+            score += 4
+        elif growth_combo <= -10:
+            score -= 10
+            reasons.append("growth_negative")
+
+    # Hard block only when multiple forward signals align negatively.
+    if target_upside <= -12 and recommendation_mean >= 3.3 and analyst_count >= 8:
+        hard_block = True
+        reasons.append("street_view_bearish")
+    if forward_eps_growth <= -30 and recommendation_mean >= 3.0:
+        hard_block = True
+        reasons.append("eps_outlook_deteriorating")
+
+    coverage = checks / max_checks if max_checks else 0.0
+    return {
+        "score": round(_clamp(score, 0.0, 95.0), 1),
+        "coverage": round(_clamp(coverage, 0.0, 1.0), 2),
+        "has_data": checks >= 2,
+        "hard_block": hard_block,
+        "reasons": reasons[:3],
+    }
+
+
 def _allocation_label(position_pct: float) -> str:
     if position_pct <= 0:
         return "skip"
@@ -162,6 +295,7 @@ def _execution_profile(
     market_profile: dict[str, float],
     liquidity: dict[str, Any],
     event_risk: dict[str, Any],
+    fundamental: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     risk_pct = _safe_float(trade_plan.get("risk_reward", {}).get("risk_pct"), 0.0)
     setup_score = _safe_float(trade_plan.get("positioning", {}).get("setup_score"), 50.0)
@@ -169,8 +303,15 @@ def _execution_profile(
     risk_score = _safe_float(score.get("risk", {}).get("score"), 50.0)
     liquidity_score = _safe_float(liquidity.get("score"), 60.0)
     event_penalty = _safe_float(event_risk.get("penalty"), 0.0)
+    fundamental_score = _safe_float((fundamental or {}).get("score"), 50.0)
+    fundamental_coverage = _safe_float((fundamental or {}).get("coverage"), 0.0)
 
-    conviction = _clamp(setup_score * 0.5 + confidence * 0.3 + (100 - risk_score) * 0.2)
+    conviction = _clamp(
+        setup_score * 0.46
+        + confidence * 0.24
+        + (100 - risk_score) * 0.18
+        + fundamental_score * (0.08 + 0.06 * fundamental_coverage)
+    )
     conviction_mult = _clamp(0.72 + conviction / 180, 0.65, 1.28)
     liquidity_mult = 1.0 if liquidity_score >= 60 else 0.82 if liquidity_score >= 50 else 0.65
     event_mult = 1.0 if event_penalty == 0 else 0.88 if event_penalty <= 4 else 0.72 if event_penalty <= 8 else 0.55
@@ -199,6 +340,7 @@ def _build_trade_plan(
     market_status: str,
     liquidity: dict[str, Any],
     event_risk: dict[str, Any],
+    fundamental: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Build an actionable trade plan.
@@ -213,7 +355,15 @@ def _build_trade_plan(
     pos_52w = _safe_float(ind.get("position_52w"), 50.0)
     atr_pct = abs(_safe_float(ind.get("atr_pct"), 0.0))
     change_5d = abs(_safe_float(ind.get("change_5d"), 0.0))
+    rs_21d = _safe_float(ind.get("relative_strength_21d"), 0.0)
+    rs_63d = _safe_float(ind.get("relative_strength_63d"), 0.0)
+    rs_combo = rs_21d * 0.4 + rs_63d * 0.6
     market_profile = _market_profile(market_status)
+    fundamental = fundamental or {}
+    fundamental_score = _safe_float(fundamental.get("score"), 50.0)
+    fundamental_coverage = _safe_float(fundamental.get("coverage"), 0.0)
+    fundamental_has_data = bool(fundamental.get("has_data", False))
+    fundamental_hard_block = bool(fundamental.get("hard_block", False))
 
     supports = [float(x) for x in (ind.get("support") or [])[:3] if _safe_float(x, -1) > 0]
     resistances = [float(x) for x in (ind.get("resistance") or [])[:3] if _safe_float(x, -1) > 0]
@@ -247,6 +397,7 @@ def _build_trade_plan(
     trend_score = _clamp(72 - abs(ma50_gap - 4) * 6)
     rsi_score = 100 if 42 <= rsi <= 60 else 75 if 35 <= rsi <= 67 else 40
     location_score = _clamp(100 - abs(pos_52w - 65) * 2.2)
+    relative_strength_score = _clamp(50 + rs_combo * 2.2)
     liquidity_score = _safe_float(liquidity.get("score"), 55.0)
 
     volatility_score = 100.0
@@ -263,15 +414,18 @@ def _build_trade_plan(
     volatility_score = _clamp(volatility_score)
 
     event_penalty = _safe_float(event_risk.get("penalty"), 0.0)
+    fundamental_adjustment = (fundamental_score - 50.0) * (0.10 + 0.08 * fundamental_coverage)
     setup_score = _clamp(
         rr_score * 0.30
         + risk_score * 0.18
         + trend_score * 0.12
         + rsi_score * 0.10
         + location_score * 0.10
+        + relative_strength_score * 0.08
         + volatility_score * 0.10
-        + liquidity_score * 0.10
+        + liquidity_score * 0.12
         - event_penalty * 1.8
+        + fundamental_adjustment
     )
 
     near_resistance = r1 > 0 and price >= r1 * 0.985
@@ -286,15 +440,27 @@ def _build_trade_plan(
     max_risk_gate = market_profile["max_risk_pct"]
     min_rr_gate = market_profile["min_rr2"]
     risk_ceiling = 62 if market_status == "bearish" else 68
-    tradeable = (
-        liquidity.get("is_tradeable", False)
-        and rr2 >= min_rr_gate
-        and risk_pct <= max_risk_gate
-        and setup_score >= (60 if market_status == "bearish" else 55)
-        and stage != "right_shoulder"
-        and _safe_float(score.get("risk", {}).get("score"), 50) < risk_ceiling
-        and event_penalty < 12
-    )
+    rs_gate = 0.0 if market_status == "bearish" else -2.0 if market_status == "neutral" else -5.0
+    fundamental_min_score = 52.0 if market_status == "bearish" else 46.0
+    if market_status == "bullish":
+        fundamental_min_score = 42.0
+    if not fundamental_has_data:
+        fundamental_min_score = 0.0
+    fundamental_gate = fundamental_score >= fundamental_min_score and not fundamental_hard_block
+
+    gates = {
+        "liquidity": bool(liquidity.get("is_tradeable", False)),
+        "rr2": rr2 >= min_rr_gate,
+        "risk_pct": risk_pct <= max_risk_gate,
+        "setup": setup_score >= (60 if market_status == "bearish" else 55),
+        "stage": stage != "right_shoulder",
+        "relative_strength": rs_63d >= rs_gate,
+        "risk_model": _safe_float(score.get("risk", {}).get("score"), 50) < risk_ceiling,
+        "event": event_penalty < 12,
+        "fundamental": fundamental_gate,
+    }
+    tradeable = all(gates.values())
+    blockers = [name for name, ok in gates.items() if not ok]
 
     trade_plan = {
         "entry": {
@@ -311,6 +477,10 @@ def _build_trade_plan(
             "room_to_r1_pct": round(room_to_r1_pct, 2),
             "setup_score": round(setup_score, 1),
             "volatility_score": round(volatility_score, 1),
+            "fundamental_score": round(fundamental_score, 1),
+            "relative_strength_21d": round(rs_21d, 2),
+            "relative_strength_63d": round(rs_63d, 2),
+            "relative_strength_score": round(relative_strength_score, 1),
         },
         "liquidity": {
             "score": round(liquidity_score, 1),
@@ -318,15 +488,26 @@ def _build_trade_plan(
             "avg_dollar_volume_m": _safe_float(liquidity.get("avg_dollar_volume_m"), 0.0),
         },
         "event_risk": event_risk,
+        "fundamental": {
+            "score": round(fundamental_score, 1),
+            "coverage": round(fundamental_coverage, 2),
+            "has_data": fundamental_has_data,
+            "hard_block": fundamental_hard_block,
+            "reasons": list(fundamental.get("reasons") or []),
+        },
         "constraints": {
             "market": market_status,
             "min_rr2": round(min_rr_gate, 2),
             "max_risk_pct": round(max_risk_gate, 2),
             "risk_ceiling": risk_ceiling,
+            "relative_strength_63d_min": rs_gate,
+            "fundamental_min_score": round(fundamental_min_score, 1),
         },
+        "gates": gates,
+        "blockers": blockers[:5],
         "tradeable": tradeable,
     }
-    execution = _execution_profile(trade_plan, score, market_profile, liquidity, event_risk)
+    execution = _execution_profile(trade_plan, score, market_profile, liquidity, event_risk, fundamental)
     if not tradeable:
         execution["position_pct"] = 0.0
         execution["allocation"] = "skip"
@@ -541,12 +722,14 @@ def _quality_score(score: dict[str, Any], strategy_count: int, regime_adjustment
     base = float(score.get("total_score", 0))
     risk_score = float(score.get("risk", {}).get("score", 50))
     confidence = float(score.get("confidence", {}).get("score", 60))
+    annual_edge = float(score.get("annual_edge", {}).get("score", 50))
 
     strategy_bonus = min(15.0, strategy_count * 4.0)
     risk_penalty = max(0.0, risk_score - 45.0) * 0.35
     confidence_bonus = (confidence - 60.0) * 0.12
+    annual_bonus = (annual_edge - 50.0) * 0.08
 
-    raw = base + strategy_bonus - risk_penalty + confidence_bonus + regime_adjustment
+    raw = base + strategy_bonus - risk_penalty + confidence_bonus + annual_bonus + regime_adjustment
     return round(max(0.0, min(100.0, raw)), 1)
 
 
@@ -564,31 +747,49 @@ def _investability_score(
     liquidity_score = _safe_float(trade_plan.get("liquidity", {}).get("score"), 55)
     position_pct = _safe_float(trade_plan.get("execution", {}).get("position_pct"), 0)
     event_penalty = _safe_float(trade_plan.get("event_risk", {}).get("penalty"), 0)
+    rs_63d = _safe_float(trade_plan.get("positioning", {}).get("relative_strength_63d"), 0)
     market = str(trade_plan.get("constraints", {}).get("market", "neutral"))
+    fundamental_score = _safe_float(trade_plan.get("fundamental", {}).get("score"), 50)
+    fundamental_coverage = _safe_float(trade_plan.get("fundamental", {}).get("coverage"), 0)
+    fundamental_hard_block = bool(trade_plan.get("fundamental", {}).get("hard_block", False))
+    annual_edge = _safe_float(score.get("annual_edge", {}).get("score"), 50)
+    annual_stance = str(score.get("annual_edge", {}).get("stance", "neutral"))
 
-    stage_bonus = 6 if stage == "right_knee" else -12 if stage == "right_shoulder" else 0
-    rr_bonus = _clamp((rr2 - 1.0) * 11, -12, 14)
-    risk_penalty = max(0.0, risk_score - 45.0) * 0.28
+    stage_bonus = 5 if stage == "right_knee" else -13 if stage == "right_shoulder" else 0
+    rr_bonus = _clamp((rr2 - 1.0) * 10, -12, 13)
+    risk_penalty = max(0.0, risk_score - 45.0) * 0.30
     strategy_bonus = min(8.0, strategy_count * 1.8)
-    tradeable_bonus = 7 if tradeable else -8
+    tradeable_bonus = 6 if tradeable else -9
     liquidity_bonus = (liquidity_score - 55.0) * 0.14
-    position_bonus = min(10.0, position_pct * 0.65)
+    position_bonus = min(9.0, position_pct * 0.60)
+    rs_bonus = _clamp(rs_63d * 0.75, -10.0, 10.0)
+    fundamental_bonus = (fundamental_score - 50.0) * (0.18 + 0.10 * fundamental_coverage)
+    annual_bonus = (annual_edge - 50.0) * 0.06
+    annual_penalty = 2.0 if annual_stance == "negative" else 0.0
     regime_penalty = 5.0 if market == "bearish" and stage != "right_knee" else 0.0
 
     value = (
-        quality_score * 0.52
-        + setup_score * 0.28
+        quality_score * 0.43
+        + setup_score * 0.25
         + stage_bonus
         + rr_bonus
         + strategy_bonus
         + tradeable_bonus
         + liquidity_bonus
         + position_bonus
+        + rs_bonus
+        + fundamental_bonus
+        + annual_bonus
         - risk_penalty
         - event_penalty
+        - annual_penalty
         - regime_penalty
     )
-    return round(_clamp(value), 1)
+    if fundamental_hard_block:
+        value = min(value, 45.0)
+    if not tradeable:
+        value = min(value, 62.0)
+    return round(_clamp(value, 0.0, 97.0), 1)
 
 
 def scan_stocks(symbols: list[str], fundamental_limit: int | None = None) -> dict[str, Any]:
@@ -620,15 +821,24 @@ def scan_stocks(symbols: list[str], fundamental_limit: int | None = None) -> dic
             ind = calculate_indicators(df)
             if ind is None:
                 return None
+            ind = _apply_relative_strength(ind, market)
 
             strategies = _evaluate_strategies(ind)
             liquidity = _liquidity_profile(ind)
             event_risk = _event_risk_profile(None)
+            fundamental = _fundamental_conviction_profile(None)
             payload = _build_score_payload(symbol, ind)
             payload["avg_dollar_volume_m"] = liquidity.get("avg_dollar_volume_m", 0.0)
             score = calculate_score(payload)
             quality = _quality_score(score, len(strategies), regime_adjustment)
-            trade_plan = _build_trade_plan(ind, score, market.get("status", "unknown"), liquidity, event_risk)
+            trade_plan = _build_trade_plan(
+                ind,
+                score,
+                market.get("status", "unknown"),
+                liquidity,
+                event_risk,
+                fundamental,
+            )
             investability = _investability_score(quality, score, trade_plan, len(strategies))
 
             return {
@@ -639,6 +849,10 @@ def scan_stocks(symbols: list[str], fundamental_limit: int | None = None) -> dic
                 "volume_ratio": ind["volume_ratio"],
                 "ma50_gap": ind["ma50_gap"],
                 "position_52w": ind["position_52w"],
+                "return_21d": ind.get("return_21d", 0.0),
+                "return_63d": ind.get("return_63d", 0.0),
+                "relative_strength_21d": ind.get("relative_strength_21d", 0.0),
+                "relative_strength_63d": ind.get("relative_strength_63d", 0.0),
                 "strategies": strategies,
                 "strategy_count": len(strategies),
                 "quality_score": quality,
@@ -649,7 +863,11 @@ def scan_stocks(symbols: list[str], fundamental_limit: int | None = None) -> dic
                 "position_size_pct": trade_plan.get("execution", {}).get("position_pct", 0.0),
                 "days_to_earnings": event_risk.get("days_to_earnings"),
                 "event_risk_level": event_risk.get("level", "unknown"),
+                "fundamental_conviction": fundamental.get("score", 50.0),
+                "fundamental_coverage": fundamental.get("coverage", 0.0),
                 "financial_coverage": float(score.get("financial", {}).get("coverage", 0)),
+                "annual_edge_score": float(score.get("annual_edge", {}).get("score", 50)),
+                "annual_edge_stance": str(score.get("annual_edge", {}).get("stance", "neutral")),
                 "fundamentals_used": False,
                 "trade_plan": trade_plan,
                 "score": score,
@@ -687,15 +905,24 @@ def scan_stocks(symbols: list[str], fundamental_limit: int | None = None) -> dic
             ind = row.get("_ind")
             if not isinstance(ind, dict):
                 return None
+            ind = _apply_relative_strength(ind, market)
 
             liquidity = _liquidity_profile(ind)
             event_risk = _event_risk_profile(fundamentals)
+            fundamental = _fundamental_conviction_profile(fundamentals)
             payload = _build_score_payload(symbol, ind, fundamentals)
             payload["avg_dollar_volume_m"] = liquidity.get("avg_dollar_volume_m", 0.0)
             score = calculate_score(payload)
             strategy_count = int(row.get("strategy_count", 0))
             quality = _quality_score(score, strategy_count, regime_adjustment)
-            trade_plan = _build_trade_plan(ind, score, market.get("status", "unknown"), liquidity, event_risk)
+            trade_plan = _build_trade_plan(
+                ind,
+                score,
+                market.get("status", "unknown"),
+                liquidity,
+                event_risk,
+                fundamental,
+            )
             investability = _investability_score(quality, score, trade_plan, strategy_count)
 
             new_row = dict(row)
@@ -704,16 +931,28 @@ def scan_stocks(symbols: list[str], fundamental_limit: int | None = None) -> dic
             new_row["investability_score"] = investability
             new_row["trade_plan"] = trade_plan
             new_row["financial_coverage"] = float(score.get("financial", {}).get("coverage", 0))
+            new_row["annual_edge_score"] = float(score.get("annual_edge", {}).get("score", 50))
+            new_row["annual_edge_stance"] = str(score.get("annual_edge", {}).get("stance", "neutral"))
             new_row["fundamentals_used"] = True
             new_row["liquidity_score"] = liquidity.get("score", 0.0)
             new_row["liquidity_tier"] = liquidity.get("tier", "unknown")
             new_row["avg_dollar_volume_m"] = liquidity.get("avg_dollar_volume_m", 0.0)
             new_row["position_size_pct"] = trade_plan.get("execution", {}).get("position_pct", 0.0)
+            new_row["return_21d"] = ind.get("return_21d", 0.0)
+            new_row["return_63d"] = ind.get("return_63d", 0.0)
+            new_row["relative_strength_21d"] = ind.get("relative_strength_21d", 0.0)
+            new_row["relative_strength_63d"] = ind.get("relative_strength_63d", 0.0)
             new_row["days_to_earnings"] = event_risk.get("days_to_earnings")
             new_row["event_risk_level"] = event_risk.get("level", "unknown")
+            new_row["fundamental_conviction"] = fundamental.get("score", 50.0)
+            new_row["fundamental_coverage"] = fundamental.get("coverage", 0.0)
             new_row["beta"] = fundamentals.get("beta")
             new_row["sector"] = fundamentals.get("sector")
             new_row["market_cap"] = fundamentals.get("market_cap")
+            new_row["target_upside_pct"] = fundamentals.get("target_upside_pct")
+            new_row["recommendation_mean"] = fundamentals.get("recommendation_mean")
+            new_row["analyst_count"] = fundamentals.get("analyst_count")
+            new_row["forward_eps_growth_pct"] = fundamentals.get("forward_eps_growth_pct")
             return new_row
 
         enrich_workers = min(12, max(4, len(candidate_symbols) // 15))

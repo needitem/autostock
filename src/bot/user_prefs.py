@@ -7,10 +7,10 @@ import os
 from typing import Any
 
 
-VALID_STYLES = {"compact", "standard", "detail"}
-DEFAULT_STYLE = os.getenv("BOT_MESSAGE_STYLE", "compact").strip().lower() or "compact"
+VALID_STYLES = {"beginner", "standard", "detail"}
+DEFAULT_STYLE = os.getenv("BOT_MESSAGE_STYLE", "beginner").strip().lower() or "beginner"
 if DEFAULT_STYLE not in VALID_STYLES:
-    DEFAULT_STYLE = "compact"
+    DEFAULT_STYLE = "beginner"
 
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "data", "chat_settings.json")
 
@@ -35,14 +35,20 @@ def _save_all(data: dict[str, Any]) -> None:
 
 def normalize_style(style: str | None) -> str:
     value = (style or "").strip().lower()
+    if value == "compact":
+        value = "beginner"
     if value in VALID_STYLES:
         return value
 
     aliases = {
-        "c": "compact",
+        "c": "beginner",
+        "b": "beginner",
         "s": "standard",
         "d": "detail",
-        "simple": "compact",
+        "simple": "beginner",
+        "begin": "beginner",
+        "easy": "beginner",
+        "basic": "beginner",
         "normal": "standard",
         "detailed": "detail",
     }
@@ -70,8 +76,8 @@ def set_chat_style(chat_id: str | int, style: str) -> str:
 
 def style_label(style: str) -> str:
     mapping = {
-        "compact": "Compact",
-        "standard": "Standard",
-        "detail": "Detail",
+        "beginner": "초보",
+        "standard": "표준",
+        "detail": "상세",
     }
-    return mapping.get(normalize_style(style), "Compact")
+    return mapping.get(normalize_style(style), "초보")

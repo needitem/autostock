@@ -1,5 +1,5 @@
 """
-한국투자증권 해외주식 API
+Korea Investment & Securities overseas stock API wrapper.
 """
 import os
 import json
@@ -11,7 +11,7 @@ load_dotenv()
 
 
 class KISApi:
-    """한국투자증권 API 클래스"""
+    """KIS API client class."""
     
     def __init__(self):
         self.app_key = os.getenv("KIS_APP_KEY", "")
@@ -28,11 +28,11 @@ class KISApi:
         self._token = None
     
     def _get_token(self) -> str | None:
-        """토큰 발급/캐시"""
+        """Issue and cache an access token."""
         if not self.app_key or not self.app_secret:
             return None
         
-        # 캐시 확인
+        # Check cached token first.
         if os.path.exists(self.token_file):
             try:
                 with open(self.token_file, "r") as f:
@@ -42,7 +42,7 @@ class KISApi:
             except:
                 pass
         
-        # 새 토큰 발급
+        # Request a new token.
         try:
             response = requests.post(
                 f"{self.base_url}/oauth2/tokenP",
@@ -71,7 +71,7 @@ class KISApi:
         return None
     
     def _headers(self, tr_id: str, hashkey: str = "") -> dict:
-        """API 헤더"""
+        """Build API headers."""
         token = self._get_token()
         if not token:
             return {}
@@ -89,7 +89,7 @@ class KISApi:
         return headers
     
     def _hashkey(self, data: dict) -> str:
-        """해시키 생성"""
+        """Generate hash key for order payload."""
         try:
             response = requests.post(
                 f"{self.base_url}/uapi/hashkey",
@@ -102,7 +102,7 @@ class KISApi:
             return ""
     
     def check_status(self) -> dict:
-        """API 상태 확인"""
+        """Check API connection status."""
         if not self.app_key or not self.app_secret:
             return {"connected": False, "error": "API 키 미설정"}
         
@@ -117,7 +117,7 @@ class KISApi:
         return {"connected": False, "error": "토큰 발급 실패"}
     
     def get_price(self, symbol: str, exchange: str = "NAS") -> dict | None:
-        """현재가 조회"""
+        """Fetch current price."""
         headers = self._headers("HHDFS00000300")
         if not headers:
             return None
@@ -146,7 +146,7 @@ class KISApi:
         return None
     
     def get_balance(self) -> dict:
-        """잔고 조회"""
+        """Fetch account balance."""
         tr_id = "VTTS3012R" if self.is_paper else "TTTS3012R"
         headers = self._headers(tr_id)
         if not headers:
@@ -197,7 +197,7 @@ class KISApi:
         return {"error": "API 오류"}
     
     def buy(self, symbol: str, qty: int, price: float, exchange: str = "NASD") -> dict:
-        """매수 주문"""
+        """Place a buy order."""
         tr_id = "VTTT1002U" if self.is_paper else "TTTT1002U"
         
         body = {
@@ -240,7 +240,7 @@ class KISApi:
         return {"error": "API 오류"}
     
     def sell(self, symbol: str, qty: int, price: float, exchange: str = "NASD") -> dict:
-        """매도 주문"""
+        """Place a sell order."""
         tr_id = "VTTT1001U" if self.is_paper else "TTTT1006U"
         
         body = {
@@ -283,7 +283,7 @@ class KISApi:
         return {"error": "API 오류"}
     
     def get_orders(self) -> dict:
-        """미체결 주문 조회"""
+        """Fetch open orders."""
         tr_id = "VTTS3018R" if self.is_paper else "TTTS3018R"
         headers = self._headers(tr_id)
         if not headers:
@@ -324,5 +324,5 @@ class KISApi:
         return {"error": "API 오류"}
 
 
-# 싱글톤 인스턴스
+# Singleton instance.
 kis = KISApi()

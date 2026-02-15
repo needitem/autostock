@@ -1,146 +1,126 @@
 """
-ai_analyzer.py 테스트
-- OpenRouter AI 분석 기능
+Tests for `src/ai_analyzer.py` (legacy compatibility wrapper).
+
+This project uses Codex CLI login (no manual API keys). The module provides a
+thin wrapper around `ai.analyzer.AIAnalyzer` and returns structured dicts.
 """
-import sys
+
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+import sys
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import patch, MagicMock
-from ai_analyzer import (
-    analyze_news_with_ai,
-    analyze_stock_with_ai,
-    get_market_sentiment,
-)
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+from ai_analyzer import analyze_news_with_ai, analyze_stock_with_ai, get_market_sentiment
 
 
 class TestAnalyzeNewsWithAI:
-    """뉴스 AI 분석 테스트"""
-    
     def test_returns_dict(self):
-        """딕셔너리 반환"""
         news = [{"headline": "Apple reports record earnings"}]
-        result = analyze_news_with_ai("AAPL", news)
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = analyze_news_with_ai("AAPL", news)
         assert isinstance(result, dict)
-    
+
     def test_empty_news_returns_error(self):
-        """빈 뉴스는 에러 반환"""
         result = analyze_news_with_ai("AAPL", [])
         assert "error" in result
-    
+
     def test_none_news_returns_error(self):
-        """None 뉴스는 에러 반환"""
         result = analyze_news_with_ai("AAPL", None)
         assert "error" in result
-    
-    @patch('ai_analyzer.OPENROUTER_API_KEY', None)
-    def test_no_api_key_returns_error(self):
-        """API 키 없으면 에러 반환"""
+
+    def test_no_login_returns_error(self):
         news = [{"headline": "Test news"}]
-        result = analyze_news_with_ai("AAPL", news)
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = analyze_news_with_ai("AAPL", news)
         assert "error" in result
 
 
 class TestAnalyzeStockWithAI:
-    """종목 AI 분석 테스트"""
-    
     def test_returns_dict(self):
-        """딕셔너리 반환"""
         stock_data = {
             "price": 150.0,
             "rsi": 55,
             "ma50_gap": 5.0,
-            "position_52w": 70,
-            "change_5d": 2.5,
-            "risk_score": 25
+            "relative_strength_21d": 1.0,
+            "relative_strength_63d": 3.0,
         }
-        result = analyze_stock_with_ai("AAPL", stock_data)
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = analyze_stock_with_ai("AAPL", stock_data)
         assert isinstance(result, dict)
-    
-    @patch('ai_analyzer.OPENROUTER_API_KEY', None)
-    def test_no_api_key_returns_error(self):
-        """API 키 없으면 에러 반환"""
-        stock_data = {"price": 150.0}
-        result = analyze_stock_with_ai("AAPL", stock_data)
+
+    def test_invalid_stock_data_returns_error(self):
+        result = analyze_stock_with_ai("AAPL", None)
         assert "error" in result
-    
+
+    def test_no_login_returns_error(self):
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = analyze_stock_with_ai("AAPL", {"price": 150.0})
+        assert "error" in result
+
     def test_with_news_list(self):
-        """뉴스 리스트와 함께 분석"""
         stock_data = {"price": 150.0, "rsi": 55}
         news = [{"headline": "Apple launches new product"}]
-        result = analyze_stock_with_ai("AAPL", stock_data, news)
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = analyze_stock_with_ai("AAPL", stock_data, news)
         assert isinstance(result, dict)
-    
+
     def test_with_market_data(self):
-        """외부 데이터와 함께 분석"""
         stock_data = {"price": 150.0, "rsi": 55}
         market_data = {
+            "market_condition": {"message": "Risk-on"},
             "sources": {
                 "finviz": {"pe": "25", "target_price": "180"},
-                "tipranks": {"consensus": "Buy", "buy": 20, "hold": 5, "sell": 2}
-            }
+                "tipranks": {"consensus": "Buy", "buy": 20, "hold": 5, "sell": 2},
+            },
         }
-        result = analyze_stock_with_ai("AAPL", stock_data, None, market_data)
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = analyze_stock_with_ai("AAPL", stock_data, None, market_data)
         assert isinstance(result, dict)
 
 
 class TestGetMarketSentiment:
-    """시장 감성 분석 테스트"""
-    
     def test_returns_dict(self):
-        """딕셔너리 반환"""
         news = [{"headline": "Markets rally on positive data"}]
-        result = get_market_sentiment(news)
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = get_market_sentiment(news)
         assert isinstance(result, dict)
-    
+
     def test_empty_news_returns_error(self):
-        """빈 뉴스는 에러 반환"""
         result = get_market_sentiment([])
         assert "error" in result
-    
+
     def test_with_fear_greed(self):
-        """공포탐욕 지수와 함께 분석"""
         news = [{"headline": "Market news"}]
-        fear_greed = {"score": 45, "rating": "중립"}
-        result = get_market_sentiment(news, fear_greed)
+        fear_greed = {"score": 45, "rating": "Neutral"}
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = get_market_sentiment(news, fear_greed)
         assert isinstance(result, dict)
-    
-    @patch('ai_analyzer.OPENROUTER_API_KEY', None)
-    def test_no_api_key_returns_error(self):
-        """API 키 없으면 에러 반환"""
+
+    def test_no_login_returns_error(self):
         news = [{"headline": "Test"}]
-        result = get_market_sentiment(news)
+        with patch("ai_analyzer._call_ai", return_value=None):
+            result = get_market_sentiment(news)
         assert "error" in result
 
 
 class TestAIAnalyzerIntegration:
-    """AI 분석기 통합 테스트"""
-    
-    @patch('ai_analyzer._call_ai')
-    def test_analyze_news_calls_ai(self, mock_ai):
-        """뉴스 분석이 AI를 호출하는지"""
-        mock_ai.return_value = "AI 분석 결과"
+    def test_analyze_news_calls_ai(self):
         news = [{"headline": "Test news"}]
-        
-        with patch('ai_analyzer.OPENROUTER_API_KEY', 'test_key'):
+        with patch("ai_analyzer._call_ai", return_value="AI analysis") as mock_ai:
             result = analyze_news_with_ai("AAPL", news)
-        
-        if "analysis" in result:
-            mock_ai.assert_called_once()
-    
-    @patch('ai_analyzer._call_ai')
-    def test_analyze_stock_calls_ai(self, mock_ai):
-        """종목 분석이 AI를 호출하는지"""
-        mock_ai.return_value = "AI 분석 결과"
-        stock_data = {"price": 150.0}
-        
-        with patch('ai_analyzer.OPENROUTER_API_KEY', 'test_key'):
-            result = analyze_stock_with_ai("AAPL", stock_data)
-        
-        if "analysis" in result:
-            mock_ai.assert_called_once()
+        assert "analysis" in result
+        mock_ai.assert_called_once()
+
+    def test_analyze_stock_calls_ai(self):
+        with patch("ai_analyzer._call_ai", return_value="AI analysis") as mock_ai:
+            result = analyze_stock_with_ai("AAPL", {"price": 150.0})
+        assert "analysis" in result
+        mock_ai.assert_called_once()
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    raise SystemExit(pytest.main([__file__, "-v"]))
+

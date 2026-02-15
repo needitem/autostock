@@ -1,2 +1,2 @@
-"""AI 분석 모듈"""
+"""AI analysis package."""
 from .analyzer import AIAnalyzer, ai

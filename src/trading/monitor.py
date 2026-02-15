@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-관심종목 실시간 모니터링 모듈
-30분마다 체크하여 중요 변화 시 알림
+Watchlist real-time monitoring module.
+Checks every 30 minutes and sends alerts on meaningful changes.
 """
 import os
 import sys
@@ -13,17 +13,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class StockMonitor:
-    """관심종목 모니터링"""
+    """Watchlist monitor."""
     
-    # 알림 조건 설정
+    # Alert thresholds.
     ALERT_CONDITIONS = {
-        "price_change_pct": 3.0,      # 가격 ±3% 변동
-        "rsi_oversold": 30,            # RSI 과매도
-        "rsi_overbought": 70,          # RSI 과매수
-        "stoch_oversold": 20,          # 스토캐스틱 과매도
-        "stoch_overbought": 80,        # 스토캐스틱 과매수
-        "adx_strong_trend": 25,        # 강한 추세
-        "volume_spike": 2.0,           # 거래량 2배 이상
+        "price_change_pct": 3.0,      # Price change threshold (+/-3%)
+        "rsi_oversold": 30,            # RSI oversold threshold
+        "rsi_overbought": 70,          # RSI overbought threshold
+        "stoch_oversold": 20,          # Stochastic oversold threshold
+        "stoch_overbought": 80,        # Stochastic overbought threshold
+        "adx_strong_trend": 25,        # Strong trend threshold
+        "volume_spike": 2.0,           # Volume spike threshold (2x+)
     }
     
     def __init__(self):
@@ -31,7 +31,7 @@ class StockMonitor:
         self._cache = None
     
     def _load_cache(self) -> dict:
-        """이전 상태 캐시 로드"""
+        """Load previous state cache."""
         if self._cache is None:
             if os.path.exists(self.cache_file):
                 try:
@@ -44,13 +44,13 @@ class StockMonitor:
         return self._cache
     
     def _save_cache(self):
-        """캐시 저장"""
+        """Persist cache to disk."""
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         with open(self.cache_file, "w", encoding="utf-8") as f:
             json.dump(self._cache, f, indent=2, ensure_ascii=False)
     
     def check_stock(self, symbol: str) -> dict:
-        """단일 종목 체크 - 현재 상태와 알림 조건"""
+        """Check one symbol against current state and alert conditions."""
         from core.indicators import get_full_analysis
         
         analysis = get_full_analysis(symbol)
@@ -76,7 +76,7 @@ class StockMonitor:
             "checked_at": datetime.now().isoformat(),
         }
         
-        # 1. 가격 변동 체크
+        # 1) Check price change.
         if prev.get("price"):
             change_pct = (current["price"] - prev["price"]) / prev["price"] * 100
             if abs(change_pct) >= self.ALERT_CONDITIONS["price_change_pct"]:
@@ -90,7 +90,7 @@ class StockMonitor:
                     "priority": "high"
                 })
         
-        # 2. RSI 과매도 진입
+        # 2) Detect RSI oversold entry.
         if current["rsi"] <= self.ALERT_CONDITIONS["rsi_oversold"]:
             if not prev.get("rsi") or prev["rsi"] > self.ALERT_CONDITIONS["rsi_oversold"]:
                 alerts.append({
@@ -102,7 +102,7 @@ class StockMonitor:
                     "priority": "high"
                 })
         
-        # 3. RSI 과매수 진입
+        # 3) Detect RSI overbought entry.
         if current["rsi"] >= self.ALERT_CONDITIONS["rsi_overbought"]:
             if not prev.get("rsi") or prev["rsi"] < self.ALERT_CONDITIONS["rsi_overbought"]:
                 alerts.append({
@@ -114,7 +114,7 @@ class StockMonitor:
                     "priority": "medium"
                 })
         
-        # 4. 스토캐스틱 과매도
+        # 4) Detect Stochastic oversold.
         if current["stoch_k"] <= self.ALERT_CONDITIONS["stoch_oversold"]:
             if not prev.get("stoch_k") or prev["stoch_k"] > self.ALERT_CONDITIONS["stoch_oversold"]:
                 alerts.append({
@@ -126,7 +126,7 @@ class StockMonitor:
                     "priority": "medium"
                 })
         
-        # 5. 스토캐스틱 과매수
+        # 5) Detect Stochastic overbought.
         if current["stoch_k"] >= self.ALERT_CONDITIONS["stoch_overbought"]:
             if not prev.get("stoch_k") or prev["stoch_k"] < self.ALERT_CONDITIONS["stoch_overbought"]:
                 alerts.append({
@@ -138,7 +138,7 @@ class StockMonitor:
                     "priority": "medium"
                 })
         
-        # 6. 거래량 급증
+        # 6) Detect volume spike.
         if current["volume_ratio"] >= self.ALERT_CONDITIONS["volume_spike"]:
             if not prev.get("volume_ratio") or prev["volume_ratio"] < self.ALERT_CONDITIONS["volume_spike"]:
                 alerts.append({
@@ -150,7 +150,7 @@ class StockMonitor:
                     "priority": "medium"
                 })
         
-        # 7. 지지선 돌파 (하락)
+        # 7) Detect support break (downside).
         if prev.get("price") and current["support"]:
             nearest_support = current["support"][0]
             if prev["price"] > nearest_support and current["price"] <= nearest_support:
@@ -163,7 +163,7 @@ class StockMonitor:
                     "priority": "high"
                 })
         
-        # 8. 저항선 돌파 (상승)
+        # 8) Detect resistance break (upside).
         if prev.get("price") and current["resistance"]:
             nearest_resistance = current["resistance"][0]
             if prev["price"] < nearest_resistance and current["price"] >= nearest_resistance:
@@ -176,7 +176,7 @@ class StockMonitor:
                     "priority": "high"
                 })
         
-        # 9. 캔들 패턴 발생
+        # 9) Detect candlestick patterns.
         if current["candle_patterns"]:
             for pattern in current["candle_patterns"]:
                 alerts.append({
@@ -188,7 +188,7 @@ class StockMonitor:
                     "priority": "low"
                 })
         
-        # 10. 크로스 신호 발생
+        # 10) Detect crossover signals.
         if current["crosses"]:
             for cross in current["crosses"]:
                 priority = "high" if "골든" in cross["type"] or "데드" in cross["type"] else "medium"
@@ -201,7 +201,7 @@ class StockMonitor:
                     "priority": priority
                 })
         
-        # 캐시 업데이트
+        # Update cache.
         cache["stocks"][symbol] = current
         cache["last_check"] = datetime.now().isoformat()
         self._save_cache()
@@ -214,7 +214,7 @@ class StockMonitor:
         }
     
     def check_all_watchlist(self) -> list[dict]:
-        """관심종목 전체 체크"""
+        """Check all watchlist symbols."""
         from trading.watchlist import watchlist
         
         data = watchlist.get_all()
@@ -228,7 +228,7 @@ class StockMonitor:
         return results
     
     def format_alert_message(self, results: list[dict]) -> str:
-        """알림 메시지 포맷"""
+        """Format alert messages."""
         if not results:
             return ""
         
@@ -240,12 +240,12 @@ class StockMonitor:
             current = result["current"]
             alerts = result["alerts"]
             
-            # 우선순위 높은 것 먼저
+            # Sort alerts by priority first.
             alerts.sort(key=lambda x: {"high": 0, "medium": 1, "low": 2}.get(x["priority"], 3))
             
             text += f"<b>{symbol}</b> ${current['price']:.2f}\n"
             
-            for alert in alerts[:3]:  # 최대 3개 알림
+            for alert in alerts[:3]:  # Show up to three alerts
                 text += f"  {alert['emoji']} {alert['title']}\n"
                 text += f"     {alert['detail']}\n"
                 text += f"     → <b>{alert['signal']}</b>\n"
@@ -256,7 +256,7 @@ class StockMonitor:
         return text
     
     def get_summary(self, symbol: str) -> str:
-        """종목 현재 상태 요약"""
+        """Summarize current symbol state."""
         from core.indicators import get_full_analysis
         
         analysis = get_full_analysis(symbol)
@@ -267,13 +267,13 @@ class StockMonitor:
         stoch_k = analysis.get("stoch_k", 50)
         adx = analysis.get("adx", 0)
         
-        # RSI 해석
+        # RSI interpretation.
         rsi_status = "과매도🟢" if rsi < 30 else ("과매수🔴" if rsi > 70 else "중립⚪")
         
-        # 스토캐스틱 해석
+        # Stochastic interpretation.
         stoch_status = "과매도🟢" if stoch_k < 20 else ("과매수🔴" if stoch_k > 80 else "중립⚪")
         
-        # ADX 해석
+        # ADX interpretation.
         adx_status = "강한추세📈" if adx > 25 else "횡보↔️"
         
         text = f"<b>{symbol}</b> ${analysis.get('price', 0):.2f}\n"
@@ -292,5 +292,5 @@ class StockMonitor:
         return text
 
 
-# 싱글톤
+# Singleton instance.
 monitor = StockMonitor()

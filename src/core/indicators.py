@@ -104,7 +104,11 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any] | None:
     position_52w = 50.0 if range52 == 0 else (price - low52) / range52 * 100
 
     price_5d_ago = _f(close.iloc[-6], price) if len(close) >= 6 else price
+    price_21d_ago = _f(close.iloc[-22], price) if len(close) >= 22 else price
+    price_63d_ago = _f(close.iloc[-64], price) if len(close) >= 64 else price
     change_5d = _pct_gap(price, price_5d_ago)
+    return_21d = _pct_gap(price, price_21d_ago)
+    return_63d = _pct_gap(price, price_63d_ago)
     down_days = int((close.tail(5).diff().dropna() < 0).sum())
 
     support, resistance = find_support_resistance(frame)
@@ -156,6 +160,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any] | None:
         "ma50_gap": _round(_pct_gap(price, ma50_now), 1),
         "ma200_gap": _round(_pct_gap(price, ma200_now), 1),
         "change_5d": _round(change_5d, 1),
+        "return_21d": _round(return_21d, 2),
+        "return_63d": _round(return_63d, 2),
         "down_days": down_days,
         "ma5_prev": _round(ma5.iloc[-2], 2, ma5_now),
         "ma20_prev": _round(ma20.iloc[-2], 2, ma20_now),
@@ -360,4 +366,3 @@ __all__ = [
     "calculate_fibonacci",
     "get_full_analysis",
 ]
-

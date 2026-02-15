@@ -62,7 +62,7 @@ class Portfolio:
         if not signals:
             return [{"message": "매수 신호 없음"}]
 
-        plan = self._get_buy_plan(signals, available, max_amount)
+        plan = self._get_buy_plan(signals, available, max_amount, holdings=balance.get("holdings", []))
 
         results = []
         for order in plan:
@@ -111,10 +111,50 @@ class Portfolio:
 
         return results
 
-    def _get_buy_plan(self, signals: list, available: float, max_per_stock: float) -> list[dict]:
+    def _build_sector_counts(self, holdings: list[dict]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        if not holdings:
+            return counts
+
+        try:
+            from core.stock_data import get_stock_info
+        except Exception:
+            return counts
+
+        for row in holdings:
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+
+            sector = str(row.get("sector", "")).strip()
+            if not sector:
+                try:
+                    info = get_stock_info(symbol)
+                    sector = str(info.get("sector") or "").strip()
+                except Exception:
+                    sector = ""
+            if not sector:
+                sector = "Unknown"
+
+            counts[sector] = counts.get(sector, 0) + 1
+        return counts
+
+    def _get_buy_plan(
+        self,
+        signals: list,
+        available: float,
+        max_per_stock: float,
+        holdings: list[dict] | None = None,
+    ) -> list[dict]:
         """Create buy plan using scan trade-plan first, then fallback to signal rule."""
         if not signals:
             return []
+
+        holdings = holdings or []
+        held_symbols = {str(h.get("symbol", "")).strip().upper() for h in holdings if h.get("symbol")}
+        held_symbols = {s for s in held_symbols if s}
+        sector_counts = self._build_sector_counts(holdings)
+        sector_cap = 2
 
         ranked = []
         try:
@@ -147,9 +187,29 @@ class Portfolio:
                 symbol = str(row.get("symbol", "")).upper()
                 if not symbol:
                     continue
+                if symbol in held_symbols:
+                    continue
 
                 plan = row.get("trade_plan", {})
                 if not plan.get("tradeable", False):
+                    continue
+
+                event_level = str(row.get("event_risk_level", plan.get("event_risk", {}).get("level", "unknown")))
+                if event_level in {"imminent", "near"}:
+                    continue
+
+                rs63 = float(
+                    row.get(
+                        "relative_strength_63d",
+                        plan.get("positioning", {}).get("relative_strength_63d", 0),
+                    )
+                    or 0
+                )
+                if rs63 < -5:
+                    continue
+
+                sector = str(row.get("sector") or "Unknown")
+                if sector != "Unknown" and sector_counts.get(sector, 0) >= sector_cap:
                     continue
 
                 position_pct = float(plan.get("execution", {}).get("position_pct", row.get("position_size_pct", 0)) or 0)
@@ -172,10 +232,16 @@ class Portfolio:
                         "symbol": symbol,
                         "amount": round(amount, 2),
                         "price": float(row.get("price", signal.get("price", 0)) or 0),
-                        "reason": f"trade_plan({strength}) stage={stage} rr2={rr2:.2f} liq={liq:.0f}",
+                        "reason": (
+                            f"trade_plan({strength}) stage={stage} rr2={rr2:.2f} "
+                            f"liq={liq:.0f} rs63={rs63:.1f} sector={sector}"
+                        ),
                     }
                 )
                 remaining -= amount
+                held_symbols.add(symbol)
+                if sector != "Unknown":
+                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
                 if len(orders) >= 3:
                     break
 
@@ -190,14 +256,19 @@ class Portfolio:
         per_stock = min(max_per_stock, max_total / len(prioritized)) if prioritized else 0
 
         fallback: list[dict] = []
-        for s in prioritized[:3]:
+        for s in prioritized:
+            if len(fallback) >= 3:
+                break
             weight = 1.0 if s.get("strength") == "강함" else 0.7
             if s.get("rsi", 50) <= 30:
                 weight += 0.15
+            symbol = str(s.get("symbol", "")).strip().upper()
+            if not symbol or symbol in held_symbols:
+                continue
             amount = max(50, min(per_stock * weight, max_per_stock))
             fallback.append(
                 {
-                    "symbol": s["symbol"],
+                    "symbol": symbol,
                     "amount": round(amount, 2),
                     "price": s["price"],
                     "reason": f"신호기반({s.get('strength', '보통')}), RSI {s.get('rsi', 50)}",

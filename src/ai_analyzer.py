@@ -1,50 +1,66 @@
 """
-Compatibility AI analyzer module used by legacy tests.
+Legacy compatibility wrapper for AI analysis helpers.
+
+This project standardizes on Codex CLI authentication (ChatGPT login) and does
+not require manual API keys. These functions remain for older modules/tests.
 """
+
 from __future__ import annotations
 
 import os
-import requests
+from typing import Any
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
-OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+from ai.analyzer import AIAnalyzer
+
+
+_DEFAULT_MODEL = os.getenv("AI_MODEL", "gpt-5.2")
 
 
 def _call_ai(prompt: str, max_tokens: int = 800) -> str | None:
-    if not OPENROUTER_API_KEY:
-        return None
-    try:
-        response = requests.post(
-            OPENROUTER_URL,
-            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": 0.2,
-            },
-            timeout=30,
-        )
-        if response.status_code != 200:
-            return None
-        return response.json().get("choices", [{}])[0].get("message", {}).get("content")
-    except Exception:
-        return None
+    # Keep as a module-level function so tests can patch it without invoking
+    # the external `codex` binary.
+    return AIAnalyzer()._call(prompt, max_tokens=max_tokens)
 
 
-def analyze_news_with_ai(symbol: str, news: list[dict] | None) -> dict:
+def _no_login_error(extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "error": "Codex login is required. Run: codex login",
+        "mode": "codex-cli",
+        "model": _DEFAULT_MODEL,
+    }
+    if extra:
+        out.update(extra)
+    return out
+
+
+def analyze_news_with_ai(symbol: str, news: list[dict] | None) -> dict[str, Any]:
     if not news:
-        return {"error": "No news provided", "symbol": symbol}
-    if not OPENROUTER_API_KEY:
-        return {"error": "OPENROUTER_API_KEY missing", "symbol": symbol}
+        return {"error": "No news provided", "symbol": symbol, "mode": "codex-cli", "model": _DEFAULT_MODEL}
 
-    headlines = "\n".join(f"- {item.get('headline', '')}" for item in news[:10])
-    prompt = f"{symbol} 뉴스 분석:\n{headlines}\n\n요약, 투자심리, 리스크를 알려주세요."
-    result = _call_ai(prompt, max_tokens=700)
-    if not result:
-        return {"error": "AI call failed", "symbol": symbol}
-    return {"symbol": symbol, "analysis": result}
+    headlines = []
+    for item in (news or [])[:10]:
+        headline = str((item or {}).get("headline", "")).strip()
+        if headline:
+            headlines.append(f"- {headline[:200]}")
+    headline_text = "\n".join(headlines) if headlines else "- none"
+
+    prompt = (
+        "You are a cautious equity analyst.\n"
+        "Write in Korean and keep it concise.\n"
+        "Output plain text only.\n\n"
+        f"Symbol: {symbol}\n"
+        "Recent headlines:\n"
+        f"{headline_text}\n\n"
+        "Return:\n"
+        "1) what changed (facts)\n"
+        "2) bull vs bear points\n"
+        "3) likely 1-4 week implications\n"
+        "4) key watch items\n"
+    )
+    text = _call_ai(prompt, max_tokens=700)
+    if not text:
+        return _no_login_error({"symbol": symbol})
+    return {"symbol": symbol, "analysis": text, "mode": "codex-cli", "model": _DEFAULT_MODEL}
 
 
 def analyze_stock_with_ai(
@@ -52,38 +68,92 @@ def analyze_stock_with_ai(
     stock_data: dict | None,
     news: list[dict] | None = None,
     market_data: dict | None = None,
-) -> dict:
+) -> dict[str, Any]:
     if not isinstance(stock_data, dict):
-        return {"error": "Invalid stock data", "symbol": symbol}
-    if not OPENROUTER_API_KEY:
-        return {"error": "OPENROUTER_API_KEY missing", "symbol": symbol}
+        return {"error": "Invalid stock data", "symbol": symbol, "mode": "codex-cli", "model": _DEFAULT_MODEL}
+
+    price = stock_data.get("price")
+    rsi = stock_data.get("rsi")
+    adx = stock_data.get("adx")
+    ma50_gap = stock_data.get("ma50_gap")
+    rs21 = stock_data.get("relative_strength_21d", stock_data.get("rs21"))
+    rs63 = stock_data.get("relative_strength_63d", stock_data.get("rs63"))
+
+    headlines = []
+    for item in (news or [])[:6]:
+        headline = str((item or {}).get("headline", "")).strip()
+        if headline:
+            headlines.append(f"- {headline[:200]}")
+    headline_text = "\n".join(headlines) if headlines else "- none"
+
+    market_ctx = market_data or {}
+    market_note = ""
+    try:
+        mc = market_ctx.get("market_condition") or {}
+        if isinstance(mc, dict) and mc.get("message"):
+            market_note = str(mc.get("message"))
+    except Exception:
+        market_note = ""
 
     prompt = (
-        f"{symbol} 종목 분석\n"
-        f"price={stock_data.get('price')}, rsi={stock_data.get('rsi')}, ma50_gap={stock_data.get('ma50_gap')}\n"
-        f"news_count={len(news or [])}, has_market_data={bool(market_data)}"
+        "You are a cautious equity analyst.\n"
+        "Write in Korean and keep it concise.\n"
+        "Output plain text only.\n\n"
+        f"Symbol: {symbol}\n"
+        f"Price: {price}\n"
+        f"RSI: {rsi}\n"
+        f"ADX: {adx}\n"
+        f"MA50 gap(%): {ma50_gap}\n"
+        f"Relative strength 21d vs QQQ(%p): {rs21}\n"
+        f"Relative strength 63d vs QQQ(%p): {rs63}\n"
+        f"Market note: {market_note or 'N/A'}\n"
+        "Recent headlines:\n"
+        f"{headline_text}\n\n"
+        "Return:\n"
+        "1) trend read\n"
+        "2) entry plan (if any)\n"
+        "3) exit plan (if any)\n"
+        "4) key risk\n"
+        "5) confidence level (high/medium/low)\n"
     )
-    result = _call_ai(prompt, max_tokens=900)
-    if not result:
-        return {"error": "AI call failed", "symbol": symbol}
-    return {"symbol": symbol, "analysis": result}
+
+    text = _call_ai(prompt, max_tokens=900)
+    if not text:
+        return _no_login_error({"symbol": symbol})
+    return {"symbol": symbol, "analysis": text, "mode": "codex-cli", "model": _DEFAULT_MODEL}
 
 
-def get_market_sentiment(news: list[dict] | None, fear_greed: dict | None = None) -> dict:
+def get_market_sentiment(news: list[dict] | None, fear_greed: dict | None = None) -> dict[str, Any]:
     if not news:
-        return {"error": "No market news", "fear_greed": fear_greed or {}}
-    if not OPENROUTER_API_KEY:
-        return {"error": "OPENROUTER_API_KEY missing", "fear_greed": fear_greed or {}}
+        return {
+            "error": "No market news",
+            "fear_greed": fear_greed or {},
+            "mode": "codex-cli",
+            "model": _DEFAULT_MODEL,
+        }
 
-    headlines = "\n".join(f"- {item.get('headline', '')}" for item in news[:10])
+    headlines = []
+    for item in (news or [])[:10]:
+        headline = str((item or {}).get("headline", "")).strip()
+        if headline:
+            headlines.append(f"- {headline[:200]}")
+    headline_text = "\n".join(headlines) if headlines else "- none"
+
     fg = fear_greed or {}
     prompt = (
-        "시장 심리 분석\n"
-        f"fear_greed={fg.get('score')} ({fg.get('rating')})\n"
-        f"{headlines}"
+        "You are a cautious market strategist.\n"
+        "Write in Korean and keep it concise.\n"
+        "Output plain text only.\n\n"
+        f"Fear&Greed: {fg.get('score')} ({fg.get('rating')})\n"
+        "Headlines:\n"
+        f"{headline_text}\n\n"
+        "Return:\n"
+        "1) market regime (risk-on/off)\n"
+        "2) what is driving sentiment\n"
+        "3) near-term risks to watch\n"
     )
-    result = _call_ai(prompt, max_tokens=700)
-    if not result:
-        return {"error": "AI call failed", "fear_greed": fg}
-    return {"analysis": result, "fear_greed": fg}
+    text = _call_ai(prompt, max_tokens=700)
+    if not text:
+        return _no_login_error({"fear_greed": fg})
+    return {"analysis": text, "fear_greed": fg, "mode": "codex-cli", "model": _DEFAULT_MODEL}
 

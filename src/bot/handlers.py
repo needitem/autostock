@@ -115,23 +115,24 @@ async def handle_main(query) -> None:
     style = _style_from_query(query)
 
     text = "🏠 <b>AutoStock</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += f"관심종목: <b>{stock_count}</b>개\n"
-    text += f"모니터링: {'ON' if monitor_on else 'OFF'}\n"
+    text += "<b>처음이라면 이렇게 시작하세요</b>\n"
+    text += "1) 🚀 오늘 뭐 살까\n"
+    text += "2) 📊 종목 쉽게 보기\n"
+    text += "3) 👀 관심종목 등록\n\n"
+    text += f"관심종목: <b>{stock_count}</b>개 | 모니터링 {'ON' if monitor_on else 'OFF'}\n"
     text += f"자동매수/손절: {'ON' if auto_buy else 'OFF'} / {'ON' if auto_sell else 'OFF'}\n"
-    text += f"표시 스타일: {style_label(style)}\n"
+    text += f"화면 모드: <b>{style_label(style)}</b>\n"
     text += f"트레이딩: {'사용 가능' if kb.trading_enabled() else '비활성'}\n\n"
-    text += "심볼을 직접 보내도 바로 분석됩니다. (예: <code>AAPL</code>)"
+    text += "티커만 보내도 바로 분석됩니다. (예: <code>AAPL</code>)"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
 
 
 async def handle_help(query) -> None:
-    text = "📌 <b>빠른 사용법</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "• 추천 종목: 조건 기반 상위 후보\n"
-    text += "• 빠른 스캔: 전체 유니버스 상위 요약\n"
-    text += "• AI 리포트: 시장+뉴스+스캔 종합\n"
-    text += "• 종목 분석: 개별 차트/점수 확인\n"
-    text += "• 관심종목: 모니터링/알림 관리\n"
-    text += "• 표시 설정: 초간단/표준/상세"
+    text = "📌 <b>초보 가이드</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "1) <b>오늘 뭐 살까</b>: 지금 매수/대기만 빠르게 확인\n"
+    text += "2) <b>종목 쉽게 보기</b>: 한 종목을 실행안(매수/손절/목표)으로 확인\n"
+    text += "3) <b>관심종목</b>: 알림 켜두고 신호 올 때만 체크\n\n"
+    text += "용어가 어렵다면 <b>초보(권장)</b> 모드를 사용하세요."
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
 
 
@@ -139,9 +140,9 @@ async def handle_display_settings(query) -> None:
     style = _style_from_query(query)
     text = "⚙️ <b>표시 설정</b>\n━━━━━━━━━━━━━━━━━━\n\n"
     text += f"현재 스타일: <b>{style_label(style)}</b>\n\n"
-    text += "• 초간단: 핵심 숫자만\n"
-    text += "• 표준: 매매 정보 포함\n"
-    text += "• 상세: 보조 지표/추가 경고 포함"
+    text += "• 초보(권장): 지금 할 일 중심\n"
+    text += "• 표준: 기본 지표 + 매매 정보\n"
+    text += "• 상세: 보조 지표/경고까지 전체 표시"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(style))
 
 
@@ -177,6 +178,7 @@ async def handle_recommend(query) -> None:
             stage = str(plan.get("positioning", {}).get("stage", ""))
             position_pct = float(plan.get("execution", {}).get("position_pct", 0) or 0)
             liq = float(stock.get("liquidity_score", 0) or 0)
+            rs63 = float(stock.get("relative_strength_63d", plan.get("positioning", {}).get("relative_strength_63d", 0)) or 0)
             event_level = stock.get("event_risk_level", "unknown")
 
             if score.get("risk", {}).get("score", 100) >= 68:
@@ -190,6 +192,8 @@ async def handle_recommend(query) -> None:
             if stage == "right_shoulder":
                 continue
             if liq < 50:
+                continue
+            if rs63 < -4:
                 continue
             if position_pct < 1.2:
                 continue
@@ -205,6 +209,7 @@ async def handle_recommend(query) -> None:
                 rr2 = float(plan.get("risk_reward", {}).get("rr2", 0) or 0)
                 stage = str(plan.get("positioning", {}).get("stage", ""))
                 liq = float(stock.get("liquidity_score", 0) or 0)
+                rs63 = float(stock.get("relative_strength_63d", plan.get("positioning", {}).get("relative_strength_63d", 0)) or 0)
                 event_level = stock.get("event_risk_level", "unknown")
 
                 if score.get("risk", {}).get("score", 100) >= 72:
@@ -216,6 +221,8 @@ async def handle_recommend(query) -> None:
                 if rr2 < 1.1:
                     continue
                 if liq < 45:
+                    continue
+                if rs63 < -8:
                     continue
                 if event_level == "imminent":
                     continue
@@ -303,6 +310,8 @@ async def handle_ai_recommend(query) -> None:
         stats = ai_result.get("stats", {})
         header = f"🤖 <b>AI 리포트</b> ({ai_result.get('total', 0)}개 분석)\n"
         header += f"평균 RSI {stats.get('avg_rsi', 0):.0f} │ 평균 점수 {stats.get('avg_score', 0):.0f}\n"
+        if "avg_rs63_vs_qqq" in stats:
+            header += f"평균 RS63(vs QQQ) {stats.get('avg_rs63_vs_qqq', 0):+.1f}%p\n"
         header += f"과매도 {stats.get('oversold', 0)} │ 과매수 {stats.get('overbought', 0)}\n"
         header += f"강한 추세 {stats.get('strong_trend', 0)} │ 트레이드 가능 {stats.get('tradeable_count', 0)}\n"
         header += f"표시 스타일: {style_label(style)}\n"
@@ -314,17 +323,17 @@ async def handle_ai_recommend(query) -> None:
 
 
 async def handle_analyze_menu(query) -> None:
-    text = "📊 <b>종목 분석</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "버튼으로 선택하거나 심볼을 직접 입력하세요.\n"
+    text = "📊 <b>종목 쉽게 보기</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "버튼을 누르거나 티커를 직접 입력하세요.\n"
     text += "예: <code>AAPL</code>, <code>TSLA</code>"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.analyze_menu())
 
 
 async def handle_analyze_input(query) -> None:
     text = "⌨️ <b>직접 입력 모드</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "채팅창에 심볼만 입력하면 됩니다.\n"
+    text += "채팅창에 티커만 입력하면 됩니다.\n"
     text += "예: <code>NVDA</code>, <code>MSFT</code>"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back("analyze_menu", "종목 분석"))
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back("analyze_menu", "종목 쉽게 보기"))
 
 
 async def handle_fear_greed(query) -> None:

@@ -1,6 +1,9 @@
 """
-Compatibility news module used by legacy tests.
+Compatibility news module kept for legacy tests.
+
+Production code lives in `core.news` (keyless RSS + yfinance).
 """
+
 from __future__ import annotations
 
 from core.news import (
@@ -13,10 +16,10 @@ from core.news import (
 
 
 EVENT_DESCRIPTIONS = {
-    "FOMC": {"name": "FOMC Meeting", "impact": "🔴 High", "desc": "Federal Reserve rate decision."},
-    "CPI": {"name": "Consumer Price Index", "impact": "🔴 High", "desc": "Inflation gauge affecting rates."},
-    "NFP": {"name": "Non-Farm Payrolls", "impact": "🔴 High", "desc": "US labor market strength indicator."},
-    "earnings": {"name": "Earnings", "impact": "🟡 Medium", "desc": "Quarterly company earnings releases."},
+    "FOMC": {"name": "FOMC Meeting", "impact": "high", "desc": "Federal Reserve rate decision."},
+    "CPI": {"name": "Consumer Price Index", "impact": "high", "desc": "Inflation gauge affecting rates."},
+    "NFP": {"name": "Non-Farm Payrolls", "impact": "high", "desc": "US labor market strength indicator."},
+    "earnings": {"name": "Earnings", "impact": "medium", "desc": "Quarterly company earnings releases."},
 }
 
 
@@ -35,7 +38,7 @@ def get_earnings_calendar(days: int = 14) -> list[dict]:
 
 
 def get_insider_transactions(symbol: str, days: int = 90) -> list[dict]:
-    # Optional source: keep lightweight fallback for compatibility tests.
+    # Optional source: keep a lightweight fallback for compatibility tests.
     return []
 
 
@@ -54,7 +57,7 @@ def get_price_target(symbol: str) -> dict | None:
 
 
 def get_ipo_calendar(days: int = 30) -> list[dict]:
-    # Optional source: keep lightweight fallback for compatibility tests.
+    # Optional source: keep a lightweight fallback for compatibility tests.
     return []
 
 

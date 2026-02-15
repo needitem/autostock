@@ -73,9 +73,13 @@ async def _send_main_menu(update: Update) -> None:
     save_chat_id(chat_id)
     style = get_chat_style(chat_id)
 
-    text = "🚀 <b>AutoStock 준비 완료</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += f"표시 스타일: {style_label(style)}\n"
-    text += "버튼으로 기능을 선택하거나, 심볼을 직접 입력해 분석할 수 있습니다.\n\n"
+    text = "👋 <b>AutoStock 시작</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text += "처음이면 아래 순서로 보세요.\n"
+    text += "1) 🚀 오늘 뭐 살까\n"
+    text += "2) 📊 종목 쉽게 보기\n"
+    text += "3) 👀 관심종목 등록\n\n"
+    text += f"현재 화면 모드: <b>{style_label(style)}</b>\n"
+    text += "티커를 직접 보내도 바로 분석됩니다.\n"
     text += "예: <code>AAPL</code>, <code>TSLA</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
 
@@ -95,14 +99,15 @@ async def style_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if context.args:
         requested = normalize_style(context.args[0])
         saved = set_chat_style(chat_id, requested)
-        text = f"⚙️ 표시 스타일이 <b>{style_label(saved)}</b>로 설정되었습니다."
+        text = f"⚙️ 화면 모드를 <b>{style_label(saved)}</b>로 설정했습니다."
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(saved))
         return
 
     current = get_chat_style(chat_id)
-    text = "⚙️ <b>표시 스타일 설정</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    text = "⚙️ <b>화면 모드 설정</b>\n━━━━━━━━━━━━━━━━━━\n\n"
     text += f"현재: <b>{style_label(current)}</b>\n\n"
-    text += "명령 예시: <code>/style compact</code> | <code>/style standard</code> | <code>/style detail</code>"
+    text += "추천: beginner(초보)\n"
+    text += "명령 예시: <code>/style beginner</code> | <code>/style standard</code> | <code>/style detail</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(current))
 
 
