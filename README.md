@@ -294,6 +294,37 @@ Output:
 
 - `data/ai_chart_tuning_best.json`
 
+## AI Portfolio Selector Backtest (QQQ-Beating Target)
+
+This mode makes the LLM build a long-only top-K portfolio each rebalance (single call per snapshot),
+using only chart/regime features. It also reports a simple momentum baseline (top-K `rs63`) so you
+can see whether the AI adds value.
+
+```bash
+set AI_UNIVERSE=nasdaq100
+set AI_UNIVERSE_MODE=by_date
+set AI_UNIVERSE_BY_DATE_FILE=data/universe/nasdaq100_by_date_monthly.json
+
+set AI_SNAPSHOT_FREQ=monthly
+set AI_HORIZON_MODE=next_snapshot
+set AI_PORTFOLIO_TOP_K=5
+
+set AI_PROMPT_MAX_SYMBOLS=30
+set AI_PROMPT_SELECT_MODE=top_rs63
+
+# Round-trip cost used on portfolio turnover (bps). Example: 20 = 0.20%
+set AI_TRADE_COST_BPS=20
+
+python scripts/backtest_ai_portfolio_selector.py
+```
+
+Outputs:
+
+- `data/ai_portfolio_backtest_results.csv`
+- `data/ai_portfolio_backtest_summary.json`
+- `data/runs/ai_portfolio_backtest_results_<run_tag>.csv`
+- `data/runs/ai_portfolio_backtest_summary_<run_tag>.json`
+
 ## Disclaimer
 
 This project is for research and decision support.
