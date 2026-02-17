@@ -3,10 +3,6 @@ config.py 테스트
 - 나스닥 100 목록
 - 설정 값
 """
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import pytest
 from unittest.mock import patch, MagicMock
 

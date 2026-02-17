@@ -4,10 +4,6 @@ strategies.py 테스트
 - 7가지 매매 전략
 - 위험도 분석
 """
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import pytest
 import pandas as pd
 import numpy as np

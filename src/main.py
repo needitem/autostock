@@ -75,14 +75,13 @@ def run_scan_once(limit: int = 50) -> None:
 def run_ai_once() -> None:
     from ai.analyzer import ai
     from config import load_all_us_stocks, load_stock_categories
-    from core.news import get_bulk_news, get_market_news
     from core.signals import scan_stocks
     from core.stock_data import get_fear_greed_index, get_market_condition
 
     universe = load_all_us_stocks()
     categories = load_stock_categories()
     print(f"[{datetime.now()}] market analysis started...")
-    print(f"[1/4] scanning symbols... ({len(universe)} tickers)")
+    print(f"[1/3] scanning symbols... ({len(universe)} tickers)")
     result = scan_stocks(universe)
     stocks = result["results"]
     print(
@@ -90,11 +89,10 @@ def run_ai_once() -> None:
         f"(fundamentals enriched: {result.get('fundamentals_enriched', 0)})"
     )
 
-    print("[2/4] loading market context...")
+    print("[2/3] loading market context...")
     market_data = {
         "fear_greed": get_fear_greed_index(),
         "market_condition": get_market_condition(),
-        "market_news": get_market_news(),
     }
     print(
         "  -> "
@@ -102,13 +100,8 @@ def run_ai_once() -> None:
         f"regime {market_data['market_condition'].get('message', 'N/A')}"
     )
 
-    news_symbols = ai.select_news_symbols(stocks, limit=min(80, max(24, len(stocks) // 6)))
-    print(f"[3/4] loading stock news... ({len(news_symbols)} tickers)")
-    news_data = get_bulk_news(news_symbols, days=3)
-    print(f"  -> news done: {len(news_data)} / requested {len(news_symbols)}")
-
-    print("[4/4] generating analysis...")
-    result = ai.analyze_full_market(stocks, news_data, market_data, categories)
+    print("[3/3] generating analysis...")
+    result = ai.analyze_full_market(stocks, {}, market_data, categories)
     if "error" in result:
         print(f"analysis failed: {result['error']}")
         return

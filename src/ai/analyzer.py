@@ -6,8 +6,11 @@ LLM-based analyzer using Codex CLI login (no manual API key required).
 from __future__ import annotations
 
 import os
+import time
+from contextlib import contextmanager
 import subprocess
 import tempfile
+import shutil
 from collections import Counter
 from typing import Any
 
@@ -15,31 +18,121 @@ from typing import Any
 class AIAnalyzer:
     def __init__(self, model: str | None = None):
         self.provider = os.getenv("AI_PROVIDER", "codex-cli")
-        self.codex_bin = os.getenv("CODEX_BIN", "codex")
+        configured = os.getenv("CODEX_BIN", "codex")
+        if os.name == "nt" and (configured or "").strip().lower() == "codex":
+            configured = shutil.which("codex.cmd") or configured
+        self.codex_bin = configured
         self.base_url = None
         self.model = model or os.getenv("AI_MODEL", "gpt-5.2")
         self.reasoning_effort = os.getenv("AI_REASONING_EFFORT", "medium").strip().lower() or "medium"
         if self.reasoning_effort not in {"low", "medium", "high"}:
             self.reasoning_effort = "medium"
+        self.no_proxy_mode = str(os.getenv("AI_DISABLE_PROXY", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        self.cli_retries = self._i_env("AI_CLI_RETRIES", 1)
+        self.cli_retry_delay_sec = self._f_env("AI_CLI_RETRY_DELAY_SEC", 1.5)
+        fallback_models = os.getenv("AI_MODEL_FALLBACKS", "")
+        self.fallback_models = [m.strip() for m in fallback_models.split(",") if m.strip()]
+        if self.model not in self.fallback_models:
+            self.fallback_models.append(self.model)
+
+    @contextmanager
+    def _temporary_proxy_env(self):
+        keys = (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "GIT_HTTP_PROXY",
+            "GIT_HTTPS_PROXY",
+        )
+        backup = {}
+        try:
+            for key in keys:
+                val = os.getenv(key)
+                if self.no_proxy_mode or (val and "127.0.0.1:9" in val):
+                    backup[key] = os.environ.get(key)
+                    os.environ[key] = ""
+            yield
+        finally:
+            for key, old in backup.items():
+                if old is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old
+
+    def _i_env(self, k: str, d: int) -> int:
+        try:
+            return int(os.getenv(k, str(d)))
+        except Exception:
+            return d
+
+    def _f_env(self, k: str, d: float) -> float:
+        try:
+            return float(os.getenv(k, str(d)))
+        except Exception:
+            return d
 
     @property
     def has_api_access(self) -> bool:
         if self.provider != "codex-cli":
             return False
         try:
-            proc = subprocess.run(
-                [self.codex_bin, "login", "status"],
-                capture_output=True,
-                text=True,
-                timeout=8,
-                check=False,
-            )
+            with self._temporary_proxy_env():
+                proc = subprocess.run(
+                    [self.codex_bin, "login", "status"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="ignore",
+                    timeout=8,
+                    check=False,
+                )
             if proc.returncode != 0:
                 return False
             out = (proc.stdout or "") + (proc.stderr or "")
             return "Logged in using ChatGPT" in out or "Logged in" in out
         except Exception:
             return False
+
+    def _run_codex(self, cmd: list[str], prompt: str, max_tokens: int, timeout: int = 240) -> tuple[bool, subprocess.CompletedProcess[Any, Any], str | None]:
+        last_error: str | None = None
+        for model in self.fallback_models:
+            for attempt in range(1, max(1, self.cli_retries) + 1):
+                if "-m" in cmd:
+                    run_cmd = list(cmd)
+                    mi = run_cmd.index("-m")
+                    if mi + 1 < len(run_cmd):
+                        run_cmd[mi + 1] = model
+                    else:
+                        run_cmd.append(model)
+                else:
+                    run_cmd = [*cmd, "-m", model]
+                try:
+                    with self._temporary_proxy_env():
+                        proc = subprocess.run(
+                            run_cmd,
+                            input=prompt,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="ignore",
+                            timeout=timeout,
+                            check=False,
+                        )
+                except Exception as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    proc = None
+                else:
+                    if proc.returncode == 0:
+                        return True, proc, model
+                    last_error = f"rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
+
+                if attempt < max(1, self.cli_retries):
+                    time.sleep(self.cli_retry_delay_sec)
+
+        return False, proc if "proc" in locals() and proc is not None else subprocess.CompletedProcess(cmd, 1), last_error
 
     def _call(self, prompt: str, max_tokens: int = 1400) -> str | None:
         if not self.has_api_access:
@@ -65,21 +158,14 @@ class AIAnalyzer:
                 out_file.name,
                 "-",
             ]
-            proc = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
-                timeout=240,
-                check=False,
-            )
-            if proc.returncode != 0:
+            ok, proc, used_model = self._run_codex(cmd, prompt, max_tokens, timeout=240)
+            if not ok:
                 return None
 
             with open(out_file.name, "r", encoding="utf-8", errors="ignore") as fh:
                 text = fh.read().strip()
+            if not text and (proc.stdout or proc.stderr):
+                text = (proc.stdout or "").strip() or (proc.stderr or "").strip()
             return text or None
         except Exception:
             return None
@@ -90,53 +176,6 @@ class AIAnalyzer:
                 except Exception:
                     pass
 
-    def _trim_news(self, news_items: list[dict[str, Any]] | None, limit: int = 8) -> list[str]:
-        if not news_items:
-            return []
-        lines: list[str] = []
-        for item in news_items[:limit]:
-            headline = str(item.get("headline", "")).strip()
-            source = str(item.get("source", "")).strip()
-            impact = str(item.get("impact", "")).strip().lower()
-            age_h = item.get("age_hours")
-            tags = item.get("event_tags") or []
-            if headline:
-                tag_text = ",".join(str(t) for t in tags[:2]) if isinstance(tags, list) else ""
-                prefix = f"[{impact}]" if impact in {"high", "medium", "low"} else ""
-                age_text = f"{int(float(age_h))}h" if age_h is not None else "NAh"
-                meta = f"{source} | {age_text}"
-                if tag_text:
-                    meta += f" | {tag_text}"
-                lines.append(f"- {prefix} {headline[:140]} ({meta})".strip())
-        return lines
-
-    def select_news_symbols(self, stocks: list[dict[str, Any]], limit: int = 60) -> list[str]:
-        """Pick symbols that are most likely to influence final AI output."""
-        if not stocks:
-            return []
-        capped = max(1, min(limit, len(stocks)))
-
-        ranked = sorted(
-            stocks,
-            key=lambda s: -float(
-                s.get(
-                    "investability_score",
-                    s.get("quality_score", (s.get("score") or {}).get("total_score", 0)),
-                )
-            ),
-        )
-        seen: set[str] = set()
-        symbols: list[str] = []
-        for stock in ranked:
-            symbol = str(stock.get("symbol", "")).upper().strip()
-            if not symbol or symbol in seen:
-                continue
-            seen.add(symbol)
-            symbols.append(symbol)
-            if len(symbols) >= capped:
-                break
-        return symbols
-
     def analyze_stock(self, symbol: str, data: dict[str, Any]) -> dict[str, Any]:
         if not self.has_api_access:
             return {
@@ -146,7 +185,6 @@ class AIAnalyzer:
                 "symbol": symbol,
             }
 
-        news_lines = self._trim_news(data.get("news"))
         prompt = (
             "You are a cautious equity analyst.\n"
             "Write in Korean and keep it concise.\n"
@@ -169,8 +207,6 @@ class AIAnalyzer:
             f"RR2: {(data.get('trade_plan') or {}).get('risk_reward', {}).get('rr2', 0)}\n"
             f"Stage: {(data.get('trade_plan') or {}).get('positioning', {}).get('stage', '')}\n"
             f"Days to earnings: {data.get('days_to_earnings', 'N/A')}\n"
-            "Recent news:\n"
-            f"{chr(10).join(news_lines) if news_lines else '- none'}\n\n"
             "Give:\n"
             "1) trend read\n"
             "2) entry/exit plan\n"
@@ -187,7 +223,7 @@ class AIAnalyzer:
     def analyze_full_market(
         self,
         stocks: list[dict[str, Any]],
-        news_data: dict[str, list[dict[str, Any]]],
+        _legacy_context: dict[str, list[dict[str, Any]]],
         market_data: dict[str, Any],
         categories: dict[str, Any],
     ) -> dict[str, Any]:
@@ -249,11 +285,6 @@ class AIAnalyzer:
 
         market_condition = (market_data or {}).get("market_condition", {})
         fear_greed = (market_data or {}).get("fear_greed", {})
-        market_news = self._trim_news((market_data or {}).get("market_news", []), limit=8)
-        sample_news: list[str] = []
-        for symbol in [s["symbol"] for s in top[:8]]:
-            sample_news.extend(self._trim_news((news_data or {}).get(symbol, []), limit=2))
-        sample_news = sample_news[:12]
 
         prompt = (
             "You are a professional portfolio strategist.\n"
@@ -280,10 +311,6 @@ class AIAnalyzer:
             f"{chr(10).join(top_lines)}\n\n"
             "Sector leaders:\n"
             f"{chr(10).join(cat_lines) if cat_lines else '- none'}\n\n"
-            "Market headlines:\n"
-            f"{chr(10).join(market_news) if market_news else '- none'}\n\n"
-            "Company headline samples:\n"
-            f"{chr(10).join(sample_news) if sample_news else '- none'}\n\n"
             "Return:\n"
             "1) one-paragraph market regime\n"
             "2) top 7 picks with why each matters\n"

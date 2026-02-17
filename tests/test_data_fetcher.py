@@ -3,10 +3,6 @@ data_fetcher.py 테스트
 - yfinance 데이터 수집
 - 시장 상태 체크
 """
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import pytest
 from unittest.mock import patch, MagicMock
 import pandas as pd

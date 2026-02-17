@@ -7,7 +7,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.backtest import backtest_symbols, simulate_swing_strategy
 from core.indicators import calculate_indicators, get_full_analysis
-from core.news import get_company_news, get_market_news
 from core.scoring import calculate_score
 from core.signals import check_entry_signal, check_exit_signal, scan_stocks
 from core.stock_data import (
@@ -30,9 +29,6 @@ __all__ = [
     "check_entry_signal",
     "check_exit_signal",
     "scan_stocks",
-    "get_company_news",
-    "get_market_news",
     "simulate_swing_strategy",
     "backtest_symbols",
 ]
-

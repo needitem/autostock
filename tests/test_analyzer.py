@@ -4,10 +4,6 @@ analyzer.py 테스트
 - 전체 스캔
 - 추천 종목
 """
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import pytest
 from unittest.mock import patch, MagicMock
 import pandas as pd

@@ -4,6 +4,7 @@ import ast
 import hashlib
 import json
 import os
+from contextlib import contextmanager
 import re
 import sys
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ PROMPT_VERSION = str(os.getenv("AI_PORTFOLIO_PROMPT_VERSION", "v1_momentum")).st
 SNAPSHOT_FREQ = (os.getenv("AI_SNAPSHOT_FREQ", "monthly") or "").strip().lower() or "monthly"
 START_DATE = (os.getenv("AI_START_DATE", "2016-01-01") or "").strip() or "2016-01-01"
 END_DATE = (os.getenv("AI_END_DATE", "2025-12-31") or "").strip() or "2025-12-31"
+_NO_PROXY_MODE = str(os.getenv("AI_DISABLE_PROXY", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 HORIZON_MODE = (os.getenv("AI_HORIZON_MODE", "next_snapshot") or "").strip().lower() or "next_snapshot"
 if HORIZON_MODE not in {"fixed_days", "next_snapshot"}:
@@ -105,6 +107,41 @@ def _parse_symbols(raw: str) -> list[str]:
         seen.add(sym)
         out.append(sym)
     return out
+
+
+@contextmanager
+def _temporary_proxy_env():
+    keys = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "GIT_HTTP_PROXY",
+        "GIT_HTTPS_PROXY",
+    )
+    backup: dict[str, str | None] = {}
+    try:
+        for key in keys:
+            val = os.getenv(key, "")
+            if _NO_PROXY_MODE or (val and "127.0.0.1:9" in val):
+                backup[key] = os.environ.get(key)
+                os.environ[key] = ""
+        yield
+    finally:
+        for key, old in backup.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+
+def _as_bool_env(k: str, d: bool) -> bool:
+    raw = (os.getenv(k, str(int(d) if isinstance(d, bool) else str(d))).strip().lower())
+    if not raw:
+        return bool(d)
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -240,15 +277,16 @@ def _market_ctx(bench: pd.DataFrame, vix: pd.DataFrame | None, dt: pd.Timestamp)
 
 def _build_frames(symbols: list[str]) -> dict[str, pd.DataFrame]:
     tickers = sorted(set(symbols + [BENCH, VIX]))
-    raw = yf.download(
-        tickers=tickers,
-        start="2014-01-01",
-        end="2026-12-31",
-        auto_adjust=False,
-        progress=False,
-        group_by="ticker",
-        threads=True,
-    )
+    with _temporary_proxy_env():
+        raw = yf.download(
+            tickers=tickers,
+            start="2014-01-01",
+            end="2026-12-31",
+            auto_adjust=False,
+            progress=False,
+            group_by="ticker",
+            threads=True,
+        )
     out: dict[str, pd.DataFrame] = {}
     if not isinstance(raw.columns, pd.MultiIndex):
         return out
@@ -395,6 +433,65 @@ def _select_candidates(features: list[dict[str, Any]], max_symbols: int, mode: s
     return [features[i] for i in chosen]
 
 
+def _select_candidates_with_includes(
+    features: list[dict[str, Any]],
+    max_symbols: int,
+    mode: str,
+    include_symbols: list[str] | None,
+) -> list[dict[str, Any]]:
+    """Select prompt candidates, ensuring currently held symbols remain visible to the model.
+
+    This reduces churn by allowing the model to keep a position even if it fell just outside the
+    selection filter.
+    """
+    base = _select_candidates(features, max_symbols, mode)
+    include = [s for s in (include_symbols or []) if isinstance(s, str) and s.strip()]
+    if not include:
+        return base
+
+    nmax = int(max_symbols)
+    if nmax <= 0:
+        nmax = 0
+
+    feat_by_sym = {
+        str(x.get("symbol")): x for x in features if isinstance(x, dict) and isinstance(x.get("symbol"), str)
+    }
+
+    chosen: dict[str, dict[str, Any]] = {}
+    for x in base:
+        if not isinstance(x, dict):
+            continue
+        sym = x.get("symbol")
+        if isinstance(sym, str) and sym:
+            chosen[sym] = x
+
+    for sym in include:
+        fx = feat_by_sym.get(sym)
+        if fx is not None:
+            chosen[sym] = fx
+
+    if nmax <= 0 or len(chosen) <= nmax:
+        return list(chosen.values())
+
+    pick_mode = str(mode or "top_rs63").strip().lower() or "top_rs63"
+
+    def _score(x: dict[str, Any]) -> tuple[float, float]:
+        if pick_mode == "top_rs21":
+            return (float(x.get("relative_strength_21d", 0.0)), float(x.get("relative_strength_63d", 0.0)))
+        if pick_mode == "top_vol":
+            return (float(x.get("volume_ratio", 0.0)), float(x.get("relative_strength_63d", 0.0)))
+        return (float(x.get("relative_strength_63d", 0.0)), float(x.get("relative_strength_21d", 0.0)))
+
+    locked = [sym for sym in include if sym in chosen]
+    locked_feats = [chosen[sym] for sym in locked]
+    others = [x for sym, x in chosen.items() if sym not in set(locked)]
+    others_sorted = sorted(others, key=_score, reverse=True)
+
+    if len(locked_feats) >= nmax:
+        return locked_feats[:nmax]
+    return locked_feats + others_sorted[: max(0, nmax - len(locked_feats))]
+
+
 def _extract_json(text: str) -> dict[str, Any] | None:
     if not text:
         return None
@@ -431,11 +528,71 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _fallback_portfolio_from_features(
+    features: list[dict[str, Any]],
+    top_k: int,
+    max_weight_pct: float,
+    prev_portfolio_pct: dict[str, float] | None,
+) -> dict[str, Any]:
+    if not features:
+        raise ValueError("No candidate features for fallback portfolio")
+
+    ordered = sorted(features, key=lambda x: float(x.get("relative_strength_63d", 0.0)), reverse=True)
+    feature_by_symbol = {
+        str((x.get("symbol") or "").upper()): x
+        for x in ordered
+        if isinstance(x, dict) and x.get("symbol")
+    }
+    feature_symbols = list(feature_by_symbol.keys())
+    if not feature_symbols:
+        raise ValueError("No symbols in fallback candidate pool")
+
+    prev_syms: list[str] = []
+    if isinstance(prev_portfolio_pct, dict):
+        prev_syms = [
+            str(s).upper()
+            for s, w in prev_portfolio_pct.items()
+            if isinstance(s, str)
+            and s != "__CASH__"
+            and float(w) > 0
+            and str(s).upper() in feature_by_symbol
+        ]
+        prev_syms.sort(key=lambda s: -float(prev_portfolio_pct.get(s, 0.0)))
+
+    picked: list[str] = []
+    seen: set[str] = set()
+    for sym in prev_syms + feature_symbols:
+        us = str(sym).upper()
+        if us in seen:
+            continue
+        seen.add(us)
+        picked.append(us)
+        if len(picked) >= max(1, min(top_k, len(feature_symbols))):
+            break
+
+    if not picked:
+        raise ValueError("No symbols selected for fallback portfolio")
+
+    n = len(picked)
+    w = 100.0 / float(n)
+    max_w = max(1.0, min(100.0, float(max_weight_pct)))
+    w = min(w, max_w)
+    positions = [{"symbol": s, "weight_pct": w} for s in picked]
+    total = w * n
+    cash = max(0.0, 100.0 - total)
+    return {"positions": positions, "cash_pct": cash, "_fallback": True, "_fallback_reason": "ai_parse_failed"}
+
+
 def _portfolio_prompt(
     snapshot_date: str,
     market_ctx: dict[str, Any],
     features: list[dict[str, Any]],
     top_k: int,
+    max_weight_pct: float,
+    trade_cost_bps: float,
+    turnover_target_pct: float,
+    prev_portfolio_pct: dict[str, float] | None,
+    forced_sells: list[str] | None,
 ) -> str:
     lines: list[str] = []
     sorted_feats = sorted(features, key=lambda x: float(x.get("relative_strength_63d", 0.0)), reverse=True)
@@ -457,15 +614,66 @@ def _portfolio_prompt(
             else f"{HORIZON_DAYS}-trading-day (~{HORIZON_DAYS/21:.1f} month)"
         )
 
+    prev_lines: list[str] = []
+    ignored_prev: list[str] = []
+    if isinstance(prev_portfolio_pct, dict) and prev_portfolio_pct:
+        for sym, w in sorted(prev_portfolio_pct.items(), key=lambda kv: (-float(kv[1]), str(kv[0]))):
+            if sym == "__CASH__":
+                continue
+            if float(w) <= 0:
+                continue
+            prev_lines.append(f"- {sym} {float(w):.2f}%")
+    if forced_sells:
+        ignored_prev = [s for s in forced_sells if isinstance(s, str) and s.strip()]
+
+    max_w = float(max_weight_pct)
+    if not np.isfinite(max_w) or max_w <= 0:
+        max_w = 40.0
+    max_w = max(1.0, min(100.0, max_w))
+
+    cost_bps = float(trade_cost_bps)
+    if not np.isfinite(cost_bps) or cost_bps < 0:
+        cost_bps = 0.0
+
+    turnover_txt = ""
+    ttp = float(turnover_target_pct)
+    if np.isfinite(ttp) and ttp > 0:
+        ttp = max(1.0, min(100.0, ttp))
+        turnover_txt = f"- Target turnover (soft): <= {ttp:.0f}% per rebalance.\n"
+
+    prev_txt = ""
+    if prev_lines:
+        cash_w = float(prev_portfolio_pct.get("__CASH__", 0.0)) if isinstance(prev_portfolio_pct, dict) else 0.0
+        prev_txt = (
+            "Current portfolio (weights %):\n"
+            f"{chr(10).join(prev_lines)}\n"
+            f"- CASH {cash_w:.2f}%\n\n"
+            "Turnover preference:\n"
+            "- Minimize turnover; keep existing holdings unless there is a strong reason to replace.\n"
+            "- If two options have similar momentum, prefer the one already held.\n"
+            f"{turnover_txt}"
+        )
+        if ignored_prev:
+            prev_txt += (
+                "\nForced sells (not in candidates / not eligible):\n"
+                + chr(10).join(f"- {s}" for s in ignored_prev[:12])
+                + ("\n" if len(ignored_prev) <= 12 else "\n- ...\n")
+            )
+        prev_txt += "\n"
+
     return (
         "You are a disciplined systematic trader.\n"
         "Goal: Build a LONG-ONLY portfolio that outperforms QQQ over the next holding period.\n"
         "Use only the inputs below (charts + regime). Ignore news and fundamentals.\n"
         "Be consistent: momentum (rs63/rs21) is the primary signal; use other indicators as risk filters.\n"
         f"Holding period: {horizon_txt}.\n\n"
+        "Transaction costs:\n"
+        f"- Estimated round-trip cost: {cost_bps:.0f} bps per 100% turnover.\n"
+        "- Turnover = 0.5 * sum(|new_weight - current_weight|) across positions including cash.\n\n"
+        f"{prev_txt}"
         "Constraints:\n"
         f"- Choose 1 to {int(top_k)} positions from the provided list.\n"
-        "- Max weight per position: 40%.\n"
+        f"- Max weight per position: {max_w:.0f}%.\n"
         "- Weights must sum to 100% including cash.\n"
         "- Cash is allowed, but prefer to stay mostly invested when regime is risk_on/neutral.\n"
         "- In risk_off or when VIX is high, you may increase cash.\n\n"
@@ -486,6 +694,12 @@ def _ai_portfolio(
     features: list[dict[str, Any]],
     top_k: int,
     cache: dict[str, Any],
+    max_weight_pct: float,
+    trade_cost_bps: float,
+    turnover_target_pct: float,
+    prev_portfolio_pct: dict[str, float] | None,
+    forced_sells: list[str] | None,
+    fallback_on_fail: bool,
 ) -> dict[str, Any]:
     from ai.analyzer import AIAnalyzer
 
@@ -493,7 +707,17 @@ def _ai_portfolio(
     if not analyzer.has_api_access:
         raise RuntimeError("Codex login required. Run: codex login")
 
-    prompt = _portfolio_prompt(snapshot_date, market_ctx, features, top_k=top_k)
+    prompt = _portfolio_prompt(
+        snapshot_date,
+        market_ctx,
+        features,
+        top_k=top_k,
+        max_weight_pct=max_weight_pct,
+        trade_cost_bps=trade_cost_bps,
+        turnover_target_pct=turnover_target_pct,
+        prev_portfolio_pct=prev_portfolio_pct,
+        forced_sells=forced_sells,
+    )
     ph = hashlib.sha256(prompt.encode("utf-8", errors="ignore")).hexdigest()[:12]
     cache_key = f"{MODEL}:{PROMPT_VERSION}:{snapshot_date}:{ph}"
     if cache_key in cache and isinstance(cache[cache_key], dict):
@@ -505,6 +729,13 @@ def _ai_portfolio(
         raw2 = analyzer._call(prompt + "\nReturn one minified JSON object only.", max_tokens=1800)
         parsed = _extract_json(raw2 or "")
     if not parsed:
+        if fallback_on_fail:
+            return _fallback_portfolio_from_features(
+                features,
+                top_k=top_k,
+                max_weight_pct=max_weight_pct,
+                prev_portfolio_pct=prev_portfolio_pct,
+            )
         raise RuntimeError(f"AI JSON parse failed for {snapshot_date}")
 
     cache[cache_key] = parsed
@@ -512,7 +743,12 @@ def _ai_portfolio(
     return parsed
 
 
-def _portfolio_from_ai(obj: dict[str, Any], allowed: set[str], top_k: int) -> tuple[dict[str, float], float]:
+def _portfolio_from_ai(
+    obj: dict[str, Any],
+    allowed: set[str],
+    top_k: int,
+    max_weight_pct: float,
+) -> tuple[dict[str, float], float]:
     pos = obj.get("positions")
     if not isinstance(pos, list):
         raise ValueError("positions missing")
@@ -537,6 +773,15 @@ def _portfolio_from_ai(obj: dict[str, Any], allowed: set[str], top_k: int) -> tu
         items = items[:top_k]
     weights = {k: float(v) for k, v in items}
 
+    max_w = float(max_weight_pct)
+    if not np.isfinite(max_w) or max_w <= 0:
+        max_w = 40.0
+    max_w = max(1.0, min(100.0, max_w))
+    clamped: dict[str, float] = {}
+    for k, v in weights.items():
+        clamped[k] = float(min(float(v), max_w))
+    weights = clamped
+
     total = float(sum(weights.values()))
     if total <= 0:
         raise ValueError("sum weights <= 0")
@@ -549,6 +794,125 @@ def _portfolio_from_ai(obj: dict[str, Any], allowed: set[str], top_k: int) -> tu
     if cash < 0:
         cash = 0.0
     return weights, cash
+
+
+def _apply_regime_exposure(
+    weights_pct: dict[str, float],
+    market_ctx: dict[str, Any],
+    on_exposure_pct: float,
+    neutral_exposure_pct: float,
+    risk_off_exposure_pct: float,
+    risk_off_vix_threshold: float,
+    risk_off_vix_hard_exposure_pct: float,
+    risk_off_vix_extreme: float,
+    risk_off_vix_extreme_exposure_pct: float,
+) -> tuple[dict[str, float], float]:
+    if not weights_pct:
+        return {}, 100.0
+
+    regime = str(market_ctx.get("regime", "neutral")).lower()
+    vix = market_ctx.get("vix_close")
+
+    on_exposure_pct = max(0.0, min(100.0, _f(on_exposure_pct, 100.0)))
+    neutral_exposure_pct = max(0.0, min(100.0, _f(neutral_exposure_pct, on_exposure_pct)))
+    risk_off_exposure_pct = max(0.0, min(100.0, _f(risk_off_exposure_pct, neutral_exposure_pct)))
+    risk_off_vix_threshold = _f(risk_off_vix_threshold, 28.0)
+    risk_off_vix_extreme = _f(risk_off_vix_extreme, 34.0)
+    risk_off_vix_hard_exposure_pct = max(0.0, min(100.0, _f(risk_off_vix_hard_exposure_pct, risk_off_exposure_pct)))
+    risk_off_vix_extreme_exposure_pct = max(
+        0.0, min(100.0, _f(risk_off_vix_extreme_exposure_pct, risk_off_vix_hard_exposure_pct))
+    )
+
+    if regime == "risk_on":
+        target_exp = on_exposure_pct
+    elif regime == "risk_off":
+        v = _f(vix, 0.0)
+        if np.isfinite(v) and v >= risk_off_vix_extreme:
+            target_exp = risk_off_vix_extreme_exposure_pct
+        elif np.isfinite(v) and v >= risk_off_vix_threshold:
+            target_exp = risk_off_vix_hard_exposure_pct
+        else:
+            target_exp = risk_off_exposure_pct
+    else:
+        target_exp = neutral_exposure_pct
+
+    curr_exp = float(sum(weights_pct.values()))
+    if curr_exp <= 0.0:
+        return {}, 100.0
+
+    scale = target_exp / curr_exp
+    out = {k: float(v) * scale for k, v in weights_pct.items()}
+    tgt_cash = 100.0 - float(sum(out.values()))
+    if tgt_cash < 0.0:
+        tgt_cash = 0.0
+    return out, tgt_cash
+
+
+def _enforce_min_overlap(
+    weights_pct: dict[str, float],
+    prev_port: dict[str, float],
+    allowed: set[str],
+    feats_by_symbol: dict[str, dict[str, Any]] | None,
+    min_overlap: int,
+    top_k: int,
+) -> dict[str, float]:
+    """Force-keep at least N previously held names (soft safety rail).
+
+    This is a simple guard against full churn; it swaps the smallest new positions
+    with the strongest previously held names (by current rs63).
+    """
+    n = int(min_overlap)
+    if n <= 0 or top_k <= 0:
+        return weights_pct
+
+    prev_syms = [
+        s
+        for s, w in (prev_port or {}).items()
+        if isinstance(s, str) and s != "__CASH__" and float(w) > 0 and s in allowed
+    ]
+    if not prev_syms:
+        return weights_pct
+
+    target = min(int(top_k), n, len(prev_syms))
+    if target <= 0:
+        return weights_pct
+
+    new_syms = [s for s in weights_pct.keys() if s in allowed]
+    overlap = len(set(new_syms) & set(prev_syms))
+    if overlap >= target:
+        return weights_pct
+
+    need = target - overlap
+
+    add_pool = [s for s in prev_syms if s not in weights_pct]
+    if feats_by_symbol:
+        add_pool.sort(
+            key=lambda s: float((feats_by_symbol.get(s) or {}).get("relative_strength_63d", -1e9)),
+            reverse=True,
+        )
+    else:
+        add_pool.sort(key=lambda s: -float((prev_port or {}).get(s, 0.0)))
+
+    prev_set = set(prev_syms)
+    drop_pool = [s for s in list(weights_pct.keys()) if s not in prev_set]
+    drop_pool.sort(
+        key=lambda s: (
+            float(weights_pct.get(s, 0.0)),
+            float((feats_by_symbol.get(s) or {}).get("relative_strength_63d", 0.0)) if feats_by_symbol else 0.0,
+        )
+    )
+
+    out = dict(weights_pct)
+    while need > 0 and add_pool and drop_pool:
+        add = add_pool.pop(0)
+        drop = drop_pool.pop(0)
+        w = float(out.get(drop, 0.0))
+        if w <= 0:
+            continue
+        out.pop(drop, None)
+        out[add] = float(out.get(add, 0.0) + w)
+        need -= 1
+    return out
 
 
 def _turnover(prev_w: dict[str, float], new_w: dict[str, float]) -> float:
@@ -638,12 +1002,14 @@ def run() -> None:
     if universe_limit > 0:
         symbols = symbols[:universe_limit]
 
+    requested_symbols = list(symbols)
     frames = _build_frames(symbols)
     if not frames:
         raise RuntimeError("No market data loaded")
     if BENCH not in frames:
         raise RuntimeError(f"Benchmark data not found: {BENCH}")
 
+    missing_price_symbols = sorted([s for s in requested_symbols if s not in frames])
     symbols = [s for s in symbols if s in frames]
     if not symbols:
         raise RuntimeError("No symbol frames loaded")
@@ -668,16 +1034,36 @@ def run() -> None:
     periods_per_year = _periods_per_year(SNAPSHOT_FREQ)
     prompt_max_symbols = max(10, _i_env("AI_PROMPT_MAX_SYMBOLS", 30))
     prompt_select_mode = str(os.getenv("AI_PROMPT_SELECT_MODE", "top_rs63")).strip().lower() or "top_rs63"
-    trade_cost_bps = _f_env("AI_TRADE_COST_BPS", 0.0)
+    trade_cost_bps_base = _f_env("AI_TRADE_COST_BPS", 0.0)
+    slippage_bps = _f_env("AI_SLIPPAGE_BPS", 0.0)
+    spread_bps = _f_env("AI_SPREAD_BPS", 0.0)
+    tax_bps = _f_env("AI_TAX_BPS", 0.0)
+    trade_cost_bps = float(trade_cost_bps_base + slippage_bps + spread_bps + tax_bps)
     trade_cost_pct = float(trade_cost_bps) / 100.0  # bps -> percent points
+    max_weight_pct = _f_env("AI_PORTFOLIO_MAX_WEIGHT_PCT", 40.0)
+    min_overlap = max(0, _i_env("AI_PORTFOLIO_MIN_OVERLAP", 0))
+    turnover_target_pct = _f_env("AI_PORTFOLIO_TURNOVER_TARGET_PCT", 0.0)
+    use_regime_exposure = _as_bool_env("AI_REGIME_EXPOSURE", False)
+    regime_on_exposure_pct = _f_env("AI_REGIME_ON_EXPOSURE_PCT", 100.0)
+    regime_neutral_exposure_pct = _f_env("AI_REGIME_NEUTRAL_EXPOSURE_PCT", 100.0)
+    regime_risk_off_exposure_pct = _f_env("AI_REGIME_RISK_OFF_EXPOSURE_PCT", 100.0)
+    regime_risk_off_vix_threshold = _f_env("AI_REGIME_RISK_OFF_VIX", 30.0)
+    regime_risk_off_vix_hard_exposure_pct = _f_env("AI_REGIME_RISK_OFF_VIX_HARD_EXPOSURE_PCT", 60.0)
+    regime_risk_off_vix_extreme = _f_env("AI_REGIME_RISK_OFF_VIX_EXTREME", 34.0)
+    regime_risk_off_vix_extreme_exposure_pct = _f_env(
+        "AI_REGIME_RISK_OFF_VIX_EXTREME_EXPOSURE_PCT", 40.0
+    )
 
     started_at = datetime.now(timezone.utc)
     ai_calls = 0
     prompt_symbol_total = 0
+    ai_fallback_count = 0
+    use_ai_fallback = _as_bool_env("AI_FALLBACK_ON_AI_FAIL", True)
 
     rows: list[dict[str, Any]] = []
     prev_port: dict[str, float] = {"__CASH__": 1.0}
     prev_mom: dict[str, float] = {"__CASH__": 1.0}
+    coverage_by_snapshot: dict[str, dict[str, Any]] = {}
 
     for i, qdt in enumerate(snaps):
         mkt = _market_ctx(frames[BENCH], frames.get(VIX), qdt)
@@ -713,8 +1099,17 @@ def run() -> None:
 
         bench_ret = (bench_exit_px / bench_entry_px - 1.0) * 100.0
         snap = str(qdt.date())
-        active_symbols = universe_by_date.get(snap, symbols) if universe_by_date else symbols
-        active_symbols = [s for s in active_symbols if s in ind_by_symbol]
+        raw_universe = universe_by_date.get(snap, requested_symbols) if universe_by_date else symbols
+        raw_universe = [s for s in raw_universe if isinstance(s, str) and s.strip()]
+        active_symbols = [s for s in raw_universe if s in ind_by_symbol]
+        missing_in_universe = sorted([s for s in raw_universe if s not in ind_by_symbol])
+        coverage_by_snapshot[snap] = {
+            "universe_size": int(len(raw_universe)),
+            "investable_size": int(len(active_symbols)),
+            "missing_size": int(len(missing_in_universe)),
+            "coverage_pct": float(len(active_symbols) / len(raw_universe) * 100.0) if raw_universe else 0.0,
+            "missing_symbols": missing_in_universe[:50],
+        }
 
         feats: list[dict[str, Any]] = []
         fwd_ret_by_symbol: dict[str, float] = {}
@@ -764,13 +1159,73 @@ def run() -> None:
         if len(feats) < max(8, top_k * 2):
             continue
 
-        candidates = _select_candidates(feats, prompt_max_symbols, prompt_select_mode)
+        held_syms = [
+            s
+            for s, w in prev_port.items()
+            if isinstance(s, str) and s != "__CASH__" and float(w) > 0 and s in {x.get("symbol") for x in feats}
+        ]
+        held_syms.sort(key=lambda s: -float(prev_port.get(s, 0.0)))
+
+        candidates = _select_candidates_with_includes(feats, prompt_max_symbols, prompt_select_mode, held_syms)
         allowed = {x["symbol"] for x in candidates if isinstance(x, dict) and x.get("symbol")}
 
         ai_calls += 1
         prompt_symbol_total += len(allowed)
-        out = _ai_portfolio(snap, mkt, candidates, top_k=top_k, cache=cache)
-        weights_pct, cash_pct = _portfolio_from_ai(out, allowed=allowed, top_k=top_k)
+        prev_for_prompt: dict[str, float] = {"__CASH__": float(prev_port.get("__CASH__", 0.0)) * 100.0}
+        forced_sells = [s for s, w in prev_port.items() if s != "__CASH__" and float(w) > 0 and s not in allowed]
+        for s, w in prev_port.items():
+            if s == "__CASH__" or float(w) <= 0:
+                continue
+            if s in allowed:
+                prev_for_prompt[str(s)] = float(w) * 100.0
+
+        out = _ai_portfolio(
+            snap,
+            mkt,
+            candidates,
+            top_k=top_k,
+            cache=cache,
+            max_weight_pct=max_weight_pct,
+            trade_cost_bps=trade_cost_bps,
+            turnover_target_pct=turnover_target_pct,
+            prev_portfolio_pct=prev_for_prompt,
+            forced_sells=forced_sells,
+            fallback_on_fail=use_ai_fallback,
+        )
+        weights_pct, cash_pct = _portfolio_from_ai(out, allowed=allowed, top_k=top_k, max_weight_pct=max_weight_pct)
+        if out.get("_fallback"):
+            ai_fallback_count += 1
+
+        feats_by_symbol = {str(x.get("symbol")): x for x in feats if isinstance(x, dict) and x.get("symbol")}
+        weights_pct = _enforce_min_overlap(
+            weights_pct,
+            prev_port=prev_port,
+            allowed=allowed,
+            feats_by_symbol=feats_by_symbol,
+            min_overlap=min_overlap,
+            top_k=top_k,
+        )
+        # Re-apply weight clamp after overlap enforcement.
+        weights_pct = {k: float(v) for k, v in weights_pct.items() if float(v) > 0 and k in allowed}
+        if weights_pct:
+            weights_pct, cash_pct = _portfolio_from_ai(
+                {"positions": [{"symbol": k, "weight_pct": v} for k, v in weights_pct.items()]},
+                allowed=allowed,
+                top_k=top_k,
+                max_weight_pct=max_weight_pct,
+            )
+            if use_regime_exposure:
+                weights_pct, cash_pct = _apply_regime_exposure(
+                    weights_pct,
+                    mkt,
+                    on_exposure_pct=regime_on_exposure_pct,
+                    neutral_exposure_pct=regime_neutral_exposure_pct,
+                    risk_off_exposure_pct=regime_risk_off_exposure_pct,
+                    risk_off_vix_threshold=regime_risk_off_vix_threshold,
+                    risk_off_vix_hard_exposure_pct=regime_risk_off_vix_hard_exposure_pct,
+                    risk_off_vix_extreme=regime_risk_off_vix_extreme,
+                    risk_off_vix_extreme_exposure_pct=regime_risk_off_vix_extreme_exposure_pct,
+                )
 
         port = {sym: float(w) / 100.0 for sym, w in weights_pct.items()}
         port["__CASH__"] = float(cash_pct) / 100.0
@@ -810,9 +1265,15 @@ def run() -> None:
                 "entry_day": str(pd.Timestamp(signal_day).date()),
                 "exit_day": str(pd.Timestamp(exit_day).date()) if exit_day is not None else "",
                 "market_regime": str(mkt.get("regime", "neutral")),
+                "regime_exposure_enabled": bool(use_regime_exposure),
                 "vix_close": mkt.get("vix_close"),
+                "universe_size": int(coverage_by_snapshot.get(snap, {}).get("universe_size", 0)),
+                "universe_investable": int(coverage_by_snapshot.get(snap, {}).get("investable_size", 0)),
+                "universe_missing": int(coverage_by_snapshot.get(snap, {}).get("missing_size", 0)),
+                "universe_coverage_pct": float(coverage_by_snapshot.get(snap, {}).get("coverage_pct", 0.0)),
                 "prompt_symbols": int(len(allowed)),
                 "positions": json.dumps(weights_pct, ensure_ascii=True),
+                "ai_fallback": bool(out.get("_fallback", False)),
                 "cash_pct": float(cash_pct),
                 "exposure_pct": float(exp),
                 "turnover": float(turn),
@@ -856,6 +1317,21 @@ def run() -> None:
         "prompt_max_symbols": prompt_max_symbols,
         "prompt_select_mode": prompt_select_mode,
         "trade_cost_bps": trade_cost_bps,
+        "trade_cost_bps_base": float(trade_cost_bps_base),
+        "slippage_bps": float(slippage_bps),
+        "spread_bps": float(spread_bps),
+        "tax_bps": float(tax_bps),
+        "portfolio_max_weight_pct": float(max_weight_pct),
+        "portfolio_min_overlap": int(min_overlap),
+        "portfolio_turnover_target_pct": float(turnover_target_pct),
+        "regime_exposure_enabled": bool(use_regime_exposure),
+        "regime_on_exposure_pct": float(regime_on_exposure_pct),
+        "regime_neutral_exposure_pct": float(regime_neutral_exposure_pct),
+        "regime_risk_off_exposure_pct": float(regime_risk_off_exposure_pct),
+        "regime_risk_off_vix_threshold": float(regime_risk_off_vix_threshold),
+        "regime_risk_off_vix_hard_exposure_pct": float(regime_risk_off_vix_hard_exposure_pct),
+        "regime_risk_off_vix_extreme": float(regime_risk_off_vix_extreme),
+        "regime_risk_off_vix_extreme_exposure_pct": float(regime_risk_off_vix_extreme_exposure_pct),
     }
     cfg_hash = hashlib.sha256(
         json.dumps(cfg_blob, sort_keys=True, ensure_ascii=True, default=str).encode("utf-8")
@@ -901,13 +1377,33 @@ def run() -> None:
         "prompt_select_mode": str(prompt_select_mode),
         "trade_cost_bps": float(trade_cost_bps),
         "trade_cost_pct": float(trade_cost_pct),
+        "trade_cost_bps_base": float(trade_cost_bps_base),
+        "slippage_bps": float(slippage_bps),
+        "spread_bps": float(spread_bps),
+        "tax_bps": float(tax_bps),
+        "portfolio_max_weight_pct": float(max_weight_pct),
+        "portfolio_min_overlap": int(min_overlap),
+        "portfolio_turnover_target_pct": float(turnover_target_pct),
+        "regime_exposure_enabled": bool(use_regime_exposure),
+        "regime_on_exposure_pct": float(regime_on_exposure_pct),
+        "regime_neutral_exposure_pct": float(regime_neutral_exposure_pct),
+        "regime_risk_off_exposure_pct": float(regime_risk_off_exposure_pct),
+        "regime_risk_off_vix_threshold": float(regime_risk_off_vix_threshold),
+        "regime_risk_off_vix_hard_exposure_pct": float(regime_risk_off_vix_hard_exposure_pct),
+        "regime_risk_off_vix_extreme": float(regime_risk_off_vix_extreme),
+        "regime_risk_off_vix_extreme_exposure_pct": float(regime_risk_off_vix_extreme_exposure_pct),
         "started_at_utc": started_at.isoformat(),
         "finished_at_utc": finished_at.isoformat(),
         "periods": int(len(df)),
         "ai_calls": int(ai_calls),
         "avg_prompt_symbols": float(prompt_symbol_total / max(1, ai_calls)) if ai_calls > 0 else 0.0,
+        "ai_fallback_count": int(ai_fallback_count),
+        "ai_fallback_rate": float(ai_fallback_count / max(1, ai_calls)),
         "avg_exposure_pct": float(df["exposure_pct"].mean()),
         "avg_turnover": float(df["turnover"].mean()),
+        "missing_price_symbols": missing_price_symbols[:200],
+        "avg_universe_coverage_pct": float(df["universe_coverage_pct"].mean()) if "universe_coverage_pct" in df else 0.0,
+        "min_universe_coverage_pct": float(df["universe_coverage_pct"].min()) if "universe_coverage_pct" in df else 0.0,
         "portfolio_metrics": pm,
     }
 

@@ -2,10 +2,6 @@
 economic_calendar.py 테스트
 - 경제 지표 캘린더
 """
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import pytest
 from economic_calendar import (
     get_upcoming_events,

@@ -1,8 +1,3 @@
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
 from bot.user_prefs import normalize_style, style_label
 
 

@@ -5,6 +5,7 @@ import hashlib
 import itertools
 import json
 import os
+from contextlib import contextmanager
 import re
 import sys
 from datetime import datetime, timezone
@@ -46,6 +47,7 @@ PROMPT_VERSION = "v3_regime_event"
 SNAPSHOT_FREQ = (os.getenv("AI_SNAPSHOT_FREQ", "quarterly") or "").strip().lower() or "quarterly"
 START_DATE = (os.getenv("AI_START_DATE", "2016-01-01") or "").strip() or "2016-01-01"
 END_DATE = (os.getenv("AI_END_DATE", "2025-12-31") or "").strip() or "2025-12-31"
+_NO_PROXY_MODE = str(os.getenv("AI_DISABLE_PROXY", "0")).strip().lower() in {"1", "true", "yes", "on"}
 try:
     MAX_SNAPSHOTS = int(str(os.getenv("AI_MAX_SNAPSHOTS", "0")).strip() or "0")
 except Exception:
@@ -171,6 +173,34 @@ def _parse_symbols(raw: str) -> list[str]:
     return out
 
 
+@contextmanager
+def _temporary_proxy_env():
+    keys = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "GIT_HTTP_PROXY",
+        "GIT_HTTPS_PROXY",
+    )
+    backup: dict[str, str | None] = {}
+    try:
+        for key in keys:
+            val = os.getenv(key, "")
+            if _NO_PROXY_MODE or (val and "127.0.0.1:9" in val):
+                backup[key] = os.environ.get(key)
+                os.environ[key] = ""
+        yield
+    finally:
+        for key, old in backup.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+
 def _load_symbols() -> tuple[str, list[str]]:
     raw = (os.getenv("AI_SYMBOLS") or "").strip()
     if raw:
@@ -201,15 +231,16 @@ def _load_symbols() -> tuple[str, list[str]]:
 
 def _build_frames(symbols: list[str]) -> dict[str, pd.DataFrame]:
     tickers = sorted(set(symbols + [BENCH, VIX]))
-    raw = yf.download(
-        tickers=tickers,
-        start="2014-01-01",
-        end="2026-12-31",
-        auto_adjust=False,
-        progress=False,
-        group_by="ticker",
-        threads=True,
-    )
+    with _temporary_proxy_env():
+        raw = yf.download(
+            tickers=tickers,
+            start="2014-01-01",
+            end="2026-12-31",
+            auto_adjust=False,
+            progress=False,
+            group_by="ticker",
+            threads=True,
+        )
     out: dict[str, pd.DataFrame] = {}
     if not isinstance(raw.columns, pd.MultiIndex):
         return out

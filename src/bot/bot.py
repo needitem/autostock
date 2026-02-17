@@ -218,7 +218,6 @@ async def scheduled_ai_recommendation(context) -> None:
     try:
         from ai.analyzer import ai
         from config import load_all_us_stocks, load_stock_categories
-        from core.news import get_bulk_news, get_market_news
         from core.stock_data import get_fear_greed_index, get_market_condition
 
         style = get_chat_style(chat_id)
@@ -226,11 +225,8 @@ async def scheduled_ai_recommendation(context) -> None:
         market_data = {
             "fear_greed": get_fear_greed_index(),
             "market_condition": get_market_condition(),
-            "market_news": get_market_news(),
         }
-        news_symbols = ai.select_news_symbols(stocks, limit=60)
-        news_data = get_bulk_news(news_symbols, days=3)
-        ai_result = ai.analyze_full_market(stocks, news_data, market_data, load_stock_categories())
+        ai_result = ai.analyze_full_market(stocks, {}, market_data, load_stock_categories())
 
         if "error" in ai_result:
             print(f"[scheduler] ai failed: {ai_result['error']}")

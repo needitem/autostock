@@ -1,13 +1,13 @@
-"""
+﻿"""
 Compatibility market-data module used by legacy tests.
 """
 from __future__ import annotations
 
-from core.news import get_recommendation_trends
 from core.stock_data import (
     get_fear_greed_index as _core_fear_greed_index,
     get_finviz_data as _core_finviz_data,
     get_market_condition as _core_market_condition,
+    get_stock_info as _core_stock_info,
 )
 
 try:
@@ -33,7 +33,46 @@ def _emoji_for_score(score: int) -> str:
         return "🟡"
     if score <= 80:
         return "🟢"
-    return "🟣"
+    return "🔵"
+
+
+def _recommendation_trends_from_stock_info(symbol: str) -> dict:
+    try:
+        info = _core_stock_info(symbol) or {}
+    except Exception:
+        info = {}
+
+    rec_key = str(info.get("recommendation", "")).strip().lower()
+    analyst_count = max(0, int(float(info.get("analyst_count", 0) or 0)))
+    if analyst_count <= 0:
+        return {}
+
+    if rec_key in {"strong_buy", "buy"}:
+        strong_buy = analyst_count // 3 if rec_key == "strong_buy" else analyst_count // 6
+        buy = max(1, analyst_count - strong_buy - analyst_count // 6)
+        hold = max(0, analyst_count - strong_buy - buy)
+        sell = 0
+        strong_sell = 0
+    elif rec_key == "hold":
+        strong_buy = 0
+        buy = analyst_count // 4
+        hold = analyst_count - buy
+        sell = 0
+        strong_sell = 0
+    else:
+        strong_buy = 0
+        buy = analyst_count // 6
+        hold = analyst_count // 3
+        sell = max(0, analyst_count - buy - hold)
+        strong_sell = 0
+
+    return {
+        "strong_buy": strong_buy,
+        "buy": buy,
+        "hold": hold,
+        "sell": sell,
+        "strong_sell": strong_sell,
+    }
 
 
 def get_fear_greed_index() -> dict:
@@ -50,7 +89,7 @@ def get_fear_greed_index() -> dict:
         "score": score,
         "rating": data.get("rating", "N/A"),
         "emoji": emoji,
-        "advice": data.get("advice", "데이터 없음"),
+        "advice": data.get("advice", "?곗씠???놁쓬"),
     }
 
 
@@ -61,7 +100,7 @@ def get_finviz_market_overview() -> dict:
         market = {}
     return {
         "status": market.get("status", "unknown"),
-        "message": market.get("message", "데이터 없음"),
+        "message": market.get("message", "?곗씠???놁쓬"),
         "price": market.get("price", 0),
         "ma50": market.get("ma50", 0),
         "ma200": market.get("ma200", 0),
@@ -102,7 +141,7 @@ def get_finviz_stock_data(symbol: str) -> dict:
 
 def get_tipranks_rating(symbol: str) -> dict:
     symbol = (symbol or "").upper()
-    data = get_recommendation_trends(symbol) or {}
+    data = _recommendation_trends_from_stock_info(symbol) or {}
     if not data:
         return {
             "symbol": symbol,

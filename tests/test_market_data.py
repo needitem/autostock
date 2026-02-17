@@ -1,150 +1,101 @@
-"""
-market_data.py 테스트
-- CNN Fear & Greed Index
-- Finviz 데이터
-- TipRanks 데이터
-- Seeking Alpha 데이터
-"""
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+"""Tests for src/market_data.py compatibility helpers."""
+
+from __future__ import annotations
+
+from unittest.mock import patch
 
 import pytest
+
 from market_data import (
+    get_comprehensive_stock_analysis,
     get_fear_greed_index,
     get_finviz_market_overview,
     get_finviz_sector_performance,
     get_finviz_stock_data,
-    get_tipranks_rating,
-    get_seeking_alpha_ratings,
-    get_comprehensive_stock_analysis,
     get_market_sentiment_summary,
+    get_seeking_alpha_ratings,
+    get_tipranks_rating,
 )
 
 
 class TestFearGreedIndex:
-    """CNN 공포탐욕 지수 테스트"""
-    
-    def test_get_fear_greed_index_returns_dict(self):
-        """공포탐욕 지수가 딕셔너리를 반환하는지"""
+    @patch("market_data._core_fear_greed_index", return_value={"score": 55, "rating": "Neutral", "emoji": "🟢", "advice": "ok"})
+    def test_returns_required_shape(self, _mock_fg):
         result = get_fear_greed_index()
         assert isinstance(result, dict)
-    
-    def test_fear_greed_has_required_keys(self):
-        """필수 키가 있는지"""
+        assert set(("score", "rating", "emoji", "advice")).issubset(result.keys())
+        assert 0 <= result["score"] <= 100
+
+    @patch("market_data._core_fear_greed_index", return_value={"score": 999, "emoji": "invalid"})
+    def test_clamps_and_falls_back_emoji(self, _mock_fg):
         result = get_fear_greed_index()
-        required_keys = ["score", "rating", "emoji", "advice"]
-        for key in required_keys:
-            assert key in result, f"Missing key: {key}"
-    
-    def test_fear_greed_score_range(self):
-        """점수가 0-100 범위인지"""
-        result = get_fear_greed_index()
-        score = result.get("score", 0)
-        assert 0 <= score <= 100, f"Score out of range: {score}"
-    
-    def test_fear_greed_emoji_valid(self):
-        """이모지가 유효한지"""
-        result = get_fear_greed_index()
-        valid_emojis = ["🔴", "🟠", "🟡", "🟢", "🔵", "⚪"]
-        assert result.get("emoji") in valid_emojis
+        assert result["score"] == 100
+        assert result["emoji"] in {"🔴", "🟠", "🟡", "🟢", "🔵", "⚪"}
 
 
-class TestFinviz:
-    """Finviz 데이터 테스트"""
-    
-    def test_market_overview_returns_dict(self):
-        """시장 개요가 딕셔너리를 반환하는지"""
+class TestFinvizCompatibility:
+    @patch("market_data._core_market_condition", return_value={"status": "bullish", "message": "uptrend", "price": 500, "ma50": 480, "ma200": 430})
+    def test_market_overview(self, _mock_market):
         result = get_finviz_market_overview()
-        assert isinstance(result, dict)
-    
-    def test_sector_performance_returns_list(self):
-        """섹터 성과가 리스트를 반환하는지"""
+        assert result["status"] == "bullish"
+        assert result["price"] == 500
+
+    @patch("market_data.load_stock_categories", return_value={"tech": {"name": "Tech", "etf": "XLK"}})
+    def test_sector_performance_shape(self, _mock_categories):
         result = get_finviz_sector_performance()
         assert isinstance(result, list)
-    
-    def test_stock_data_returns_dict(self):
-        """종목 데이터가 딕셔너리를 반환하는지"""
-        result = get_finviz_stock_data("AAPL")
-        assert isinstance(result, dict)
-    
-    def test_stock_data_has_symbol(self):
-        """종목 데이터에 심볼이 있는지"""
-        result = get_finviz_stock_data("MSFT")
-        if result:  # 데이터가 있을 때만
-            assert result.get("symbol") == "MSFT"
-    
-    def test_stock_data_has_price_info(self):
-        """종목 데이터에 가격 정보가 있는지"""
-        result = get_finviz_stock_data("GOOGL")
-        if result:
-            price_keys = ["price", "change", "pe", "rsi"]
-            for key in price_keys:
-                assert key in result, f"Missing key: {key}"
+        assert result
+        assert result[0]["sector"] == "tech"
+        assert result[0]["name"] == "Tech"
+
+    @patch("market_data._core_finviz_data", return_value={"price": 190.0, "change": "+1.2%", "pe": 28.0, "rsi": 52, "target_price": 210.0})
+    def test_stock_data_shape(self, _mock_finviz):
+        result = get_finviz_stock_data("aapl")
+        assert result["symbol"] == "AAPL"
+        assert result["price"] == 190.0
+        assert result["rsi"] == 52
 
 
-class TestTipRanks:
-    """TipRanks 데이터 테스트"""
-    
-    def test_tipranks_returns_dict(self):
-        """TipRanks가 딕셔너리를 반환하는지"""
+class TestTipranksCompatibility:
+    @patch("market_data._core_stock_info", return_value={"recommendation": "buy", "analyst_count": 18})
+    def test_tipranks_buy_consensus(self, _mock_info):
         result = get_tipranks_rating("AAPL")
-        assert isinstance(result, dict)
-    
-    def test_tipranks_has_consensus(self):
-        """컨센서스 정보가 있는지"""
-        result = get_tipranks_rating("NVDA")
-        if result:
-            assert "consensus" in result or "buy" in result
+        assert result["symbol"] == "AAPL"
+        assert result["consensus"] in {"Buy", "Hold", "Sell"}
+        assert result["buy"] >= 1
+
+    @patch("market_data._core_stock_info", return_value={"recommendation": "", "analyst_count": 0})
+    def test_tipranks_empty_when_no_analysts(self, _mock_info):
+        result = get_tipranks_rating("AAPL")
+        assert result == {"symbol": "AAPL", "consensus": "N/A", "buy": 0, "hold": 0, "sell": 0}
 
 
-class TestSeekingAlpha:
-    """Seeking Alpha 데이터 테스트"""
-    
-    def test_seeking_alpha_returns_dict(self):
-        """Seeking Alpha가 딕셔너리를 반환하는지"""
-        result = get_seeking_alpha_ratings("AAPL")
-        assert isinstance(result, dict)
+class TestSeekingAlphaCompatibility:
+    def test_seeking_alpha_placeholder(self):
+        result = get_seeking_alpha_ratings("MSFT")
+        assert result["symbol"] == "MSFT"
+        assert "quant_rating" in result
 
 
 class TestComprehensiveAnalysis:
-    """종합 분석 테스트"""
-    
-    def test_comprehensive_returns_dict(self):
-        """종합 분석이 딕셔너리를 반환하는지"""
-        result = get_comprehensive_stock_analysis("AAPL")
-        assert isinstance(result, dict)
-    
-    def test_comprehensive_has_symbol(self):
-        """종합 분석에 심볼이 있는지"""
-        result = get_comprehensive_stock_analysis("TSLA")
-        assert result.get("symbol") == "TSLA"
-    
-    def test_comprehensive_has_sources(self):
-        """종합 분석에 sources가 있는지"""
-        result = get_comprehensive_stock_analysis("META")
+    @patch("market_data.get_finviz_stock_data", return_value={"symbol": "TSLA", "price": 250})
+    @patch("market_data.get_tipranks_rating", return_value={"symbol": "TSLA", "consensus": "Buy", "buy": 12, "hold": 3, "sell": 1})
+    @patch("market_data.get_seeking_alpha_ratings", return_value={"symbol": "TSLA", "quant_rating": "N/A"})
+    def test_comprehensive_has_sources(self, _mock_sa, _mock_tipranks, _mock_finviz):
+        result = get_comprehensive_stock_analysis("tsla")
+        assert result["symbol"] == "TSLA"
         assert "sources" in result
-        assert isinstance(result["sources"], dict)
+        assert set(("finviz", "tipranks", "seeking_alpha")).issubset(result["sources"].keys())
 
 
-class TestMarketSentiment:
-    """시장 심리 종합 테스트"""
-    
-    def test_market_sentiment_returns_dict(self):
-        """시장 심리가 딕셔너리를 반환하는지"""
+class TestMarketSentimentSummary:
+    @patch("market_data.get_fear_greed_index", return_value={"score": 50, "rating": "Neutral", "emoji": "🟡", "advice": "ok"})
+    @patch("market_data.get_finviz_sector_performance", return_value=[{"sector": "tech"}])
+    @patch("market_data.get_finviz_market_overview", return_value={"status": "unknown"})
+    def test_summary_shape(self, _mock_overview, _mock_sectors, _mock_fg):
         result = get_market_sentiment_summary()
-        assert isinstance(result, dict)
-    
-    def test_market_sentiment_has_fear_greed(self):
-        """시장 심리에 공포탐욕이 있는지"""
-        result = get_market_sentiment_summary()
-        assert "fear_greed" in result
-    
-    def test_market_sentiment_has_sectors(self):
-        """시장 심리에 섹터가 있는지"""
-        result = get_market_sentiment_summary()
-        assert "sectors" in result
+        assert set(("fear_greed", "sectors", "market_overview")).issubset(result.keys())
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    raise SystemExit(pytest.main([__file__, "-v"]))

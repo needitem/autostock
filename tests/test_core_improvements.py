@@ -1,11 +1,6 @@
-import os
-import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-from core.news import get_company_news, get_market_news
 from core.scoring import (
     calculate_annual_edge_score,
     calculate_financial_score,
@@ -111,80 +106,6 @@ def test_fundamental_conviction_can_hard_block():
     )
     assert profile["hard_block"] is True
     assert profile["score"] < 50
-
-
-@patch("core.news._request")
-def test_company_news_sorted_by_latest(mock_request):
-    now = int(datetime.now().timestamp())
-    mock_request.return_value = [
-        {"headline": "old", "summary": "s", "source": "x", "datetime": now - 3600 * 5, "url": "u1"},
-        {"headline": "new", "summary": "s", "source": "x", "datetime": now - 60, "url": "u2"},
-    ]
-
-    result = get_company_news("AAPL", days=1)
-    assert result[0]["headline"] == "new"
-    assert "age_hours" in result[0]
-    assert "url" in result[0]
-
-
-@patch("core.news._request")
-def test_market_news_sorted_by_latest(mock_request):
-    now = int(datetime.now().timestamp())
-    mock_request.return_value = [
-        {"headline": "m1", "summary": "s", "source": "x", "datetime": now - 3600 * 4, "url": "u1"},
-        {"headline": "m2", "summary": "s", "source": "x", "datetime": now - 120, "url": "u2"},
-    ]
-
-    result = get_market_news()
-    assert result[0]["headline"] == "m2"
-    assert "published_ts" in result[0]
-
-
-@patch("core.news._request")
-def test_company_news_has_importance_fields(mock_request):
-    now = int(datetime.now().timestamp())
-    mock_request.return_value = [
-        {
-            "headline": "AAPL earnings beat expectations and raises guidance",
-            "summary": "Quarterly EPS and guidance both moved higher.",
-            "source": "Reuters",
-            "datetime": now - 600,
-            "url": "u1",
-        }
-    ]
-    result = get_company_news("AAPL", days=1)
-    assert result
-    row = result[0]
-    assert "news_score" in row
-    assert "impact" in row
-    assert "event_tags" in row
-    assert isinstance(row["event_tags"], list)
-
-
-@patch("core.news._request")
-def test_older_hard_event_can_score_higher_than_recent_generic(mock_request):
-    now = int(datetime.now().timestamp())
-    mock_request.return_value = [
-        {
-            "headline": "AAPL stock rises in regular trading",
-            "summary": "Daily move update.",
-            "source": "MarketBeat",
-            "datetime": now - 3600,
-            "url": "u_generic",
-        },
-        {
-            "headline": "AAPL reports earnings beat and raises full-year guidance",
-            "summary": "EPS beats and guidance raised.",
-            "source": "MarketBeat",
-            "datetime": now - 3600 * 20,
-            "url": "u_earnings",
-        },
-    ]
-    result = get_company_news("AAPL", days=2)
-    by_url = {r.get("url"): r for r in result}
-    assert "u_generic" in by_url
-    assert "u_earnings" in by_url
-    assert by_url["u_earnings"]["news_score"] > by_url["u_generic"]["news_score"]
 
 
 @patch("core.signals.calculate_indicators")

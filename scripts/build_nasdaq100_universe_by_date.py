@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from contextlib import contextmanager
 import re
 from datetime import datetime, timezone
 from io import StringIO
@@ -14,6 +15,35 @@ import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NO_PROXY_MODE = str(os.getenv("AI_DISABLE_PROXY", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+@contextmanager
+def _temporary_proxy_env():
+    keys = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "GIT_HTTP_PROXY",
+        "GIT_HTTPS_PROXY",
+    )
+    backup: dict[str, str | None] = {}
+    try:
+        for key in keys:
+            val = os.getenv(key, "")
+            if NO_PROXY_MODE or (val and "127.0.0.1:9" in val):
+                backup[key] = os.environ.get(key)
+                os.environ[key] = ""
+        yield
+    finally:
+        for key, old in backup.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
 
 
 def _normalize_symbol(value: Any) -> str | None:
@@ -63,9 +93,14 @@ def _wiki_url(title: str) -> str:
     return f"https://en.wikipedia.org/wiki/{safe}"
 
 
-def _download_html(session: requests.Session, title: str) -> str:
+def _download_html(title: str) -> str:
     url = _wiki_url(title)
-    resp = session.get(url, timeout=30)
+    with _temporary_proxy_env():
+        resp = requests.get(
+            url,
+            headers={"User-Agent": "autostock/1.0 (historical universe builder)"},
+            timeout=30,
+        )
     resp.raise_for_status()
     return resp.text
 
@@ -206,10 +241,7 @@ def main() -> int:
     if not snaps:
         raise SystemExit("No snapshot dates produced (check start/end/freq).")
 
-    session = requests.Session()
-    session.headers.update({"User-Agent": "autostock/1.0 (historical universe builder)"})
-
-    html = _download_html(session, args.title)
+    html = _download_html(args.title)
     tables = pd.read_html(StringIO(html))
 
     current = _extract_current_constituents(tables)
@@ -256,4 +288,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

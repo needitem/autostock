@@ -1,8 +1,4 @@
-import os
-import sys
 from unittest.mock import PropertyMock, patch
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from ai.analyzer import AIAnalyzer
 
@@ -52,4 +48,3 @@ def test_analyze_full_market_uses_ai_call(_mock_call, _mock_access):
     assert result.get("mode") == "codex-cli"
     assert result.get("total") == 2
     assert result.get("analysis") == "ai analysis text"
-
