@@ -37,7 +37,8 @@ def test_build_orders_min_trade():
 def test_run_us_rebalance_smoke(tmp_path, monkeypatch):
     report_dir = tmp_path / "outputs" / "run_2026-02-24"
     report_dir.mkdir(parents=True)
-    (report_dir / "report.json").write_text(json.dumps({"module1_liquidity": {"risk_on_off": {"label": "risk_on"}}}))
+    report_path = report_dir / "report.json"
+    report_path.write_text(json.dumps({"module1_liquidity": {"risk_on_off": {"label": "risk_on"}}}))
 
     monkeypatch.setenv("AI_UNIVERSE", "custom")
     monkeypatch.setenv("AI_SYMBOLS", "AAPL,MSFT")
@@ -81,10 +82,8 @@ def test_run_us_rebalance_smoke(tmp_path, monkeypatch):
 
     monkeypatch.setattr(reb, "AIAnalyzer", lambda: DummyAnalyzer())
 
-    result = reb.run_us_rebalance(report_dir=str(report_dir))
-    out_md = Path(result["md_path"])
+    result = reb.run_us_rebalance(report_dir=str(report_path))
     out_csv = Path(result["orders_csv"])
-    assert out_md.exists()
     assert out_csv.exists()
     # Minimal signal: CSV header + at least one line
     lines = out_csv.read_text(encoding="utf-8").strip().splitlines()

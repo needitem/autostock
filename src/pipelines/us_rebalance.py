@@ -42,18 +42,17 @@ def _parse_symbols(raw: str) -> list[str]:
     return out
 
 
-def _latest_run_dir(base: Path) -> Path | None:
+def _latest_report_path(base: Path) -> Path | None:
     if not base.exists():
         return None
-    runs = [p for p in base.iterdir() if p.is_dir() and p.name.startswith("run_")]
-    if not runs:
+    candidates = [p for p in base.glob("report_*.json") if p.is_file()]
+    if not candidates:
         return None
-    runs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return runs[0]
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[0]
 
 
-def _load_report(report_dir: Path) -> dict[str, Any]:
-    path = report_dir / "report.json"
+def _load_report(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
@@ -109,7 +108,14 @@ def _select_candidates(
 ) -> list[dict[str, Any]]:
     if not features:
         return []
-    df = sorted(features, key=lambda x: float(x.get("relative_strength_63d", 0.0)), reverse=True)
+    df = sorted(
+        features,
+        key=lambda x: (
+            float(x.get("relative_strength_63d", 0.0)),
+            float(x.get("entry_conviction", 0.0)),
+        ),
+        reverse=True,
+    )
     nmax = max(1, int(max_symbols))
     base = df[:nmax]
 
@@ -141,6 +147,8 @@ def _portfolio_prompt(
     max_weight_pct: float,
     turnover_target_pct: float,
     prev_portfolio_pct: dict[str, float] | None,
+    exposure_target_pct: float,
+    regime_note: str,
 ) -> str:
     risk = (report.get("module1_liquidity") or {}).get("risk_on_off", {})
     macro = report.get("module6_macro_scenarios", {})
@@ -168,7 +176,8 @@ def _portfolio_prompt(
             f"rsi={x.get('rsi', 50):.1f} adx={x.get('adx', 0):.1f} "
             f"ma50_gap={x.get('ma50_gap', 0):.1f}% ma200_gap={x.get('ma200_gap', 0):.1f}% "
             f"bb_pos={x.get('bb_position', 50):.0f} vol_ratio={x.get('volume_ratio', 1):.2f} "
-            f"atr_pct={x.get('atr_pct', 0):.2f} sector={x.get('sector', 'N/A')}"
+            f"atr_pct={x.get('atr_pct', 0):.2f} sector={x.get('sector', 'N/A')} "
+            f"conv={x.get('entry_conviction', 0):.1f}"
         )
 
     return (
@@ -192,6 +201,8 @@ def _portfolio_prompt(
         f"- Choose 1 to {int(top_k)} positions from the provided list.\n"
         f"- Max weight per position: {float(max_weight_pct):.0f}%.\n"
         f"- Target turnover (soft): <= {float(turnover_target_pct):.0f}% per rebalance.\n"
+        f"- Target total exposure (approx): {float(exposure_target_pct):.0f}%.\n"
+        f"- Regime note: {regime_note}\n"
         "- Weights must sum to 100% including cash.\n"
         "- Cash is allowed; increase cash if risk-off or charts are weak.\n\n"
         "Output STRICT JSON only (no markdown):\n"
@@ -223,13 +234,26 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _fallback_portfolio(candidates: list[dict[str, Any]], top_k: int, max_weight_pct: float) -> dict[str, Any]:
+def _fallback_portfolio(
+    candidates: list[dict[str, Any]],
+    top_k: int,
+    max_weight_pct: float,
+    exposure_target_pct: float,
+) -> dict[str, Any]:
     if not candidates:
         return {"cash_pct": 100.0, "positions": []}
-    ordered = sorted(candidates, key=lambda x: float(x.get("relative_strength_63d", 0.0)), reverse=True)
+    ordered = sorted(
+        candidates,
+        key=lambda x: (
+            float(x.get("relative_strength_63d", 0.0)),
+            float(x.get("entry_conviction", 0.0)),
+        ),
+        reverse=True,
+    )
     picked = ordered[: max(1, int(top_k))]
     n = max(1, len(picked))
-    w = min(100.0 / n, float(max_weight_pct))
+    exposure = max(0.0, min(100.0, float(exposure_target_pct)))
+    w = min(exposure / n, float(max_weight_pct))
     positions = [{"symbol": x["symbol"], "weight_pct": w} for x in picked]
     cash = max(0.0, 100.0 - w * n)
     return {"cash_pct": cash, "positions": positions, "_fallback": True}
@@ -240,6 +264,7 @@ def _portfolio_from_ai(
     allowed: set[str],
     top_k: int,
     max_weight_pct: float,
+    exposure_target_pct: float,
 ) -> tuple[dict[str, float], float]:
     pos = obj.get("positions")
     if not isinstance(pos, list):
@@ -282,7 +307,53 @@ def _portfolio_from_ai(
     cash = float(100.0 - total)
     if cash < 0:
         cash = 0.0
+    exposure = max(0.0, min(100.0, float(exposure_target_pct)))
+    if exposure < 100.0:
+        scale = exposure / max(1e-9, total)
+        weights = {k: float(v) * scale for k, v in weights.items()}
+        total = float(sum(weights.values()))
+        cash = max(0.0, 100.0 - total)
     return weights, cash
+
+
+def _regime_controls(report: dict[str, Any]) -> dict[str, Any]:
+    risk = (report.get("module1_liquidity") or {}).get("risk_on_off", {})
+    label = str(risk.get("label", "neutral"))
+    score = _f(risk.get("score", 0.0))
+    flows_conf = (report.get("module1_liquidity") or {}).get("confidence_flows", "medium")
+    if label == "risk_on":
+        exposure = 85.0 if score >= 1.5 else 75.0
+        max_weight = 25.0
+        turnover = 35.0
+        min_adx = 20.0
+        min_vol_ratio = 1.0
+        note = "Risk-on: allow higher exposure; trend sleeve favored."
+    elif label == "risk_off":
+        exposure = 40.0 if score <= -1.5 else 55.0
+        max_weight = 18.0
+        turnover = 20.0
+        min_adx = 25.0
+        min_vol_ratio = 1.3
+        note = "Risk-off: reduce exposure; require stronger trend/volume."
+    else:
+        exposure = 65.0
+        max_weight = 22.0
+        turnover = 28.0
+        min_adx = 20.0
+        min_vol_ratio = 1.0
+        note = "Neutral: balanced exposure; keep core trend bias."
+    if str(flows_conf).lower() in {"low", "medium"}:
+        note += " Flows confidence not high; keep macro tilt modest."
+    return {
+        "label": label,
+        "score": score,
+        "exposure_target_pct": exposure,
+        "max_weight_pct": max_weight,
+        "turnover_target_pct": turnover,
+        "min_adx": min_adx,
+        "min_volume_ratio": min_vol_ratio,
+        "note": note,
+    }
 
 
 
@@ -298,34 +369,34 @@ def _chart_rationale(row: dict[str, Any]) -> list[str]:
     bb_pos = _f(row.get("bb_position", 50.0))
 
     if rs63 >= 5:
-        notes.append(f"RS63 ??(+{rs63:.1f}%p)")
+        notes.append(f"RS63 strong (+{rs63:.1f}pp)")
     elif rs63 <= -5:
-        notes.append(f"RS63 ??({rs63:.1f}%p)")
+        notes.append(f"RS63 weak ({rs63:.1f}pp)")
 
     if adx >= 25:
-        notes.append(f"?? ??(ADX {adx:.0f})")
+        notes.append(f"Trend strong (ADX {adx:.0f})")
     elif adx <= 15:
-        notes.append(f"?? ??(ADX {adx:.0f})")
+        notes.append(f"Trend weak (ADX {adx:.0f})")
 
     if rsi >= 70:
-        notes.append(f"??(RSI {rsi:.0f})")
+        notes.append(f"Overbought (RSI {rsi:.0f})")
     elif rsi <= 30:
-        notes.append(f"???(RSI {rsi:.0f})")
+        notes.append(f"Oversold (RSI {rsi:.0f})")
     else:
-        notes.append(f"RSI ??({rsi:.0f})")
+        notes.append(f"RSI neutral ({rsi:.0f})")
 
     if ma50_gap >= 3 and ma200_gap >= 3:
-        notes.append("??>MA50/200 (?? ??)")
+        notes.append("Price above MA50/200")
     elif ma50_gap <= -3 or ma200_gap <= -3:
-        notes.append("??<MA50/200 (?? ??)")
+        notes.append("Price below MA50/200")
 
     if vol_ratio >= 1.8:
-        notes.append(f"??? ??({vol_ratio:.1f}x)")
+        notes.append(f"Volume surge ({vol_ratio:.1f}x)")
 
     if bb_pos >= 80:
-        notes.append("?? ??(?? ??)")
+        notes.append("BB upper zone")
     elif bb_pos <= 20:
-        notes.append("?? ??(?? ??)")
+        notes.append("BB lower zone")
 
     return notes[:5]
 
@@ -359,19 +430,34 @@ def _build_orders(
 
 def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     analyzer = AIAnalyzer()
-    if not analyzer.has_api_access:
+    allow_fallback = str(os.getenv("AI_ALLOW_FALLBACK_NO_API", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    if not analyzer.has_api_access and not allow_fallback:
         raise RuntimeError("Codex login required. Run: codex login")
 
-    report_base = Path(report_dir) if report_dir else _latest_run_dir(ROOT / "outputs")
-    if report_base is None:
-        raise RuntimeError("No report directory found under outputs/")
+    if report_dir:
+        cand = Path(report_dir)
+        if cand.is_dir():
+            legacy = cand / "report.json"
+            if legacy.exists():
+                report_path = legacy
+            else:
+                report_path = _latest_report_path(cand)
+        else:
+            report_path = cand
+    else:
+        report_path = _latest_report_path(ROOT / "outputs")
+    if report_path is None:
+        raise RuntimeError("No report JSON found under outputs/")
 
-    report = _load_report(report_base)
+    report = _load_report(report_path)
     universe_name, symbols = _load_universe()
     top_k = max(1, int(os.getenv("AI_PORTFOLIO_TOP_K", "8")))
     max_weight_pct = float(os.getenv("AI_PORTFOLIO_MAX_WEIGHT_PCT", "25"))
     prompt_max_symbols = max(10, int(os.getenv("AI_PROMPT_MAX_SYMBOLS", "35")))
     turnover_target_pct = float(os.getenv("AI_PORTFOLIO_TURNOVER_TARGET_PCT", "30"))
+    regime = _regime_controls(report)
+    max_weight_pct = min(max_weight_pct, regime["max_weight_pct"])
+    turnover_target_pct = min(turnover_target_pct, regime["turnover_target_pct"])
 
     current_path = Path(os.getenv("AI_CURRENT_PORTFOLIO_JSON", str(OUTPUT_DIR / "current_portfolio.json")))
     if not current_path.exists():
@@ -398,6 +484,30 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             missing.append(sym)
             continue
         info = get_stock_info(sym)
+        crosses = ind.get("crosses", []) or []
+        cross_score = 0.0
+        for c in crosses:
+            sig = str(c.get("signal", "")).lower()
+            typ = str(c.get("type", "")).lower()
+            if "매수" in sig or "golden" in typ or "macd" in typ:
+                cross_score += 0.5
+        rsi = _f(ind.get("rsi", 50.0))
+        bb_pos = _f(ind.get("bb_position", 50.0))
+        vol_ratio = _f(ind.get("volume_ratio", 1.0))
+        entry_conviction = cross_score
+        if vol_ratio >= 1.8:
+            entry_conviction += 0.5
+        pos_52w = _f(ind.get("position_52w", 50.0))
+        if pos_52w >= 90:
+            entry_conviction += 0.3
+        if rsi >= 70 or bb_pos >= 85:
+            entry_conviction -= 0.5
+        if rsi <= 30:
+            entry_conviction += 0.2
+        if _f(ind.get("adx", 0.0)) < regime["min_adx"]:
+            continue
+        if vol_ratio < regime["min_volume_ratio"]:
+            continue
         features.append(
             {
                 "symbol": sym,
@@ -414,6 +524,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
                 "volume_ratio": _f(ind.get("volume_ratio", 1.0)),
                 "support": ind.get("support", []),
                 "resistance": ind.get("resistance", []),
+                "entry_conviction": round(entry_conviction, 2),
             }
         )
 
@@ -427,14 +538,29 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         max_weight_pct=max_weight_pct,
         turnover_target_pct=turnover_target_pct,
         prev_portfolio_pct=prev_port,
+        exposure_target_pct=regime["exposure_target_pct"],
+        regime_note=regime["note"],
     )
 
-    raw = analyzer._call(prompt, max_tokens=2000)
+    raw = analyzer._call(prompt, max_tokens=2000) if analyzer.has_api_access else None
     parsed = _extract_json(raw or "")
     if not parsed:
-        parsed = _fallback_portfolio(candidates, top_k=top_k, max_weight_pct=max_weight_pct)
+        if not analyzer.has_api_access:
+            raise RuntimeError("AI call failed and fallback disabled.")
+        parsed = _fallback_portfolio(
+            candidates,
+            top_k=top_k,
+            max_weight_pct=max_weight_pct,
+            exposure_target_pct=regime["exposure_target_pct"],
+        )
 
-    weights_pct, cash_pct = _portfolio_from_ai(parsed, allowed=allowed, top_k=top_k, max_weight_pct=max_weight_pct)
+    weights_pct, cash_pct = _portfolio_from_ai(
+        parsed,
+        allowed=allowed,
+        top_k=top_k,
+        max_weight_pct=max_weight_pct,
+        exposure_target_pct=regime["exposure_target_pct"],
+    )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     min_trade_pct = float(os.getenv("AI_REBALANCE_MIN_TRADE_PCT", "1.0"))
@@ -449,13 +575,40 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
 
     result = {
         "generated_at": datetime.now().isoformat(),
-        "report_dir": str(report_base),
+        "report_path": str(report_path),
         "universe": universe_name,
         "top_k": top_k,
         "max_weight_pct": max_weight_pct,
         "turnover_target_pct": turnover_target_pct,
+        "regime_controls": regime,
         "market_ctx": market_ctx,
         "risk_on_off": (report.get("module1_liquidity") or {}).get("risk_on_off", {}),
+        "decision_basis": {
+            "macro_metrics": (report.get("module1_liquidity") or {}).get("metrics", {}),
+            "risk_on_components": ((report.get("module1_liquidity") or {}).get("risk_on_off", {}) or {}).get(
+                "components", []
+            ),
+            "etf_flows_latest": {
+                "latest": (report.get("module1_liquidity") or {}).get("etf_flows", {}).get(
+                    "latest_net_inflow_month_usd_b"
+                ),
+                "latest_scope": (report.get("module1_liquidity") or {}).get("etf_flows", {}).get("latest_scope"),
+                "latest_date": (report.get("module1_liquidity") or {}).get("etf_flows", {}).get("latest_date"),
+                "latest_kind": (report.get("module1_liquidity") or {}).get("etf_flows", {}).get("latest_kind"),
+                "latest_month_label": (report.get("module1_liquidity") or {}).get("etf_flows", {}).get(
+                    "latest_month_label"
+                ),
+                "latest_by_published_date": (report.get("module1_liquidity") or {}).get("etf_flows", {}).get(
+                    "latest_by_published_date"
+                ),
+            },
+            "confidence": {
+                "macro": (report.get("module1_liquidity") or {}).get("confidence_macro"),
+                "flows": (report.get("module1_liquidity") or {}).get("confidence_flows"),
+                "module1": (report.get("module1_liquidity") or {}).get("confidence"),
+            },
+            "data_gaps": report.get("data_gaps", []),
+        },
         "weights_pct": weights_pct,
         "cash_pct": cash_pct,
         "candidates": candidates,
@@ -463,12 +616,14 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "orders": orders,
         "chart_rationale": chart_rationale,
         "ai_raw": raw if isinstance(raw, str) else "",
+        "ai_error": None if analyzer.has_api_access else "AI unavailable; used fallback portfolio",
         "ai_fallback": bool(parsed.get("_fallback", False)),
     }
 
     date_tag = datetime.now().strftime("%Y-%m-%d")
     out_md = None
     out_orders_csv = OUTPUT_DIR / f"rebalance_orders_{date_tag}.csv"
+    out_result_json = OUTPUT_DIR / f"rebalance_recommendation_{date_tag}.json"
     out_orders_csv.parent.mkdir(parents=True, exist_ok=True)
     if orders:
         header = "symbol,action,current_weight_pct,target_weight_pct,delta_pct\n"
@@ -480,9 +635,14 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     else:
         out_orders_csv.write_text("symbol,action,current_weight_pct,target_weight_pct,delta_pct\n", encoding="utf-8")
 
+    out_result_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
-
-    return {"md_path": None, "orders_csv": str(out_orders_csv), "result": result}
+    return {
+        "md_path": None,
+        "orders_csv": str(out_orders_csv),
+        "result_json": str(out_result_json),
+        "result": result,
+    }
 
 
 if __name__ == "__main__":
