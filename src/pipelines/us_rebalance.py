@@ -28,6 +28,11 @@ def _f(x: Any, d: float = 0.0) -> float:
         return d
 
 
+def _selection_score(rs63: float, rs21: float) -> float:
+    # Momentum-first ranking: longer trend has slightly higher weight.
+    return round(0.6 * float(rs63) + 0.4 * float(rs21), 2)
+
+
 def _parse_symbols(raw: str) -> list[str]:
     text = (raw or "").replace("\n", ",").replace(";", ",").replace("|", ",")
     parts = [p.strip().upper() for p in text.split(",") if p.strip()]
@@ -111,7 +116,14 @@ def _select_candidates(
     df = sorted(
         features,
         key=lambda x: (
+            float(
+                x.get(
+                    "selection_score",
+                    _selection_score(_f(x.get("relative_strength_63d", 0.0)), _f(x.get("relative_strength_21d", 0.0))),
+                )
+            ),
             float(x.get("relative_strength_63d", 0.0)),
+            float(x.get("relative_strength_21d", 0.0)),
             float(x.get("entry_conviction", 0.0)),
         ),
         reverse=True,
@@ -135,7 +147,21 @@ def _select_candidates(
             chosen[sym] = fx
     if len(chosen) <= nmax:
         return list(chosen.values())
-    keep = sorted(chosen.values(), key=lambda x: float(x.get("relative_strength_63d", 0.0)), reverse=True)
+    keep = sorted(
+        chosen.values(),
+        key=lambda x: (
+            float(
+                x.get(
+                    "selection_score",
+                    _selection_score(_f(x.get("relative_strength_63d", 0.0)), _f(x.get("relative_strength_21d", 0.0))),
+                )
+            ),
+            float(x.get("relative_strength_63d", 0.0)),
+            float(x.get("relative_strength_21d", 0.0)),
+            float(x.get("entry_conviction", 0.0)),
+        ),
+        reverse=True,
+    )
     return keep[:nmax]
 
 
@@ -170,21 +196,25 @@ def _portfolio_prompt(
 
     cand_lines = []
     for x in candidates:
+        warn = ",".join(x.get("warnings", [])) if isinstance(x.get("warnings"), list) else ""
         cand_lines.append(
             f"{x['symbol']} price={x.get('price', 0):.2f} "
+            f"score={x.get('selection_score', 0):.2f} "
             f"rs63={x.get('relative_strength_63d', 0):.1f} rs21={x.get('relative_strength_21d', 0):.1f} "
             f"rsi={x.get('rsi', 50):.1f} adx={x.get('adx', 0):.1f} "
             f"ma50_gap={x.get('ma50_gap', 0):.1f}% ma200_gap={x.get('ma200_gap', 0):.1f}% "
             f"bb_pos={x.get('bb_position', 50):.0f} vol_ratio={x.get('volume_ratio', 1):.2f} "
             f"atr_pct={x.get('atr_pct', 0):.2f} sector={x.get('sector', 'N/A')} "
-            f"conv={x.get('entry_conviction', 0):.1f}"
+            f"conv={x.get('entry_conviction', 0):.1f} "
+            f"warn={warn or 'none'}"
         )
 
     return (
         "You are a disciplined US equity portfolio allocator.\n"
         "Write in Korean. Use only the provided research report + chart indicators.\n"
         "Goal: build a LONG-ONLY portfolio for the next 1-3 months.\n"
-        "Momentum (rs63/rs21) is primary, but use risk filters (rsi/ma gaps/adx/vol).\n"
+        "Momentum (rs63/rs21) is primary. selection_score=0.6*rs63+0.4*rs21.\n"
+        "Use risk filters (rsi/ma gaps/adx/vol) and size overheat names conservatively.\n"
         "Avoid names with weak chart structure or extreme overextension.\n\n"
         "Macro research summary inputs:\n"
         f"- Risk-on/off: {risk}\n"
@@ -245,7 +275,14 @@ def _fallback_portfolio(
     ordered = sorted(
         candidates,
         key=lambda x: (
+            float(
+                x.get(
+                    "selection_score",
+                    _selection_score(_f(x.get("relative_strength_63d", 0.0)), _f(x.get("relative_strength_21d", 0.0))),
+                )
+            ),
             float(x.get("relative_strength_63d", 0.0)),
+            float(x.get("relative_strength_21d", 0.0)),
             float(x.get("entry_conviction", 0.0)),
         ),
         reverse=True,
@@ -342,8 +379,11 @@ def _regime_controls(report: dict[str, Any]) -> dict[str, Any]:
         min_adx = 20.0
         min_vol_ratio = 1.0
         note = "Neutral: balanced exposure; keep core trend bias."
-    if str(flows_conf).lower() in {"low", "medium"}:
-        note += " Flows confidence not high; keep macro tilt modest."
+    flow_conf_key = str(flows_conf).strip().lower()
+    flow_conf_multiplier = {"high": 1.0, "medium": 0.9, "low": 0.8}.get(flow_conf_key, 0.9)
+    exposure = round(exposure * flow_conf_multiplier, 2)
+    if flow_conf_key in {"low", "medium"}:
+        note += f" Flows confidence={flow_conf_key}; scale exposure x{flow_conf_multiplier:.2f}."
     return {
         "label": label,
         "score": score,
@@ -352,10 +392,404 @@ def _regime_controls(report: dict[str, Any]) -> dict[str, Any]:
         "turnover_target_pct": turnover,
         "min_adx": min_adx,
         "min_volume_ratio": min_vol_ratio,
+        "flow_confidence": flow_conf_key,
+        "flow_confidence_multiplier": flow_conf_multiplier,
         "note": note,
     }
 
 
+
+
+def _market_exposure_filter(market_ctx: dict[str, Any]) -> dict[str, Any]:
+    price = _f(market_ctx.get("price"), 0.0)
+    ma50 = _f(market_ctx.get("ma50"), 0.0)
+    ma200 = _f(market_ctx.get("ma200"), 0.0)
+    if price <= 0 or ma50 <= 0 or ma200 <= 0:
+        return {"multiplier": 1.0, "reason": "benchmark_trend_data_missing"}
+    if price < ma200:
+        return {"multiplier": 0.7, "reason": "benchmark_below_ma200"}
+    if price < ma50:
+        return {"multiplier": 0.85, "reason": "benchmark_below_ma50"}
+    return {"multiplier": 1.0, "reason": "benchmark_above_ma50"}
+
+
+def _candidate_warnings(row: dict[str, Any]) -> list[str]:
+    flags: list[str] = []
+    rsi = _f(row.get("rsi", 50.0))
+    bb_pos = _f(row.get("bb_position", 50.0))
+    conv = _f(row.get("entry_conviction", 0.0))
+
+    if rsi >= 80 or bb_pos >= 95:
+        flags.append("overheat_extreme")
+    elif rsi >= 70 and bb_pos >= 80:
+        flags.append("overheat_dual")
+    elif rsi >= 70 or bb_pos >= 80:
+        flags.append("overheat_warning")
+
+    if conv < 0:
+        flags.append("entry_negative")
+    return flags
+
+
+def _position_multiplier(row: dict[str, Any]) -> tuple[float, list[str]]:
+    mult = 1.0
+    flags: list[str] = []
+    rsi = _f(row.get("rsi", 50.0))
+    bb_pos = _f(row.get("bb_position", 50.0))
+    vol_ratio = _f(row.get("volume_ratio", 1.0))
+    conv = _f(row.get("entry_conviction", 0.0))
+
+    if rsi >= 80 or bb_pos >= 95:
+        mult *= 0.25
+        flags.append("overheat_extreme")
+    elif rsi >= 70 and bb_pos >= 80:
+        mult *= 0.4
+        flags.append("overheat_dual")
+    elif rsi >= 70 or bb_pos >= 80:
+        mult *= 0.6
+        flags.append("overheat_warning")
+
+    if conv < 0:
+        mult *= 0.5
+        flags.append("entry_negative")
+
+    if vol_ratio >= 1.5:
+        mult *= 1.2
+        flags.append("volume_strong")
+    elif vol_ratio < 1.0:
+        mult *= 0.7
+        flags.append("volume_weak")
+    elif vol_ratio < 1.2:
+        mult *= 0.8
+        flags.append("volume_soft")
+
+    return max(0.0, mult), flags
+
+
+def _apply_weight_multipliers(
+    target_weights_pct: dict[str, float],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    max_weight_pct: float,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    out: dict[str, float] = {}
+    audit: dict[str, Any] = {}
+    max_w = max(1.0, min(100.0, float(max_weight_pct)))
+
+    for sym, base_w in target_weights_pct.items():
+        row = feature_by_symbol.get(sym, {})
+        mult, flags = _position_multiplier(row)
+        adj = min(float(base_w) * mult, max_w)
+        if adj <= 0:
+            continue
+        out[sym] = float(adj)
+        audit[sym] = {
+            "base_weight_pct": round(float(base_w), 2),
+            "multiplier": round(float(mult), 3),
+            "adjusted_weight_pct": round(float(adj), 2),
+            "flags": flags,
+        }
+
+    total = float(sum(out.values()))
+    if total > 100.0 and total > 0:
+        scale = 100.0 / total
+        out = {k: float(v) * scale for k, v in out.items()}
+        for sym in list(audit.keys()):
+            if sym in out:
+                audit[sym]["adjusted_weight_pct"] = round(float(out[sym]), 2)
+        audit["_scaled_to_100"] = True
+    else:
+        audit["_scaled_to_100"] = False
+    audit["_total_after_pct"] = round(float(sum(out.values())), 2)
+    return out, audit
+
+
+def _is_fill_eligible(row: dict[str, Any]) -> bool:
+    warnings = row.get("warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+    blocked = {"overheat_warning", "overheat_dual", "overheat_extreme", "entry_negative"}
+    if any(str(x) in blocked for x in warnings):
+        return False
+    if _f(row.get("ma50_gap", 0.0)) <= 0 or _f(row.get("ma200_gap", 0.0)) <= 0:
+        return False
+    return True
+
+
+def _fill_to_target_exposure(
+    target_weights_pct: dict[str, float],
+    desired_exposure_pct: float,
+    max_weight_pct: float,
+    top_k: int,
+    ordered_candidates: list[dict[str, Any]],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    fill_style: str = "balanced",
+    max_positions: int | None = None,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    out = {k: float(v) for k, v in target_weights_pct.items() if float(v) > 0}
+    desired = max(0.0, min(100.0, float(desired_exposure_pct)))
+    max_w = max(1.0, min(100.0, float(max_weight_pct)))
+    before = float(sum(out.values()))
+    gap = max(0.0, desired - before)
+    style = str(fill_style or "balanced").strip().lower()
+    if style not in {"concentrated", "diversified", "balanced"}:
+        style = "balanced"
+
+    boosted_symbols: list[str] = []
+    added_symbols: list[str] = []
+    blocked_sample: list[dict[str, Any]] = []
+
+    if max_positions is None or int(max_positions) <= 0:
+        if style == "concentrated":
+            max_positions = max(1, int(top_k))
+        elif style == "diversified":
+            max_positions = max(1, int(top_k) + 4)
+        else:
+            max_positions = max(1, int(top_k) + 2)
+    max_positions = max(len(out), int(max_positions))
+    if ordered_candidates:
+        max_positions = min(max_positions, len(ordered_candidates))
+
+    if gap <= 1e-9:
+        return out, {
+            "fill_applied": False,
+            "fill_style": style,
+            "max_positions": int(max_positions),
+            "desired_exposure_pct": round(desired, 2),
+            "achieved_before_pct": round(before, 2),
+            "achieved_after_pct": round(before, 2),
+            "gap_before_pct": round(max(0.0, desired - before), 2),
+            "gap_after_pct": 0.0,
+            "boosted_symbols": boosted_symbols,
+            "added_symbols": added_symbols,
+            "blocked_candidates_sample": blocked_sample,
+        }
+
+    elig_existing = []
+    for sym in out.keys():
+        row = feature_by_symbol.get(sym, {})
+        if _is_fill_eligible(row):
+            elig_existing.append(sym)
+
+    for row in ordered_candidates:
+        if len(blocked_sample) >= 8:
+            break
+        sym = str(row.get("symbol", ""))
+        if not sym:
+            continue
+        if sym in elig_existing:
+            continue
+        if _is_fill_eligible(row):
+            continue
+        blocked_sample.append(
+            {
+                "symbol": sym,
+                "warnings": row.get("warnings", []),
+                "selection_score": _f(row.get("selection_score", 0.0)),
+            }
+        )
+
+    def _add_new(budget: float) -> float:
+        used = 0.0
+        if budget <= 1e-9:
+            return used
+        for row in ordered_candidates:
+            if used >= budget - 1e-9:
+                break
+            sym = str(row.get("symbol", ""))
+            if not sym or sym in out:
+                continue
+            if not _is_fill_eligible(row):
+                continue
+            if len(out) >= int(max_positions):
+                break
+            add = min(max_w, budget - used)
+            if add <= 1e-9:
+                continue
+            out[sym] = float(add)
+            used += float(add)
+            added_symbols.append(sym)
+        return used
+
+    def _boost_existing(budget: float) -> float:
+        used = 0.0
+        if budget <= 1e-9:
+            return used
+        loops = 0
+        while used < budget - 1e-9 and elig_existing and loops < 10:
+            rooms = {sym: max(0.0, max_w - float(out.get(sym, 0.0))) for sym in elig_existing}
+            active = [sym for sym in elig_existing if rooms[sym] > 1e-9]
+            if not active:
+                break
+            scores = {sym: max(0.1, _f(feature_by_symbol.get(sym, {}).get("selection_score", 0.0))) for sym in active}
+            denom = float(sum(scores.values()))
+            if denom <= 0:
+                break
+            progressed = False
+            rem_budget = budget - used
+            for sym in active:
+                share = rem_budget * (scores[sym] / denom)
+                add = min(rooms[sym], share)
+                if add <= 1e-9:
+                    continue
+                out[sym] = float(out.get(sym, 0.0)) + float(add)
+                used += float(add)
+                progressed = True
+                if sym not in boosted_symbols:
+                    boosted_symbols.append(sym)
+                if used >= budget - 1e-9:
+                    break
+            if not progressed:
+                break
+            loops += 1
+        return used
+
+    if style == "concentrated":
+        gap -= _boost_existing(gap)
+        gap -= _add_new(gap)
+    elif style == "diversified":
+        gap -= _add_new(gap)
+        gap -= _boost_existing(gap)
+    else:
+        first_budget = gap * 0.5
+        gap -= _add_new(first_budget)
+        gap -= _boost_existing(gap)
+        gap -= _add_new(gap)
+        gap -= _boost_existing(gap)
+
+    after = float(sum(out.values()))
+    return out, {
+        "fill_applied": bool(boosted_symbols or added_symbols),
+        "fill_style": style,
+        "max_positions": int(max_positions),
+        "desired_exposure_pct": round(desired, 2),
+        "achieved_before_pct": round(before, 2),
+        "achieved_after_pct": round(after, 2),
+        "gap_before_pct": round(max(0.0, desired - before), 2),
+        "gap_after_pct": round(max(0.0, desired - after), 2),
+        "boosted_symbols": boosted_symbols,
+        "added_symbols": added_symbols,
+        "blocked_candidates_sample": blocked_sample,
+    }
+
+
+def _turnover_pct(prev_port: dict[str, float], target_weights_pct: dict[str, float]) -> float:
+    prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
+    syms = set(prev_pct.keys()) | set(target_weights_pct.keys())
+    return float(sum(abs(float(target_weights_pct.get(s, 0.0)) - float(prev_pct.get(s, 0.0))) for s in syms))
+
+
+def _has_invested_positions(prev_port: dict[str, float]) -> bool:
+    return any(sym != "__CASH__" and float(w) > 1e-6 for sym, w in prev_port.items())
+
+
+def _apply_turnover_cap(
+    prev_port: dict[str, float],
+    target_weights_pct: dict[str, float],
+    turnover_target_pct: float,
+    feature_by_symbol: dict[str, dict[str, Any]],
+) -> tuple[dict[str, float], dict[str, Any]]:
+    cap = max(0.0, float(turnover_target_pct))
+    before = _turnover_pct(prev_port, target_weights_pct)
+    if cap <= 0:
+        return target_weights_pct, {
+            "mode": "turnover_cap_disabled",
+            "before_pct": round(before, 2),
+            "after_pct": round(before, 2),
+            "cap_pct": cap,
+            "cap_applied": False,
+        }
+    if not _has_invested_positions(prev_port):
+        return target_weights_pct, {
+            "mode": "initial_build_no_constraint",
+            "before_pct": round(before, 2),
+            "after_pct": round(before, 2),
+            "cap_pct": cap,
+            "cap_applied": False,
+        }
+    if before <= cap + 1e-9:
+        return target_weights_pct, {
+            "mode": "rebalancing",
+            "before_pct": round(before, 2),
+            "after_pct": round(before, 2),
+            "cap_pct": cap,
+            "cap_applied": False,
+        }
+
+    prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
+    syms = sorted(set(prev_pct.keys()) | set(target_weights_pct.keys()))
+    rows: list[dict[str, Any]] = []
+    for sym in syms:
+        cur = float(prev_pct.get(sym, 0.0))
+        tgt = float(target_weights_pct.get(sym, 0.0))
+        delta = tgt - cur
+        if abs(delta) <= 1e-9:
+            continue
+        meta = feature_by_symbol.get(sym, {})
+        score = _f(meta.get("selection_score", 0.0))
+        conv = _f(meta.get("entry_conviction", 0.0))
+        if delta > 0:
+            priority = score + max(0.0, conv) * 5.0
+        else:
+            priority = (100.0 - score) + max(0.0, -conv) * 5.0
+        rows.append({"symbol": sym, "cur": cur, "delta": delta, "priority": priority})
+
+    buys = [r for r in rows if float(r["delta"]) > 0]
+    sells = [r for r in rows if float(r["delta"]) < 0]
+    buys.sort(key=lambda x: float(x["priority"]), reverse=True)
+    sells.sort(key=lambda x: float(x["priority"]), reverse=True)
+
+    applied: dict[str, float] = {}
+
+    def _consume(pool: list[dict[str, Any]], budget: float) -> float:
+        used = 0.0
+        if budget <= 0:
+            return used
+        for row in pool:
+            d = float(row["delta"])
+            already = abs(float(applied.get(row["symbol"], 0.0)))
+            remain = max(0.0, abs(d) - already)
+            use = min(remain, budget - used)
+            if use <= 0:
+                continue
+            signed = use if d > 0 else -use
+            applied[row["symbol"]] = float(applied.get(row["symbol"], 0.0)) + signed
+            used += use
+            if used >= budget - 1e-9:
+                break
+        return used
+
+    if buys and sells:
+        used_buy = _consume(buys, cap * 0.5)
+        used_sell = _consume(sells, cap * 0.5)
+    elif buys:
+        used_buy = _consume(buys, cap)
+        used_sell = 0.0
+    else:
+        used_buy = 0.0
+        used_sell = _consume(sells, cap)
+
+    rem = max(0.0, cap - (used_buy + used_sell))
+    if rem > 1e-9:
+        rows.sort(key=lambda x: float(x["priority"]), reverse=True)
+        _consume(rows, rem)
+        rem = max(0.0, cap - sum(abs(float(v)) for v in applied.values()))
+
+    new_target: dict[str, float] = {}
+    for sym in syms:
+        cur = float(prev_pct.get(sym, 0.0))
+        nxt = cur + float(applied.get(sym, 0.0))
+        if nxt > 1e-6:
+            new_target[sym] = nxt
+
+    after = _turnover_pct(prev_port, new_target)
+    return new_target, {
+        "mode": "rebalancing",
+        "before_pct": round(before, 2),
+        "after_pct": round(after, 2),
+        "cap_pct": cap,
+        "cap_applied": True,
+        "remaining_unused_pct": round(max(0.0, rem), 4),
+    }
 
 
 def _chart_rationale(row: dict[str, Any]) -> list[str]:
@@ -401,6 +835,117 @@ def _chart_rationale(row: dict[str, Any]) -> list[str]:
     return notes[:5]
 
 
+def _reconcile_target_with_min_trade(
+    prev_port: dict[str, float],
+    target_weights_pct: dict[str, float],
+    min_trade_pct: float,
+    desired_exposure_pct: float,
+    max_weight_pct: float,
+    feature_by_symbol: dict[str, dict[str, Any]],
+    allow_refill: bool,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
+    out = {k: float(v) for k, v in target_weights_pct.items() if float(v) > 1e-9}
+    min_trade = max(0.0, float(min_trade_pct))
+    desired = max(0.0, min(100.0, float(desired_exposure_pct)))
+    max_w = max(1.0, min(100.0, float(max_weight_pct)))
+
+    adjusted: list[dict[str, Any]] = []
+    if min_trade > 0:
+        for sym in sorted(set(prev_pct.keys()) | set(out.keys())):
+            cur = float(prev_pct.get(sym, 0.0))
+            tgt = float(out.get(sym, 0.0))
+            delta = tgt - cur
+            if abs(delta) < min_trade and abs(delta) > 1e-9:
+                adjusted.append(
+                    {
+                        "symbol": sym,
+                        "current_weight_pct": round(cur, 2),
+                        "target_weight_pct_before_reconcile": round(tgt, 2),
+                        "delta_pct": round(delta, 2),
+                        "skip_reason": "below_min_trade",
+                        "min_trade_pct": round(min_trade, 2),
+                    }
+                )
+                if cur > 1e-9:
+                    out[sym] = cur
+                else:
+                    out.pop(sym, None)
+
+    out = {k: float(v) for k, v in out.items() if float(v) > 1e-9}
+    before_refill = float(sum(out.values()))
+
+    refill_symbols: list[str] = []
+    remaining = max(0.0, desired - before_refill)
+    refill_used = 0.0
+
+    if allow_refill and remaining > 1e-9:
+        tradeable = []
+        for sym, tgt in out.items():
+            cur = float(prev_pct.get(sym, 0.0))
+            if abs(tgt - cur) < max(min_trade, 1e-9):
+                continue
+            room = max(0.0, max_w - float(tgt))
+            if room <= 1e-9:
+                continue
+            tradeable.append(sym)
+
+        tradeable.sort(
+            key=lambda s: (
+                1 if _is_fill_eligible(feature_by_symbol.get(s, {})) else 0,
+                _f(feature_by_symbol.get(s, {}).get("selection_score", 0.0)),
+                _f(feature_by_symbol.get(s, {}).get("relative_strength_63d", 0.0)),
+                _f(feature_by_symbol.get(s, {}).get("relative_strength_21d", 0.0)),
+            ),
+            reverse=True,
+        )
+
+        loops = 0
+        while remaining > 1e-9 and tradeable and loops < 10:
+            rooms = {sym: max(0.0, max_w - float(out.get(sym, 0.0))) for sym in tradeable}
+            active = [sym for sym in tradeable if rooms[sym] > 1e-9]
+            if not active:
+                break
+            scores = {
+                sym: max(0.1, _f(feature_by_symbol.get(sym, {}).get("selection_score", 0.0)))
+                for sym in active
+            }
+            denom = float(sum(scores.values()))
+            if denom <= 0:
+                break
+            progressed = False
+            for sym in active:
+                share = remaining * (scores[sym] / denom)
+                add = min(rooms[sym], share)
+                if add <= 1e-9:
+                    continue
+                out[sym] = float(out.get(sym, 0.0)) + float(add)
+                refill_used += float(add)
+                remaining -= float(add)
+                progressed = True
+                if sym not in refill_symbols:
+                    refill_symbols.append(sym)
+                if remaining <= 1e-9:
+                    break
+            if not progressed:
+                break
+            loops += 1
+
+    after_refill = float(sum(out.values()))
+    return out, {
+        "applied": len(adjusted) > 0,
+        "allow_refill": bool(allow_refill),
+        "min_trade_pct": round(min_trade, 2),
+        "desired_exposure_pct": round(desired, 2),
+        "achieved_before_refill_pct": round(before_refill, 2),
+        "achieved_after_refill_pct": round(after_refill, 2),
+        "gap_after_refill_pct": round(max(0.0, desired - after_refill), 2),
+        "refill_used_pct": round(refill_used, 2),
+        "refill_symbols": refill_symbols,
+        "adjusted_targets": adjusted,
+    }
+
+
 def _build_orders(
     prev_port: dict[str, float],
     target_weights_pct: dict[str, float],
@@ -426,6 +971,70 @@ def _build_orders(
             }
         )
     return orders
+
+
+def _build_orders_with_skips(
+    prev_port: dict[str, float],
+    target_weights_pct: dict[str, float],
+    min_trade_pct: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    orders: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
+    next_pct = {k: float(v) for k, v in target_weights_pct.items()}
+    for sym in sorted(set(prev_pct) | set(next_pct)):
+        cur = prev_pct.get(sym, 0.0)
+        tgt = next_pct.get(sym, 0.0)
+        delta = tgt - cur
+        action = "BUY" if delta > 0 else "SELL"
+        if abs(delta) < min_trade_pct:
+            if abs(delta) > 1e-9:
+                skipped.append(
+                    {
+                        "symbol": sym,
+                        "action": action,
+                        "current_weight_pct": round(cur, 2),
+                        "target_weight_pct": round(tgt, 2),
+                        "delta_pct": round(delta, 2),
+                        "skip_reason": "below_min_trade",
+                        "min_trade_pct": float(min_trade_pct),
+                    }
+                )
+            continue
+        orders.append(
+            {
+                "symbol": sym,
+                "action": action,
+                "current_weight_pct": round(cur, 2),
+                "target_weight_pct": round(tgt, 2),
+                "delta_pct": round(delta, 2),
+            }
+        )
+    return orders, skipped
+
+
+def _executed_portfolio_from_orders(
+    prev_port: dict[str, float],
+    executed_orders: list[dict[str, Any]],
+) -> tuple[dict[str, float], float, float]:
+    prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
+    out = {k: float(v) for k, v in prev_pct.items() if float(v) > 1e-9}
+
+    for row in executed_orders:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol", "")).strip().upper()
+        if not sym:
+            continue
+        tgt = _f(row.get("target_weight_pct"), out.get(sym, 0.0))
+        if tgt <= 1e-9:
+            out.pop(sym, None)
+        else:
+            out[sym] = float(tgt)
+
+    exposure = float(sum(out.values()))
+    cash = max(0.0, 100.0 - exposure)
+    return out, cash, exposure
 
 
 def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
@@ -454,10 +1063,14 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     top_k = max(1, int(os.getenv("AI_PORTFOLIO_TOP_K", "8")))
     max_weight_pct = float(os.getenv("AI_PORTFOLIO_MAX_WEIGHT_PCT", "25"))
     prompt_max_symbols = max(10, int(os.getenv("AI_PROMPT_MAX_SYMBOLS", "35")))
-    turnover_target_pct = float(os.getenv("AI_PORTFOLIO_TURNOVER_TARGET_PCT", "30"))
+    base_turnover_target_pct = float(os.getenv("AI_PORTFOLIO_TURNOVER_TARGET_PCT", "30"))
     regime = _regime_controls(report)
     max_weight_pct = min(max_weight_pct, regime["max_weight_pct"])
-    turnover_target_pct = min(turnover_target_pct, regime["turnover_target_pct"])
+    regime_turnover_target_pct = float(regime.get("turnover_target_pct", base_turnover_target_pct))
+    turnover_target_pct = min(base_turnover_target_pct, regime_turnover_target_pct)
+    regime["base_turnover_cap_pct"] = base_turnover_target_pct
+    regime["regime_turnover_cap_pct"] = regime_turnover_target_pct
+    regime["selected_turnover_cap_pct"] = turnover_target_pct
 
     current_path = Path(os.getenv("AI_CURRENT_PORTFOLIO_JSON", str(OUTPUT_DIR / "current_portfolio.json")))
     if not current_path.exists():
@@ -467,8 +1080,18 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     prev_syms = [s for s in prev_port.keys() if s and s != "__CASH__"]
 
     market_ctx = get_market_condition()
+    market_filter = _market_exposure_filter(market_ctx)
+    regime_exposure_target_pct = float(regime.get("exposure_target_pct", 65.0))
+    final_exposure_target_pct = max(
+        0.0,
+        min(100.0, round(regime_exposure_target_pct * _f(market_filter.get("multiplier", 1.0), 1.0), 2)),
+    )
+    regime["regime_exposure_target_pct"] = regime_exposure_target_pct
+    regime["market_filter"] = market_filter
+    regime["exposure_target_pct"] = final_exposure_target_pct
 
     features: list[dict[str, Any]] = []
+    excluded_candidates: list[dict[str, Any]] = []
     missing: list[str] = []
     max_symbols = int(os.getenv("AI_REBALANCE_MAX_SYMBOLS", "0") or "0")
     if max_symbols > 0:
@@ -494,6 +1117,12 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         rsi = _f(ind.get("rsi", 50.0))
         bb_pos = _f(ind.get("bb_position", 50.0))
         vol_ratio = _f(ind.get("volume_ratio", 1.0))
+        adx = _f(ind.get("adx", 0.0))
+        ma50_gap = _f(ind.get("ma50_gap", 0.0))
+        ma200_gap = _f(ind.get("ma200_gap", 0.0))
+        rs63 = _f(ind.get("return_63d", 0.0)) - _f(market_ctx.get("benchmark_return_63d", 0.0))
+        rs21 = _f(ind.get("return_21d", 0.0)) - _f(market_ctx.get("benchmark_return_21d", 0.0))
+        sel_score = _selection_score(rs63, rs21)
         entry_conviction = cross_score
         if vol_ratio >= 1.8:
             entry_conviction += 0.5
@@ -504,29 +1133,52 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             entry_conviction -= 0.5
         if rsi <= 30:
             entry_conviction += 0.2
-        if _f(ind.get("adx", 0.0)) < regime["min_adx"]:
-            continue
+        failed: list[str] = []
+        if adx < regime["min_adx"]:
+            failed.append("adx_below_min")
         if vol_ratio < regime["min_volume_ratio"]:
+            failed.append("volume_ratio_below_min")
+        if ma50_gap <= 0 or ma200_gap <= 0:
+            failed.append("trend_below_ma")
+        if failed:
+            excluded_candidates.append(
+                {
+                    "symbol": sym,
+                    "selection_score": sel_score,
+                    "relative_strength_63d": rs63,
+                    "relative_strength_21d": rs21,
+                    "rsi": rsi,
+                    "adx": adx,
+                    "ma50_gap": ma50_gap,
+                    "ma200_gap": ma200_gap,
+                    "bb_position": bb_pos,
+                    "volume_ratio": vol_ratio,
+                    "entry_conviction": round(entry_conviction, 2),
+                    "filters_failed": failed,
+                }
+            )
             continue
-        features.append(
-            {
-                "symbol": sym,
-                "price": _f(ind.get("price", info.get("price"))),
-                "sector": info.get("sector", "N/A"),
-                "relative_strength_63d": _f(ind.get("return_63d", 0.0)) - _f(market_ctx.get("benchmark_return_63d", 0.0)),
-                "relative_strength_21d": _f(ind.get("return_21d", 0.0)) - _f(market_ctx.get("benchmark_return_21d", 0.0)),
-                "rsi": _f(ind.get("rsi", 50.0)),
-                "adx": _f(ind.get("adx", 0.0)),
-                "ma50_gap": _f(ind.get("ma50_gap", 0.0)),
-                "ma200_gap": _f(ind.get("ma200_gap", 0.0)),
-                "bb_position": _f(ind.get("bb_position", 50.0)),
-                "atr_pct": _f(ind.get("atr_pct", 0.0)),
-                "volume_ratio": _f(ind.get("volume_ratio", 1.0)),
-                "support": ind.get("support", []),
-                "resistance": ind.get("resistance", []),
-                "entry_conviction": round(entry_conviction, 2),
-            }
-        )
+        row = {
+            "symbol": sym,
+            "price": _f(ind.get("price", info.get("price"))),
+            "sector": info.get("sector", "N/A"),
+            "selection_score": sel_score,
+            "relative_strength_63d": rs63,
+            "relative_strength_21d": rs21,
+            "rsi": rsi,
+            "adx": adx,
+            "ma50_gap": ma50_gap,
+            "ma200_gap": ma200_gap,
+            "bb_position": bb_pos,
+            "atr_pct": _f(ind.get("atr_pct", 0.0)),
+            "volume_ratio": vol_ratio,
+            "support": ind.get("support", []),
+            "resistance": ind.get("resistance", []),
+            "entry_conviction": round(entry_conviction, 2),
+            "filters_failed": [],
+        }
+        row["warnings"] = _candidate_warnings(row)
+        features.append(row)
 
     candidates = _select_candidates(features, prompt_max_symbols, include_symbols=prev_syms)
     allowed = {x["symbol"] for x in candidates}
@@ -538,20 +1190,20 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         max_weight_pct=max_weight_pct,
         turnover_target_pct=turnover_target_pct,
         prev_portfolio_pct=prev_port,
-        exposure_target_pct=regime["exposure_target_pct"],
+        exposure_target_pct=final_exposure_target_pct,
         regime_note=regime["note"],
     )
 
     raw = analyzer._call(prompt, max_tokens=2000) if analyzer.has_api_access else None
     parsed = _extract_json(raw or "")
     if not parsed:
-        if not analyzer.has_api_access:
+        if not analyzer.has_api_access and not allow_fallback:
             raise RuntimeError("AI call failed and fallback disabled.")
         parsed = _fallback_portfolio(
             candidates,
             top_k=top_k,
             max_weight_pct=max_weight_pct,
-            exposure_target_pct=regime["exposure_target_pct"],
+            exposure_target_pct=final_exposure_target_pct,
         )
 
     weights_pct, cash_pct = _portfolio_from_ai(
@@ -559,14 +1211,77 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         allowed=allowed,
         top_k=top_k,
         max_weight_pct=max_weight_pct,
-        exposure_target_pct=regime["exposure_target_pct"],
+        exposure_target_pct=final_exposure_target_pct,
     )
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    cand_by_symbol = {x.get("symbol"): x for x in candidates if isinstance(x, dict)}
+    ordered_candidates = sorted(
+        candidates,
+        key=lambda x: (
+            _f(x.get("selection_score", 0.0)),
+            _f(x.get("relative_strength_63d", 0.0)),
+            _f(x.get("relative_strength_21d", 0.0)),
+        ),
+        reverse=True,
+    )
+    fill_style = str(os.getenv("AI_FILL_TO_TARGET_STYLE", "balanced")).strip().lower()
+    fill_max_positions = int(os.getenv("AI_FILL_TO_TARGET_MAX_POSITIONS", "0") or "0")
+    weights_pct, sizing_audit = _apply_weight_multipliers(weights_pct, cand_by_symbol, max_weight_pct)
+    weights_pct, fill_audit = _fill_to_target_exposure(
+        target_weights_pct=weights_pct,
+        desired_exposure_pct=final_exposure_target_pct,
+        max_weight_pct=max_weight_pct,
+        top_k=top_k,
+        ordered_candidates=ordered_candidates,
+        feature_by_symbol=cand_by_symbol,
+        fill_style=fill_style,
+        max_positions=fill_max_positions,
+    )
+    weights_pct, turnover_audit = _apply_turnover_cap(prev_port, weights_pct, turnover_target_pct, cand_by_symbol)
+    turnover_audit["base_turnover_cap_pct"] = round(base_turnover_target_pct, 2)
+    turnover_audit["regime_turnover_cap_pct"] = round(regime_turnover_target_pct, 2)
+    turnover_audit["selected_turnover_cap_pct"] = round(turnover_target_pct, 2)
+    turnover_audit["applied_cap_pct"] = None if turnover_audit.get("mode") == "initial_build_no_constraint" else round(turnover_target_pct, 2)
 
     min_trade_pct = float(os.getenv("AI_REBALANCE_MIN_TRADE_PCT", "1.0"))
-    orders = _build_orders(prev_port, weights_pct, min_trade_pct)
+    allow_min_trade_refill = turnover_audit.get("mode") == "initial_build_no_constraint"
+    weights_pct, min_trade_reconcile_audit = _reconcile_target_with_min_trade(
+        prev_port=prev_port,
+        target_weights_pct=weights_pct,
+        min_trade_pct=min_trade_pct,
+        desired_exposure_pct=final_exposure_target_pct,
+        max_weight_pct=max_weight_pct,
+        feature_by_symbol=cand_by_symbol,
+        allow_refill=allow_min_trade_refill,
+    )
 
-    cand_by_symbol = {x.get("symbol"): x for x in candidates if isinstance(x, dict)}
+    achieved_exposure_pct = float(sum(weights_pct.values()))
+    cash_pct = max(0.0, 100.0 - achieved_exposure_pct)
+    exposure_gap_pct = max(0.0, float(final_exposure_target_pct) - achieved_exposure_pct)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct)
+    if orders_skipped:
+        # Final safety: align displayed target with executable portfolio if a residual small-delta skip remains.
+        aligned_weights, aligned_cash, aligned_exposure = _executed_portfolio_from_orders(prev_port, orders)
+        weights_pct = {k: float(v) for k, v in aligned_weights.items() if float(v) > 1e-9}
+        cash_pct = max(0.0, float(aligned_cash))
+        achieved_exposure_pct = float(aligned_exposure)
+        exposure_gap_pct = max(0.0, float(final_exposure_target_pct) - achieved_exposure_pct)
+        min_trade_reconcile_audit["forced_execution_alignment"] = True
+        min_trade_reconcile_audit["residual_orders_skipped"] = orders_skipped
+        orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct)
+    else:
+        min_trade_reconcile_audit["forced_execution_alignment"] = False
+
+    executed_weights_pct, executed_cash_pct, achieved_exposure_after_execution_pct = _executed_portfolio_from_orders(
+        prev_port,
+        orders,
+    )
+    execution_gap_pct = max(0.0, float(final_exposure_target_pct) - achieved_exposure_after_execution_pct)
+    execution_matches_target_weights = len(orders_skipped) == 0 and abs(
+        achieved_exposure_after_execution_pct - achieved_exposure_pct
+    ) <= 1e-6
+
     chart_rationale = {
         sym: _chart_rationale(cand_by_symbol.get(sym, {}))
         for sym in weights_pct.keys()
@@ -580,6 +1295,17 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "top_k": top_k,
         "max_weight_pct": max_weight_pct,
         "turnover_target_pct": turnover_target_pct,
+        "turnover_audit": turnover_audit,
+        "desired_exposure_pct": final_exposure_target_pct,
+        "achieved_exposure_pct": round(achieved_exposure_pct, 2),
+        "exposure_gap_pct": round(exposure_gap_pct, 2),
+        "exposure_fill_audit": fill_audit,
+        "min_trade_reconcile_audit": min_trade_reconcile_audit,
+        "executed_weights_pct": executed_weights_pct,
+        "executed_cash_pct": round(executed_cash_pct, 2),
+        "achieved_exposure_after_execution_pct": round(achieved_exposure_after_execution_pct, 2),
+        "execution_gap_pct": round(execution_gap_pct, 2),
+        "execution_matches_target_weights": execution_matches_target_weights,
         "regime_controls": regime,
         "market_ctx": market_ctx,
         "risk_on_off": (report.get("module1_liquidity") or {}).get("risk_on_off", {}),
@@ -612,8 +1338,11 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "weights_pct": weights_pct,
         "cash_pct": cash_pct,
         "candidates": candidates,
+        "excluded_candidates": excluded_candidates[:500],
+        "position_sizing_audit": sizing_audit,
         "missing_symbols": missing[:200],
         "orders": orders,
+        "orders_skipped": orders_skipped,
         "chart_rationale": chart_rationale,
         "ai_raw": raw if isinstance(raw, str) else "",
         "ai_error": None if analyzer.has_api_access else "AI unavailable; used fallback portfolio",

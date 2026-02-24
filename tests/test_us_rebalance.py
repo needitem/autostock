@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pandas as pd
 
@@ -34,8 +35,125 @@ def test_build_orders_min_trade():
     assert by_symbol["NVDA"]["action"] == "BUY"
 
 
-def test_run_us_rebalance_smoke(tmp_path, monkeypatch):
-    report_dir = tmp_path / "outputs" / "run_2026-02-24"
+def test_market_exposure_filter_levels():
+    f_neutral = reb._market_exposure_filter({"price": 100.0, "ma50": 105.0, "ma200": 90.0})
+    assert f_neutral["multiplier"] == 0.85
+
+    f_risk = reb._market_exposure_filter({"price": 80.0, "ma50": 100.0, "ma200": 90.0})
+    assert f_risk["multiplier"] == 0.7
+
+    f_bull = reb._market_exposure_filter({"price": 110.0, "ma50": 100.0, "ma200": 90.0})
+    assert f_bull["multiplier"] == 1.0
+
+
+def test_apply_weight_multipliers_penalizes_overheat_entry_and_soft_volume():
+    weights = {"AAPL": 20.0, "MSFT": 20.0}
+    feat = {
+        "AAPL": {"rsi": 74.0, "bb_position": 86.0, "entry_conviction": -0.3, "volume_ratio": 1.1},
+        "MSFT": {"rsi": 58.0, "bb_position": 52.0, "entry_conviction": 0.6, "volume_ratio": 1.8},
+    }
+    out, audit = reb._apply_weight_multipliers(weights, feat, max_weight_pct=50.0)
+    assert out["AAPL"] < out["MSFT"]
+    assert audit["AAPL"]["multiplier"] < 0.2
+    assert "overheat_dual" in audit["AAPL"]["flags"]
+    assert "entry_negative" in audit["AAPL"]["flags"]
+
+
+def test_apply_turnover_cap_skips_initial_build():
+    prev = {"__CASH__": 1.0}
+    target = {"AAPL": 40.0, "MSFT": 30.0}
+    out, audit = reb._apply_turnover_cap(prev, target, turnover_target_pct=30.0, feature_by_symbol={})
+    assert out == target
+    assert audit["mode"] == "initial_build_no_constraint"
+    assert audit["cap_applied"] is False
+
+
+def test_apply_turnover_cap_limits_rebalance_turnover():
+    prev = {"AAPL": 0.5, "MSFT": 0.5}
+    target = {"NVDA": 60.0}
+    feat = {
+        "AAPL": {"selection_score": 20.0, "entry_conviction": -0.5},
+        "MSFT": {"selection_score": 40.0, "entry_conviction": 0.0},
+        "NVDA": {"selection_score": 80.0, "entry_conviction": 1.0},
+    }
+    out, audit = reb._apply_turnover_cap(prev, target, turnover_target_pct=30.0, feature_by_symbol=feat)
+    assert audit["cap_applied"] is True
+    assert audit["after_pct"] <= 30.0
+    assert reb._turnover_pct(prev, out) <= 30.0 + 1e-6
+
+
+def test_fill_to_target_exposure_boosts_clean_symbols():
+    target = {"AAPL": 5.0, "MSFT": 5.0, "NVDA": 5.0}
+    candidates = [
+        {"symbol": "AAPL", "selection_score": 80.0, "warnings": [], "ma50_gap": 4.0, "ma200_gap": 8.0},
+        {"symbol": "MSFT", "selection_score": 75.0, "warnings": ["overheat_dual"], "ma50_gap": 5.0, "ma200_gap": 9.0},
+        {"symbol": "NVDA", "selection_score": 60.0, "warnings": [], "ma50_gap": 3.0, "ma200_gap": 7.0},
+    ]
+    feat = {row["symbol"]: row for row in candidates}
+    out, audit = reb._fill_to_target_exposure(
+        target_weights_pct=target,
+        desired_exposure_pct=20.0,
+        max_weight_pct=15.0,
+        top_k=3,
+        ordered_candidates=candidates,
+        feature_by_symbol=feat,
+    )
+    assert sum(out.values()) >= 20.0 - 1e-3
+    assert out["MSFT"] == 5.0
+    assert "AAPL" in audit["boosted_symbols"] or "NVDA" in audit["boosted_symbols"]
+
+
+def test_build_orders_with_skips_records_below_min_trade():
+    prev = {"AAPL": 0.0, "__CASH__": 1.0}
+    target = {"AAPL": 0.5, "MSFT": 2.0}
+    orders, skipped = reb._build_orders_with_skips(prev, target, min_trade_pct=1.0)
+    syms = {o["symbol"] for o in orders}
+    assert "MSFT" in syms
+    assert any(s["symbol"] == "AAPL" and s["skip_reason"] == "below_min_trade" for s in skipped)
+
+
+def test_reconcile_target_with_min_trade_refills_gap_and_keeps_orders_executable():
+    prev = {"__CASH__": 1.0}
+    target = {"AEP": 0.8, "MSFT": 10.0, "NVDA": 8.0}
+    feat = {
+        "AEP": {"selection_score": 20.0, "warnings": [], "ma50_gap": 2.0, "ma200_gap": 5.0},
+        "MSFT": {"selection_score": 90.0, "warnings": [], "ma50_gap": 4.0, "ma200_gap": 8.0},
+        "NVDA": {"selection_score": 80.0, "warnings": [], "ma50_gap": 5.0, "ma200_gap": 10.0},
+    }
+    out, audit = reb._reconcile_target_with_min_trade(
+        prev_port=prev,
+        target_weights_pct=target,
+        min_trade_pct=1.0,
+        desired_exposure_pct=18.8,
+        max_weight_pct=30.0,
+        feature_by_symbol=feat,
+        allow_refill=True,
+    )
+    assert "AEP" not in out
+    assert abs(sum(out.values()) - 18.8) < 1e-6
+    assert audit["refill_used_pct"] > 0
+    orders, skipped = reb._build_orders_with_skips(prev, out, min_trade_pct=1.0)
+    assert len(orders) == 2
+    assert skipped == []
+
+
+def test_executed_portfolio_from_orders_matches_only_executed_orders():
+    prev = {"AAPL": 0.02, "MSFT": 0.03, "__CASH__": 0.95}
+    orders = [
+        {"symbol": "MSFT", "target_weight_pct": 5.0},
+        {"symbol": "NVDA", "target_weight_pct": 4.0},
+    ]
+    executed, cash, exposure = reb._executed_portfolio_from_orders(prev, orders)
+    assert executed["MSFT"] == 5.0
+    assert executed["NVDA"] == 4.0
+    assert executed["AAPL"] == 2.0
+    assert abs(exposure - 11.0) < 1e-9
+    assert abs(cash - 89.0) < 1e-9
+
+
+def test_run_us_rebalance_smoke(monkeypatch):
+    base = Path("data") / "test_tmp" / f"us_rebalance_{uuid4().hex}"
+    report_dir = base / "outputs" / "run_2026-02-24"
     report_dir.mkdir(parents=True)
     report_path = report_dir / "report.json"
     report_path.write_text(json.dumps({"module1_liquidity": {"risk_on_off": {"label": "risk_on"}}}))
@@ -44,7 +162,7 @@ def test_run_us_rebalance_smoke(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_SYMBOLS", "AAPL,MSFT")
     monkeypatch.setenv("AI_REBALANCE_MAX_SYMBOLS", "2")
     monkeypatch.setenv("AI_PORTFOLIO_MAX_WEIGHT_PCT", "60")
-    monkeypatch.setenv("AI_CURRENT_PORTFOLIO_JSON", str(tmp_path / "current_portfolio.json"))
+    monkeypatch.setenv("AI_CURRENT_PORTFOLIO_JSON", str(base / "current_portfolio.json"))
 
     def fake_get_stock_data(symbol: str, period: str = "15mo"):
         return _fake_df()
@@ -71,6 +189,11 @@ def test_run_us_rebalance_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(reb, "get_stock_data", fake_get_stock_data)
     monkeypatch.setattr(reb, "calculate_indicators", fake_calculate_indicators)
     monkeypatch.setattr(reb, "get_stock_info", fake_get_stock_info)
+    monkeypatch.setattr(
+        reb,
+        "get_market_condition",
+        lambda: {"message": "neutral", "benchmark_return_21d": 0.0, "benchmark_return_63d": 0.0, "price": 100.0, "ma50": 105.0, "ma200": 90.0},
+    )
 
     class DummyAnalyzer:
         has_api_access = True
@@ -88,3 +211,4 @@ def test_run_us_rebalance_smoke(tmp_path, monkeypatch):
     # Minimal signal: CSV header + at least one line
     lines = out_csv.read_text(encoding="utf-8").strip().splitlines()
     assert lines and lines[0].startswith("symbol,action")
+    assert "turnover_audit" in result["result"]
