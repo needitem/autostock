@@ -73,14 +73,14 @@ async def _send_main_menu(update: Update) -> None:
     save_chat_id(chat_id)
     style = get_chat_style(chat_id)
 
-    text = "👋 <b>AutoStock 시작</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += "처음이면 아래 순서로 보세요.\n"
-    text += "1) 🚀 오늘 뭐 살까\n"
-    text += "2) 📊 종목 쉽게 보기\n"
-    text += "3) 👀 관심종목 등록\n\n"
-    text += f"현재 화면 모드: <b>{style_label(style)}</b>\n"
-    text += "티커를 직접 보내도 바로 분석됩니다.\n"
-    text += "예: <code>AAPL</code>, <code>TSLA</code>"
+    text = "? <b>AutoStock ?작</b>\n?━?━?━?━?━?━?━?━?━\n\n"
+    text += "처음?면 ?래 ?서?보세??\n"
+    text += "1) ?? ?늘 ??까\n"
+    text += "2) ? 종목 ?게 보기\n"
+    text += "3) ?? 관?종??록\n\n"
+    text += f"?재 ?면 모드: <b>{style_label(style)}</b>\n"
+    text += "?커?직접 보내??바로 분석?니??\n"
+    text += "?? <code>AAPL</code>, <code>TSLA</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
 
 
@@ -99,20 +99,20 @@ async def style_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if context.args:
         requested = normalize_style(context.args[0])
         saved = set_chat_style(chat_id, requested)
-        text = f"⚙️ 화면 모드를 <b>{style_label(saved)}</b>로 설정했습니다."
+        text = f"?️ ?면 모드?<b>{style_label(saved)}</b>??정?습?다."
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(saved))
         return
 
     current = get_chat_style(chat_id)
-    text = "⚙️ <b>화면 모드 설정</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-    text += f"현재: <b>{style_label(current)}</b>\n\n"
+    text = "?️ <b>?면 모드 ?정</b>\n?━?━?━?━?━?━?━?━?━\n\n"
+    text += f"?재: <b>{style_label(current)}</b>\n\n"
     text += "추천: beginner(초보)\n"
-    text += "명령 예시: <code>/style beginner</code> | <code>/style standard</code> | <code>/style detail</code>"
+    text += "명령 ?시: <code>/style beginner</code> | <code>/style standard</code> | <code>/style detail</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(current))
 
 
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("🔍 스캔 중...")
+    await update.message.reply_text("? ?캔 ?..")
 
     try:
         from config import load_all_us_stocks
@@ -123,19 +123,19 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
         if used_cache:
-            text += "\n\n<i>최근 스캔 캐시 사용</i>"
+            text += "\n\n<i>최근 ?캔 캐시 ?용</i>"
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as e:
-        await update.message.reply_text(f"스캔 실패: {e}", reply_markup=kb.back())
+        await update.message.reply_text(f"?캔 ?패: {e}", reply_markup=kb.back())
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("종목 선택:", reply_markup=kb.analyze_menu())
+        await update.message.reply_text("종목 ?택:", reply_markup=kb.analyze_menu())
         return
 
     symbol = context.args[0].upper()
-    await update.message.reply_text(f"🔍 {symbol} 분석 중...")
+    await update.message.reply_text(f"? {symbol} 분석 ?..")
 
     try:
         from core.indicators import get_full_analysis
@@ -146,14 +146,14 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         analysis = get_full_analysis(symbol)
         if analysis is None:
-            await update.message.reply_text(f"'{symbol}' 데이터 없음")
+            await update.message.reply_text(f"'{symbol}' ?이???음")
             return
 
         analysis["score"] = calculate_score(analysis)
         text = fmt.format_analysis(analysis, style=style)
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
     except Exception as e:
-        await update.message.reply_text(f"분석 실패: {e}")
+        await update.message.reply_text(f"분석 ?패: {e}")
 
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -162,7 +162,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     symbol = text
-    await update.message.reply_text(f"🔍 {symbol} 분석 중...")
+    await update.message.reply_text(f"? {symbol} 분석 ?..")
 
     try:
         from core.indicators import get_full_analysis
@@ -174,7 +174,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         analysis = get_full_analysis(symbol)
         if analysis is None:
             await update.message.reply_text(
-                f"❌ '{symbol}' 데이터를 찾을 수 없습니다.\n\n유효한 미국 주식 심볼인지 확인해주세요.",
+                f"??'{symbol}' ?이?? 찾을 ???습?다.\n\n?효??미국 주식 ?볼?? ?인?주?요.",
                 reply_markup=kb.back("analyze_menu", "종목분석"),
             )
             return
@@ -183,7 +183,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         msg = fmt.format_analysis(analysis, style=style)
         await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
     except Exception as e:
-        await update.message.reply_text(f"분석 실패: {e}", reply_markup=kb.back())
+        await update.message.reply_text(f"분석 ?패: {e}", reply_markup=kb.back())
 
 
 async def scheduled_daily_scan(context) -> None:
@@ -200,7 +200,7 @@ async def scheduled_daily_scan(context) -> None:
         result, used_cache = get_scan_result(load_all_us_stocks(), max_age_sec=3600)
         text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
         if used_cache:
-            text += "\n\n<i>최근 스캔 캐시 사용</i>"
+            text += "\n\n<i>최근 ?캔 캐시 ?용</i>"
 
         await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
         print("[scheduler] daily scan sent")
@@ -233,10 +233,10 @@ async def scheduled_ai_recommendation(context) -> None:
             return
 
         stats = ai_result.get("stats", {})
-        text = f"🤖 <b>AI 리포트</b> ({ai_result.get('total', 0)}개 분석)\n"
-        text += f"평균 RSI {stats.get('avg_rsi', 0):.0f} | 평균 점수 {stats.get('avg_score', 0):.0f}\n"
-        text += f"표시 스타일: {style_label(style)}\n"
-        text += "━━━━━━━━━━━━━━━━━━\n\n"
+        text = f"? <b>AI 리포??/b> ({ai_result.get('total', 0)}?분석)\n"
+        text += f"?균 RSI {stats.get('avg_rsi', 0):.0f} | ?균 ?수 {stats.get('avg_score', 0):.0f}\n"
+        text += f"?시 ???? {style_label(style)}\n"
+        text += "?━?━?━?━?━?━?━?━?━\n\n"
         text += ai_result["analysis"]
         await send_long_message_bot(context.bot, chat_id, text)
         print("[scheduler] ai recommendation sent")
@@ -251,17 +251,9 @@ async def scheduled_watchlist_scan(context) -> None:
 
     print("[scheduler] watchlist scan started")
     try:
-        from trading.portfolio import portfolio
         from trading.watchlist import watchlist
 
         style = get_chat_style(chat_id)
-        auto_sell = watchlist._load()["settings"].get("auto_sell", False)
-        if auto_sell:
-            sell_results = portfolio.auto_sell_losers()
-            if sell_results and not any("message" in r for r in sell_results):
-                text = fmt.format_trade_result("손절", sell_results, style=style)
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
-
         signals = watchlist.scan_signals()
         total = len(watchlist.get_all().get("stocks", {}))
         if signals:
@@ -269,11 +261,6 @@ async def scheduled_watchlist_scan(context) -> None:
             await context.bot.send_message(chat_id=chat_id, text=signal_text, parse_mode="HTML")
         else:
             print("[scheduler] no watchlist signals")
-
-        if signals and watchlist.is_auto_buy():
-            results = portfolio.auto_buy_signals()
-            result_text = fmt.format_trade_result("매수", results, style=style)
-            await context.bot.send_message(chat_id=chat_id, text=result_text, parse_mode="HTML")
 
         print("[scheduler] watchlist scan done")
     except Exception as e:
@@ -303,13 +290,53 @@ async def scheduled_watchlist_monitor(context) -> None:
         print(f"[monitor] failed: {e}")
 
 
+
+async def scheduled_us_report(context) -> None:
+    print("[scheduler] daily us report started")
+    try:
+        from pipelines.us_orchestrator import run_all_us_engines
+
+        result = run_all_us_engines()
+        report_path = result.get("report_path", "")
+        print(f"[scheduler] daily us report saved: {report_path}")
+
+        chat_id = get_saved_chat_id()
+        if chat_id:
+            msg = (
+                "US daily report saved.\n"
+                f"report: {report_path}"
+            )
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as e:
+        print(f"[scheduler] daily us report failed: {e}")
+
+
+async def scheduled_us_rebalance(context) -> None:
+    print("[scheduler] weekly us rebalance started")
+    try:
+        from pipelines.us_rebalance import run_us_rebalance
+
+        result = run_us_rebalance()
+        print("[scheduler] weekly us rebalance saved")
+
+        chat_id = get_saved_chat_id()
+        if chat_id:
+            msg = (
+                "US weekly rebalance saved.\n"
+                f"report: {result.get('md_path')}\n"
+                f"orders: {result.get('orders_csv')}"
+            )
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as e:
+        print(f"[scheduler] weekly us rebalance failed: {e}")
+
 def run_bot(with_scheduler: bool = True) -> None:
     from datetime import time as dt_time
 
     import pytz
 
     if not TELEGRAM_BOT_TOKEN:
-        print("❌ TELEGRAM_BOT_TOKEN이 설정되지 않았습니다")
+        print("TELEGRAM_BOT_TOKEN not set")
         return
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -337,28 +364,29 @@ def run_bot(with_scheduler: bool = True) -> None:
             name="watchlist_scan",
         )
         app.job_queue.run_daily(
-            scheduled_daily_scan,
-            time=dt_time(hour=22, minute=0, tzinfo=kst),
-            name="daily_scan",
+            scheduled_us_report,
+            time=dt_time(hour=0, minute=0, tzinfo=kst),
+            name="daily_us_report",
         )
         app.job_queue.run_daily(
-            scheduled_ai_recommendation,
-            time=dt_time(hour=23, minute=0, tzinfo=kst),
-            name="ai_recommendation",
+            scheduled_us_rebalance,
+            time=dt_time(hour=0, minute=10, tzinfo=kst),
+            days=(0,),
+            name="weekly_us_rebalance",
         )
 
         print("=" * 52)
-        print("🤟 스케줄러 포함 봇 실행 중...")
+        print("? ??줄러 ?함 ??행 ?..")
         print("=" * 52)
-        print("🕒 30분마다 - 관심종목 모니터링")
-        print("🕘 21:00 - 자동매매 (신호매수/손절매도)")
-        print("🕙 22:00 - 일일 스캔")
-        print("🕚 23:00 - AI 추천")
+        print("? 30분마??- 관?종?모니?링")
+        print("?? 21:00 - ???/???????? ???")
+        print("?? 00:00 - US ????????????? ???/???")
+        print("?? 00:10 - US ?????????")
         print("=" * 52)
     else:
-        print("봇 실행 중... (스케줄러 없음)")
+        print("??행 ?.. (??줄러 ?음)")
 
-    print("/start 또는 /menu 로 시작")
+    print("/start ?는 /menu ??작")
     app.run_polling()
 
 

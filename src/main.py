@@ -6,6 +6,11 @@ Usage:
   python src/main.py --no-schedule    # run bot without scheduler
   python src/main.py --scan           # one-time scan
   python src/main.py --ai             # one-time market analysis
+  python src/main.py --macro          # one-time macro pipeline report
+  python src/main.py --deep           # deep research pipeline report
+  python src/main.py --deep-us        # US-only free pipeline report
+  python src/main.py --all-us         # US-only full run (engines + rendered report)
+  python src/main.py --rebalance-us   # US-only rebalance using report + charts
   python src/main.py --backtest       # one-time strategy validation
 """
 
@@ -155,6 +160,63 @@ def run_backtest_once(limit: int = 40) -> None:
     print("=" * 70)
 
 
+def run_macro_once() -> None:
+    from pipelines.us_macro_pipeline import run_us_macro_pipeline
+
+    print(f"[{datetime.now()}] macro pipeline started...")
+    result = run_us_macro_pipeline()
+    report = result.get("report", {})
+    risk = (report.get("risk_on_off") or {}).get("label", "unknown")
+    score = (report.get("risk_on_off") or {}).get("score", "n/a")
+    print(f"macro risk-on/off: {risk} (score={score})")
+    print(f"json: {result.get('json_path')}")
+    print(f"md: {result.get('md_path')}")
+
+
+def run_deep_once() -> None:
+    from pipelines.deep_research_pipeline import run_deep_research_pipeline
+
+    print(f"[{datetime.now()}] deep research pipeline started...")
+    result = run_deep_research_pipeline()
+    report = result.get("report", {})
+    risk = ((report.get("module1_liquidity") or {}).get("risk_on_off") or {}).get("us", {}).get("risk", {}).get("label", "unknown")
+    print(f"deep research risk-on/off (US): {risk}")
+    print(f"json: {result.get('json_path')}")
+    print(f"md: {result.get('md_path')}")
+
+
+def run_deep_us_once() -> None:
+    from pipelines.us_free_pipeline import run_us_free_pipeline
+
+    print(f"[{datetime.now()}] us free pipeline started...")
+    result = run_us_free_pipeline()
+    report = result.get("report", {})
+    risk = (report.get("module1_liquidity") or {}).get("risk_on_off", {}).get("label", "unknown")
+    print(f"us free risk-on/off: {risk}")
+    if result.get("json_path"):
+        print(f"json: {result.get('json_path')}")
+    if result.get("md_path"):
+        print(f"md: {result.get('md_path')}")
+
+
+def run_all_us_once() -> None:
+    from pipelines.us_orchestrator import run_all_us_engines
+
+    print(f"[{datetime.now()}] us full run started...")
+    result = run_all_us_engines()
+    report_path = result.get("report_path", "")
+    if report_path:
+        print(f"report: {report_path}")
+
+
+def run_rebalance_us_once() -> None:
+    from pipelines.us_rebalance import run_us_rebalance
+
+    print(f"[{datetime.now()}] us rebalance started...")
+    result = run_us_rebalance()
+    print(f"orders_csv: {result.get('orders_csv')}")
+
+
 def run_bot(with_scheduler: bool = True) -> None:
     from bot import run_bot
 
@@ -166,6 +228,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--scan", action="store_true", help="Run one-time scan")
     mode.add_argument("--ai", action="store_true", help="Run one-time AI report")
+    mode.add_argument("--macro", action="store_true", help="Run one-time macro pipeline")
+    mode.add_argument("--deep", action="store_true", help="Run deep research pipeline")
+    mode.add_argument("--deep-us", action="store_true", help="Run US-only free pipeline")
+    mode.add_argument("--all-us", action="store_true", help="Run US-only full engines + report")
+    mode.add_argument("--rebalance-us", action="store_true", help="Run US-only rebalance")
     mode.add_argument("--backtest", action="store_true", help="Run one-time backtest")
     parser.add_argument("--no-schedule", action="store_true", help="Run bot without scheduler")
     parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan/backtest mode")
@@ -181,6 +248,21 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.ai:
         run_ai_once()
+        return
+    if args.macro:
+        run_macro_once()
+        return
+    if args.deep:
+        run_deep_once()
+        return
+    if args.deep_us:
+        run_deep_us_once()
+        return
+    if args.all_us:
+        run_all_us_once()
+        return
+    if args.rebalance_us:
+        run_rebalance_us_once()
         return
     if args.backtest:
         run_backtest_once(limit=args.limit)

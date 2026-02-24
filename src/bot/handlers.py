@@ -347,6 +347,9 @@ async def handle_trading_menu(query) -> None:
 
 
 async def handle_auto_settings(query) -> None:
+    await query.answer("자동매매는 현재 비활성화 상태입니다.")
+    await query.edit_message_text("자동매매는 현재 비활성화 상태입니다.")
+    return
     if not await _guard_trading_ready(query):
         return
 
@@ -366,6 +369,9 @@ async def handle_auto_settings(query) -> None:
 
 
 async def handle_toggle_auto_buy(query) -> None:
+    await query.answer("자동매매는 현재 비활성화 상태입니다.")
+    await query.edit_message_text("자동매매는 현재 비활성화 상태입니다.")
+    return
     if not await _guard_trading_ready(query):
         return
 
@@ -376,6 +382,9 @@ async def handle_toggle_auto_buy(query) -> None:
 
 
 async def handle_toggle_auto_sell(query) -> None:
+    await query.answer("자동매매는 현재 비활성화 상태입니다.")
+    await query.edit_message_text("자동매매는 현재 비활성화 상태입니다.")
+    return
     if not await _guard_trading_ready(query):
         return
 

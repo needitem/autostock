@@ -346,4 +346,27 @@ class AIAnalyzer:
         }
         return {"analysis": analysis, "total": n, "stats": stats, "mode": "codex-cli", "model": self.model}
 
+    def analyze_research_report(self, report: dict[str, Any]) -> dict[str, Any]:
+        if not self.has_api_access:
+            return {"error": "Codex login is required. Run: codex login", "mode": "codex-cli", "model": self.model}
+
+        prompt = (
+            "You are a cautious macro strategist.\n"
+            "Write in Korean. Be concise and specific.\n"
+            "Output plain text only.\n\n"
+            "Given the following structured research report (JSON-like), return:\n"
+            "1) Risk-on/off judgment\n"
+            "2) Favored asset classes\n"
+            "3) US market tactical stance (next 1-3 months)\n"
+            "4) Top 5 risks to watch\n"
+            "Respect module confidence: if confidence is low or data_gaps mention errors,\n"
+            "avoid strong claims and mark items as tentative or exclude them.\n"
+            "Keep it under 40 lines.\n\n"
+            f"Report: {report}\n"
+        )
+        text = self._call(prompt, max_tokens=1200)
+        if not text:
+            return {"error": "AI call failed", "mode": "codex-cli", "model": self.model}
+        return {"analysis": text, "mode": "codex-cli", "model": self.model}
+
 ai = AIAnalyzer()
