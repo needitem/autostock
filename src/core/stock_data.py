@@ -11,9 +11,11 @@ This module intentionally keeps API contracts stable for the rest of the app:
 
 from __future__ import annotations
 
+import os
 import math
 from datetime import datetime, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -47,6 +49,24 @@ def _build_session() -> requests.Session:
 
 
 _SESSION = _build_session()
+
+
+def _init_yfinance_cache() -> None:
+    """Force yfinance sqlite cache into a writable project path."""
+    try:
+        root = Path(__file__).resolve().parents[2]
+        cache_dir = Path(
+            os.getenv("AI_YF_CACHE_DIR") or os.getenv("YF_CACHE_DIR") or str(root / "data" / "yf_cache")
+        ).resolve()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        yf.set_tz_cache_location(str(cache_dir))
+        os.environ["YF_CACHE_DIR"] = str(cache_dir)
+    except Exception:
+        # Keep market-data functions resilient even if cache init fails.
+        pass
+
+
+_init_yfinance_cache()
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:

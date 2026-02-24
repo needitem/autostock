@@ -320,7 +320,8 @@ def _portfolio_from_ai(
         weights[sym] = weights.get(sym, 0.0) + float(w)
 
     if not weights:
-        raise ValueError("no valid weights")
+        # Allow a fully defensive output (cash-only) when no tradable symbol survives.
+        return {}, 100.0
 
     items = sorted(weights.items(), key=lambda x: x[1], reverse=True)
     if top_k > 0 and len(items) > top_k:
@@ -335,7 +336,7 @@ def _portfolio_from_ai(
 
     total = float(sum(weights.values()))
     if total <= 0:
-        raise ValueError("sum weights <= 0")
+        return {}, 100.0
     if total > 100.0:
         scale = 100.0 / total
         weights = {k: float(v) * scale for k, v in weights.items()}
@@ -515,6 +516,50 @@ def _is_fill_eligible(row: dict[str, Any]) -> bool:
     return True
 
 
+def _resolve_fill_max_positions(
+    fill_style: str,
+    top_k: int,
+    max_positions: int | None,
+    candidate_count: int,
+    current_positions: int = 0,
+) -> tuple[int, str]:
+    style = str(fill_style or "balanced").strip().lower()
+    if style not in {"concentrated", "diversified", "balanced"}:
+        style = "balanced"
+    if max_positions is None or int(max_positions) <= 0:
+        if style == "concentrated":
+            base = max(1, int(top_k))
+        elif style == "diversified":
+            base = max(1, int(top_k) + 4)
+        else:
+            base = max(1, int(top_k) + 2)
+    else:
+        base = int(max_positions)
+    resolved = max(int(current_positions), int(base))
+    resolved = min(resolved, max(0, int(candidate_count)))
+    return max(0, int(resolved)), style
+
+
+def _cap_desired_exposure_by_constraints(
+    desired_exposure_pct: float,
+    max_weight_pct: float,
+    max_positions: int,
+) -> tuple[float, dict[str, Any]]:
+    desired = max(0.0, min(100.0, float(desired_exposure_pct)))
+    max_w = max(0.0, min(100.0, float(max_weight_pct)))
+    slots = max(0, int(max_positions))
+    feasible = max(0.0, min(100.0, max_w * float(slots)))
+    effective = min(desired, feasible)
+    return effective, {
+        "raw_desired_exposure_pct": round(desired, 2),
+        "effective_desired_exposure_pct": round(effective, 2),
+        "feasible_max_exposure_pct": round(feasible, 2),
+        "max_weight_pct": round(max_w, 2),
+        "max_positions": int(slots),
+        "capped_by_constraints": bool(effective + 1e-9 < desired),
+    }
+
+
 def _fill_to_target_exposure(
     target_weights_pct: dict[str, float],
     desired_exposure_pct: float,
@@ -530,24 +575,17 @@ def _fill_to_target_exposure(
     max_w = max(1.0, min(100.0, float(max_weight_pct)))
     before = float(sum(out.values()))
     gap = max(0.0, desired - before)
-    style = str(fill_style or "balanced").strip().lower()
-    if style not in {"concentrated", "diversified", "balanced"}:
-        style = "balanced"
+    max_positions, style = _resolve_fill_max_positions(
+        fill_style=fill_style,
+        top_k=top_k,
+        max_positions=max_positions,
+        candidate_count=len(ordered_candidates),
+        current_positions=len(out),
+    )
 
     boosted_symbols: list[str] = []
     added_symbols: list[str] = []
     blocked_sample: list[dict[str, Any]] = []
-
-    if max_positions is None or int(max_positions) <= 0:
-        if style == "concentrated":
-            max_positions = max(1, int(top_k))
-        elif style == "diversified":
-            max_positions = max(1, int(top_k) + 4)
-        else:
-            max_positions = max(1, int(top_k) + 2)
-    max_positions = max(len(out), int(max_positions))
-    if ordered_candidates:
-        max_positions = min(max_positions, len(ordered_candidates))
 
     if gap <= 1e-9:
         return out, {
@@ -876,14 +914,26 @@ def _reconcile_target_with_min_trade(
     before_refill = float(sum(out.values()))
 
     refill_symbols: list[str] = []
+    refill_blocked: list[dict[str, Any]] = []
     remaining = max(0.0, desired - before_refill)
     refill_used = 0.0
 
     if allow_refill and remaining > 1e-9:
         tradeable = []
         for sym, tgt in out.items():
+            row = feature_by_symbol.get(sym, {})
             cur = float(prev_pct.get(sym, 0.0))
             if abs(tgt - cur) < max(min_trade, 1e-9):
+                continue
+            if not _is_fill_eligible(row):
+                if len(refill_blocked) < 8:
+                    refill_blocked.append(
+                        {
+                            "symbol": sym,
+                            "warnings": row.get("warnings", []),
+                            "reason": "refill_blocked_by_risk_filter",
+                        }
+                    )
                 continue
             room = max(0.0, max_w - float(tgt))
             if room <= 1e-9:
@@ -935,6 +985,7 @@ def _reconcile_target_with_min_trade(
     return out, {
         "applied": len(adjusted) > 0,
         "allow_refill": bool(allow_refill),
+        "refill_policy": "clean_only",
         "min_trade_pct": round(min_trade, 2),
         "desired_exposure_pct": round(desired, 2),
         "achieved_before_refill_pct": round(before_refill, 2),
@@ -942,6 +993,7 @@ def _reconcile_target_with_min_trade(
         "gap_after_refill_pct": round(max(0.0, desired - after_refill), 2),
         "refill_used_pct": round(refill_used, 2),
         "refill_symbols": refill_symbols,
+        "refill_blocked_symbols": refill_blocked,
         "adjusted_targets": adjusted,
     }
 
@@ -1088,12 +1140,13 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     )
     regime["regime_exposure_target_pct"] = regime_exposure_target_pct
     regime["market_filter"] = market_filter
-    regime["exposure_target_pct"] = final_exposure_target_pct
+    regime["exposure_target_pre_feasibility_pct"] = final_exposure_target_pct
 
     features: list[dict[str, Any]] = []
     excluded_candidates: list[dict[str, Any]] = []
     missing: list[str] = []
     max_symbols = int(os.getenv("AI_REBALANCE_MAX_SYMBOLS", "0") or "0")
+    volume_hard_floor = max(0.05, min(1.0, _f(os.getenv("AI_MIN_VOLUME_HARD_FLOOR", "0.10"), 0.10)))
     if max_symbols > 0:
         symbols = symbols[:max_symbols]
 
@@ -1136,8 +1189,8 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         failed: list[str] = []
         if adx < regime["min_adx"]:
             failed.append("adx_below_min")
-        if vol_ratio < regime["min_volume_ratio"]:
-            failed.append("volume_ratio_below_min")
+        if vol_ratio < volume_hard_floor:
+            failed.append("volume_ratio_hard_floor")
         if ma50_gap <= 0 or ma200_gap <= 0:
             failed.append("trend_below_ma")
         if failed:
@@ -1178,9 +1231,36 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             "filters_failed": [],
         }
         row["warnings"] = _candidate_warnings(row)
+        if vol_ratio < _f(regime.get("min_volume_ratio", 1.0), 1.0):
+            row["warnings"].append("volume_below_regime_min")
         features.append(row)
 
     candidates = _select_candidates(features, prompt_max_symbols, include_symbols=prev_syms)
+    fill_style = str(os.getenv("AI_FILL_TO_TARGET_STYLE", "balanced")).strip().lower()
+    fill_max_positions_raw = int(os.getenv("AI_FILL_TO_TARGET_MAX_POSITIONS", "0") or "0")
+    inferred_current_positions = min(int(top_k), len(candidates))
+    resolved_max_positions, resolved_fill_style = _resolve_fill_max_positions(
+        fill_style=fill_style,
+        top_k=top_k,
+        max_positions=fill_max_positions_raw,
+        candidate_count=len(candidates),
+        current_positions=inferred_current_positions,
+    )
+    effective_exposure_target_pct, exposure_feasibility = _cap_desired_exposure_by_constraints(
+        desired_exposure_pct=final_exposure_target_pct,
+        max_weight_pct=max_weight_pct,
+        max_positions=resolved_max_positions,
+    )
+    exposure_feasibility["candidate_count"] = int(len(candidates))
+    exposure_feasibility["top_k"] = int(top_k)
+    exposure_feasibility["fill_style"] = resolved_fill_style
+    exposure_feasibility["configured_max_positions"] = (
+        None if fill_max_positions_raw <= 0 else int(fill_max_positions_raw)
+    )
+    exposure_feasibility["candidate_shortfall"] = max(0, int(top_k) - int(len(candidates)))
+    regime["exposure_feasible_max_pct"] = exposure_feasibility["feasible_max_exposure_pct"]
+    regime["exposure_target_pct"] = effective_exposure_target_pct
+
     allowed = {x["symbol"] for x in candidates}
     prompt = _portfolio_prompt(
         report=report,
@@ -1190,7 +1270,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         max_weight_pct=max_weight_pct,
         turnover_target_pct=turnover_target_pct,
         prev_portfolio_pct=prev_port,
-        exposure_target_pct=final_exposure_target_pct,
+        exposure_target_pct=effective_exposure_target_pct,
         regime_note=regime["note"],
     )
 
@@ -1203,7 +1283,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             candidates,
             top_k=top_k,
             max_weight_pct=max_weight_pct,
-            exposure_target_pct=final_exposure_target_pct,
+            exposure_target_pct=effective_exposure_target_pct,
         )
 
     weights_pct, cash_pct = _portfolio_from_ai(
@@ -1211,7 +1291,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         allowed=allowed,
         top_k=top_k,
         max_weight_pct=max_weight_pct,
-        exposure_target_pct=final_exposure_target_pct,
+        exposure_target_pct=effective_exposure_target_pct,
     )
     cand_by_symbol = {x.get("symbol"): x for x in candidates if isinstance(x, dict)}
     ordered_candidates = sorted(
@@ -1223,18 +1303,16 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         ),
         reverse=True,
     )
-    fill_style = str(os.getenv("AI_FILL_TO_TARGET_STYLE", "balanced")).strip().lower()
-    fill_max_positions = int(os.getenv("AI_FILL_TO_TARGET_MAX_POSITIONS", "0") or "0")
     weights_pct, sizing_audit = _apply_weight_multipliers(weights_pct, cand_by_symbol, max_weight_pct)
     weights_pct, fill_audit = _fill_to_target_exposure(
         target_weights_pct=weights_pct,
-        desired_exposure_pct=final_exposure_target_pct,
+        desired_exposure_pct=effective_exposure_target_pct,
         max_weight_pct=max_weight_pct,
         top_k=top_k,
         ordered_candidates=ordered_candidates,
         feature_by_symbol=cand_by_symbol,
-        fill_style=fill_style,
-        max_positions=fill_max_positions,
+        fill_style=resolved_fill_style,
+        max_positions=resolved_max_positions,
     )
     weights_pct, turnover_audit = _apply_turnover_cap(prev_port, weights_pct, turnover_target_pct, cand_by_symbol)
     turnover_audit["base_turnover_cap_pct"] = round(base_turnover_target_pct, 2)
@@ -1248,7 +1326,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         prev_port=prev_port,
         target_weights_pct=weights_pct,
         min_trade_pct=min_trade_pct,
-        desired_exposure_pct=final_exposure_target_pct,
+        desired_exposure_pct=effective_exposure_target_pct,
         max_weight_pct=max_weight_pct,
         feature_by_symbol=cand_by_symbol,
         allow_refill=allow_min_trade_refill,
@@ -1256,7 +1334,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
 
     achieved_exposure_pct = float(sum(weights_pct.values()))
     cash_pct = max(0.0, 100.0 - achieved_exposure_pct)
-    exposure_gap_pct = max(0.0, float(final_exposure_target_pct) - achieved_exposure_pct)
+    exposure_gap_pct = max(0.0, float(effective_exposure_target_pct) - achieved_exposure_pct)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct)
@@ -1266,7 +1344,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         weights_pct = {k: float(v) for k, v in aligned_weights.items() if float(v) > 1e-9}
         cash_pct = max(0.0, float(aligned_cash))
         achieved_exposure_pct = float(aligned_exposure)
-        exposure_gap_pct = max(0.0, float(final_exposure_target_pct) - achieved_exposure_pct)
+        exposure_gap_pct = max(0.0, float(effective_exposure_target_pct) - achieved_exposure_pct)
         min_trade_reconcile_audit["forced_execution_alignment"] = True
         min_trade_reconcile_audit["residual_orders_skipped"] = orders_skipped
         orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct)
@@ -1277,7 +1355,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         prev_port,
         orders,
     )
-    execution_gap_pct = max(0.0, float(final_exposure_target_pct) - achieved_exposure_after_execution_pct)
+    execution_gap_pct = max(0.0, float(effective_exposure_target_pct) - achieved_exposure_after_execution_pct)
     execution_matches_target_weights = len(orders_skipped) == 0 and abs(
         achieved_exposure_after_execution_pct - achieved_exposure_pct
     ) <= 1e-6
@@ -1296,9 +1374,11 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "max_weight_pct": max_weight_pct,
         "turnover_target_pct": turnover_target_pct,
         "turnover_audit": turnover_audit,
-        "desired_exposure_pct": final_exposure_target_pct,
+        "desired_exposure_raw_pct": round(final_exposure_target_pct, 2),
+        "desired_exposure_pct": round(effective_exposure_target_pct, 2),
         "achieved_exposure_pct": round(achieved_exposure_pct, 2),
         "exposure_gap_pct": round(exposure_gap_pct, 2),
+        "exposure_feasibility": exposure_feasibility,
         "exposure_fill_audit": fill_audit,
         "min_trade_reconcile_audit": min_trade_reconcile_audit,
         "executed_weights_pct": executed_weights_pct,

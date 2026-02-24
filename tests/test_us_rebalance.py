@@ -35,6 +35,30 @@ def test_build_orders_min_trade():
     assert by_symbol["NVDA"]["action"] == "BUY"
 
 
+def test_portfolio_from_ai_returns_cash_only_when_no_allowed_weights():
+    obj = {"cash_pct": 100.0, "positions": [{"symbol": "ZZZZ", "weight_pct": 50.0}]}
+    weights, cash = reb._portfolio_from_ai(
+        obj,
+        allowed={"AAPL"},
+        top_k=8,
+        max_weight_pct=25.0,
+        exposure_target_pct=65.0,
+    )
+    assert weights == {}
+    assert cash == 100.0
+
+
+def test_cap_desired_exposure_by_constraints_clamps_when_infeasible():
+    eff, audit = reb._cap_desired_exposure_by_constraints(
+        desired_exposure_pct=65.02,
+        max_weight_pct=25.0,
+        max_positions=2,
+    )
+    assert abs(eff - 50.0) < 1e-9
+    assert audit["capped_by_constraints"] is True
+    assert audit["feasible_max_exposure_pct"] == 50.0
+
+
 def test_market_exposure_filter_levels():
     f_neutral = reb._market_exposure_filter({"price": 100.0, "ma50": 105.0, "ma200": 90.0})
     assert f_neutral["multiplier"] == 0.85
@@ -135,6 +159,38 @@ def test_reconcile_target_with_min_trade_refills_gap_and_keeps_orders_executable
     orders, skipped = reb._build_orders_with_skips(prev, out, min_trade_pct=1.0)
     assert len(orders) == 2
     assert skipped == []
+
+
+def test_reconcile_target_with_min_trade_blocks_risky_refill_symbols():
+    prev = {"__CASH__": 1.0}
+    target = {"AEP": 3.0, "MSFT": 10.0}
+    feat = {
+        "AEP": {
+            "selection_score": 40.0,
+            "warnings": ["overheat_extreme", "entry_negative"],
+            "ma50_gap": 2.0,
+            "ma200_gap": 5.0,
+        },
+        "MSFT": {
+            "selection_score": 90.0,
+            "warnings": [],
+            "ma50_gap": 4.0,
+            "ma200_gap": 8.0,
+        },
+    }
+    out, audit = reb._reconcile_target_with_min_trade(
+        prev_port=prev,
+        target_weights_pct=target,
+        min_trade_pct=1.0,
+        desired_exposure_pct=20.0,
+        max_weight_pct=15.0,
+        feature_by_symbol=feat,
+        allow_refill=True,
+    )
+    assert out["AEP"] == 3.0
+    assert out["MSFT"] > 10.0
+    assert all(s != "AEP" for s in audit["refill_symbols"])
+    assert any(b["symbol"] == "AEP" for b in audit["refill_blocked_symbols"])
 
 
 def test_executed_portfolio_from_orders_matches_only_executed_orders():
