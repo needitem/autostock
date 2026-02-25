@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -23,6 +24,11 @@ from bot import formatters as fmt
 from bot import keyboards as kb
 from bot.handlers import button_callback
 from bot.scan_cache import get_scan_result
+from bot.scheduler_config import (
+    format_us_rebalance_message,
+    format_us_report_message,
+    schedule_settings,
+)
 from bot.user_prefs import get_chat_style, normalize_style, set_chat_style, style_label
 
 load_dotenv()
@@ -186,6 +192,46 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"분석 ?패: {e}", reply_markup=kb.back())
 
 
+async def _run_us_report_pipeline() -> dict:
+    from pipelines.us_orchestrator import run_all_us_engines
+
+    return await asyncio.to_thread(run_all_us_engines)
+
+
+async def _run_us_rebalance_pipeline() -> dict:
+    from pipelines.us_rebalance import run_us_rebalance
+
+    return await asyncio.to_thread(run_us_rebalance)
+
+
+async def us_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = str(update.effective_chat.id)
+    save_chat_id(chat_id)
+    await update.message.reply_text("US report started. This can take a few minutes.")
+
+    try:
+        result = await _run_us_report_pipeline()
+        await update.message.reply_text(format_us_report_message(result))
+    except Exception as e:
+        await update.message.reply_text(f"US report failed: {e}")
+
+
+async def us_rebalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = str(update.effective_chat.id)
+    save_chat_id(chat_id)
+    await update.message.reply_text("US rebalance started. This can take a few minutes.")
+
+    try:
+        result = await _run_us_rebalance_pipeline()
+        await update.message.reply_text(format_us_rebalance_message(result))
+    except Exception as e:
+        await update.message.reply_text(f"US rebalance failed: {e}")
+
+
 async def scheduled_daily_scan(context) -> None:
     chat_id = get_saved_chat_id()
     if not chat_id:
@@ -294,18 +340,13 @@ async def scheduled_watchlist_monitor(context) -> None:
 async def scheduled_us_report(context) -> None:
     print("[scheduler] daily us report started")
     try:
-        from pipelines.us_orchestrator import run_all_us_engines
-
-        result = run_all_us_engines()
+        result = await _run_us_report_pipeline()
         report_path = result.get("report_path", "")
         print(f"[scheduler] daily us report saved: {report_path}")
 
         chat_id = get_saved_chat_id()
         if chat_id:
-            msg = (
-                "US daily report saved.\n"
-                f"report: {report_path}"
-            )
+            msg = format_us_report_message(result)
             await context.bot.send_message(chat_id=chat_id, text=msg)
     except Exception as e:
         print(f"[scheduler] daily us report failed: {e}")
@@ -314,18 +355,12 @@ async def scheduled_us_report(context) -> None:
 async def scheduled_us_rebalance(context) -> None:
     print("[scheduler] weekly us rebalance started")
     try:
-        from pipelines.us_rebalance import run_us_rebalance
-
-        result = run_us_rebalance()
+        result = await _run_us_rebalance_pipeline()
         print("[scheduler] weekly us rebalance saved")
 
         chat_id = get_saved_chat_id()
         if chat_id:
-            msg = (
-                "US weekly rebalance saved.\n"
-                f"report: {result.get('md_path')}\n"
-                f"orders: {result.get('orders_csv')}"
-            )
+            msg = format_us_rebalance_message(result)
             await context.bot.send_message(chat_id=chat_id, text=msg)
     except Exception as e:
         print(f"[scheduler] weekly us rebalance failed: {e}")
@@ -346,11 +381,15 @@ def run_bot(with_scheduler: bool = True) -> None:
     app.add_handler(CommandHandler("style", style_command))
     app.add_handler(CommandHandler("scan", scan_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("us_report", us_report_command))
+    app.add_handler(CommandHandler("us_rebalance", us_rebalance_command))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
 
     if with_scheduler:
-        kst = pytz.timezone("Asia/Seoul")
+        settings = schedule_settings()
+        tz_name = str(settings["timezone"])
+        bot_tz = pytz.timezone(tz_name)
 
         app.job_queue.run_repeating(
             scheduled_watchlist_monitor,
@@ -360,18 +399,26 @@ def run_bot(with_scheduler: bool = True) -> None:
         )
         app.job_queue.run_daily(
             scheduled_watchlist_scan,
-            time=dt_time(hour=21, minute=0, tzinfo=kst),
+            time=dt_time(hour=21, minute=0, tzinfo=bot_tz),
             name="watchlist_scan",
         )
         app.job_queue.run_daily(
             scheduled_us_report,
-            time=dt_time(hour=0, minute=0, tzinfo=kst),
+            time=dt_time(
+                hour=int(settings["report_hour"]),
+                minute=int(settings["report_minute"]),
+                tzinfo=bot_tz,
+            ),
             name="daily_us_report",
         )
         app.job_queue.run_daily(
             scheduled_us_rebalance,
-            time=dt_time(hour=0, minute=10, tzinfo=kst),
-            days=(0,),
+            time=dt_time(
+                hour=int(settings["rebalance_hour"]),
+                minute=int(settings["rebalance_minute"]),
+                tzinfo=bot_tz,
+            ),
+            days=(int(settings["rebalance_weekday"]),),
             name="weekly_us_rebalance",
         )
 

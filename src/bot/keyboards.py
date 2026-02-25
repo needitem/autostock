@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+ï»¿# -*- coding: utf-8 -*-
 """Telegram inline keyboard builders."""
 
 from __future__ import annotations
@@ -62,35 +62,35 @@ def grid(items: list[str], prefix: str, cols: int = 4) -> list[list[InlineKeyboa
 
 def main_menu() -> InlineKeyboardMarkup:
     rows = [
-        [btn("?? ?¤ëŠ˜ ë­??´ê¹Œ", "recommend"), btn("?” ?œì¥ ?‘ì–´ë³´ê¸°", "scan")],
-        [btn("?“Š ì¢…ëª© ?½ê²Œ ë³´ê¸°", "analyze_menu"), btn("?¤– AI ?”ì•½", "ai_recommend")],
-        [btn("?? ê´€?¬ì¢…ëª?, "watchlist_main"), btn("?˜± ?œì¥ ë¶„ìœ„ê¸?, "fear_greed")],
-        [btn("?™ï¸ ì´ˆë³´/?œì? ?¤ì •", "display_settings")],
+        [btn("Today Picks", "recommend"), btn("Market Scan", "scan")],
+        [btn("Stock Analyze", "analyze_menu"), btn("AI Report", "ai_recommend")],
+        [btn("Watchlist", "watchlist_main"), btn("Fear/Greed", "fear_greed")],
+        [btn("Display Settings", "display_settings")],
     ]
     if trading_enabled():
-        rows.append([btn("?’° ?¸ë ˆ?´ë”©", "trading_menu")])
+        rows.append([btn("Trading", "trading_menu")])
     return InlineKeyboardMarkup(rows)
 
 
-def back(to: str = "main", label: str = "ë©”ì¸") -> InlineKeyboardMarkup:
+def back(to: str = "main", label: str = "Back") -> InlineKeyboardMarkup:
     if to == "main":
-        return InlineKeyboardMarkup([[btn("?  ë©”ì¸", "main")]])
-    return InlineKeyboardMarkup([[btn(f"?€ {label}", to), btn("?  ë©”ì¸", "main")]])
+        return InlineKeyboardMarkup([[btn("Main", "main")]])
+    return InlineKeyboardMarkup([[btn(label, to), btn("Main", "main")]])
 
 
 def analyze_menu() -> InlineKeyboardMarkup:
-    kb = grid(TOP_STOCKS, "a_", cols=4)
-    kb.append([btn("?¨ï¸ ?°ì»¤ ì§ì ‘ ?…ë ¥", "analyze_input")])
-    kb.append([btn("?  ë©”ì¸", "main")])
-    return InlineKeyboardMarkup(kb)
+    keyboard = grid(TOP_STOCKS, "a_", cols=4)
+    keyboard.append([btn("Type ticker manually", "analyze_input")])
+    keyboard.append([btn("Main", "main")])
+    return InlineKeyboardMarkup(keyboard)
 
 
 def stock_detail(symbol: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [btn("?¤– AI ?”ì•½", f"ai_{symbol}"), btn("??ê´€?¬ë“±ë¡?, f"watchadd_{symbol}")],
-            [btn("?“Š ?¤ë¥¸ ì¢…ëª©", "analyze_menu"), btn("?“ˆ ì¶”ì²œ ë³´ê¸°", "recommend")],
-            [btn("?  ë©”ì¸", "main")],
+            [btn("AI Summary", f"ai_{symbol}"), btn("Add Watchlist", f"watchadd_{symbol}")],
+            [btn("Other Ticker", "analyze_menu"), btn("Recommendations", "recommend")],
+            [btn("Main", "main")],
         ]
     )
 
@@ -98,10 +98,10 @@ def stock_detail(symbol: str) -> InlineKeyboardMarkup:
 def trading_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [btn("?’µ ?”ê³ ", "balance"), btn("?“‹ ë¯¸ì²´ê²?, "orders")],
-            [btn("?™ï¸ ?ë™ë§¤ë§¤ ?¤ì •", "auto_settings")],
-            [btn("?”Œ API ?íƒœ", "api_status")],
-            [btn("?  ë©”ì¸", "main")],
+            [btn("Balance", "balance"), btn("Open Orders", "orders")],
+            [btn("Auto Trading", "auto_settings")],
+            [btn("API Status", "api_status")],
+            [btn("Main", "main")],
         ]
     )
 
@@ -109,50 +109,50 @@ def trading_menu() -> InlineKeyboardMarkup:
 def watchlist_main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [btn("?“‹ ëª©ë¡", "watchlist_status"), btn("??ì§€ê¸?ì²´í¬", "watchlist_check_now")],
-            [btn("??ì¢…ëª© ì¶”ê?", "watchlist_add"), btn("??ì¢…ëª© ?? œ", "watchlist_remove_menu")],
-            [btn("?™ï¸ ?Œë¦¼ ?¤ì •", "watchlist_alert_settings")],
-            [btn("?  ë©”ì¸", "main")],
+            [btn("List", "watchlist_status"), btn("Check Now", "watchlist_check_now")],
+            [btn("Add", "watchlist_add"), btn("Remove", "watchlist_remove_menu")],
+            [btn("Alert Settings", "watchlist_alert_settings")],
+            [btn("Main", "main")],
         ]
     )
 
 
 def watchlist_remove_menu(stocks: list[str]) -> InlineKeyboardMarkup:
-    kb = [[btn(f"??{symbol}", f"watchdel_{symbol}")] for symbol in stocks]
-    kb.append([btn("?€ ê´€?¬ì¢…ëª?, "watchlist_main")])
-    return InlineKeyboardMarkup(kb)
+    keyboard = [[btn(f"Delete {symbol}", f"watchdel_{symbol}")] for symbol in stocks]
+    keyboard.append([btn("Back", "watchlist_main")])
+    return InlineKeyboardMarkup(keyboard)
 
 
 def watchlist_alert_settings(settings: dict) -> InlineKeyboardMarkup:
     monitor_on = settings.get("monitor_enabled", True)
     interval = settings.get("monitor_interval", 30)
-    monitor_status = "?Ÿ¢ ON" if monitor_on else "?”´ OFF"
+    monitor_status = "ON" if monitor_on else "OFF"
 
     return InlineKeyboardMarkup(
         [
-            [btn(f"?“¡ ëª¨ë‹ˆ?°ë§: {monitor_status}", "toggle_monitor")],
-            [btn(f"??ì²´í¬ ê°„ê²©: {interval}ë¶?, "change_interval")],
-            [btn("?€ ê´€?¬ì¢…ëª?, "watchlist_main")],
+            [btn(f"Monitor: {monitor_status}", "toggle_monitor")],
+            [btn(f"Interval: {interval}m", "change_interval")],
+            [btn("Back", "watchlist_main")],
         ]
     )
 
 
 def watchlist_add() -> InlineKeyboardMarkup:
-    kb = grid(TOP_STOCKS, "watchadd_", cols=4)
-    kb.append([btn("?€ ê´€?¬ì¢…ëª?, "watchlist_main")])
-    return InlineKeyboardMarkup(kb)
+    keyboard = grid(TOP_STOCKS, "watchadd_", cols=4)
+    keyboard.append([btn("Back", "watchlist_main")])
+    return InlineKeyboardMarkup(keyboard)
 
 
 def auto_settings_menu(auto_buy: bool, auto_sell: bool) -> InlineKeyboardMarkup:
-    buy_status = "?Ÿ¢ ON" if auto_buy else "?”´ OFF"
-    sell_status = "?Ÿ¢ ON" if auto_sell else "?”´ OFF"
+    buy_status = "ON" if auto_buy else "OFF"
+    sell_status = "ON" if auto_sell else "OFF"
     return InlineKeyboardMarkup(
         [
-            [btn(f"?¤– ?ë™ë§¤ìˆ˜: {buy_status}", "toggle_auto_buy")],
-            [btn(f"?›‘ ?ë™?ì ˆ: {sell_status}", "toggle_auto_sell")],
-            [btn("?’µ ?”ê³ ", "balance"), btn("?”Œ API", "api_status")],
-            [btn("?? ê´€?¬ì¢…ëª?, "watchlist_main"), btn("?’° ?¸ë ˆ?´ë”©", "trading_menu")],
-            [btn("?  ë©”ì¸", "main")],
+            [btn(f"Auto Buy: {buy_status}", "toggle_auto_buy")],
+            [btn(f"Auto Sell: {sell_status}", "toggle_auto_sell")],
+            [btn("Balance", "balance"), btn("API", "api_status")],
+            [btn("Watchlist", "watchlist_main"), btn("Trading", "trading_menu")],
+            [btn("Main", "main")],
         ]
     )
 
@@ -163,12 +163,16 @@ def display_settings_menu(current_style: str) -> InlineKeyboardMarkup:
         current = "beginner"
 
     def style_btn(label: str, key: str) -> InlineKeyboardButton:
-        mark = "??" if current == key else ""
+        mark = "* " if current == key else ""
         return btn(f"{mark}{label}", f"style_{key}")
 
     return InlineKeyboardMarkup(
         [
-            [style_btn("ì´ˆë³´(ê¶Œì¥)", "beginner"), style_btn("?œì?", "standard"), style_btn("?ì„¸", "detail")],
-            [btn("?  ë©”ì¸", "main")],
+            [
+                style_btn("Beginner", "beginner"),
+                style_btn("Standard", "standard"),
+                style_btn("Detail", "detail"),
+            ],
+            [btn("Main", "main")],
         ]
     )

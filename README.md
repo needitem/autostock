@@ -43,6 +43,12 @@ AI_DISABLE_PROXY=1
 # Optional message style: beginner | standard | detail
 BOT_MESSAGE_STYLE="beginner"
 
+# Optional scheduler controls (Telegram bot)
+BOT_TIMEZONE="Asia/Seoul"
+US_REPORT_TIME="00:00"          # daily report
+US_REBALANCE_TIME="00:10"       # weekly rebalance
+US_REBALANCE_WEEKDAY="0"        # 0=Mon ... 6=Sun
+
 # Optional Codex retry/fallback
 AI_CLI_RETRIES=2
 AI_CLI_RETRY_DELAY_SEC=1.5
@@ -73,6 +79,11 @@ Telegram bot (with scheduler):
 ```bash
 python src/main.py
 ```
+
+Telegram manual triggers (in chat):
+
+- `/us_report` : run report now
+- `/us_rebalance` : run rebalance now
 
 Telegram bot (without scheduler):
 
