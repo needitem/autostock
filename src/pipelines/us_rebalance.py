@@ -52,6 +52,24 @@ def _selection_score(rs63: float, rs21: float) -> float:
     return round(0.6 * float(rs63) + 0.4 * float(rs21), 2)
 
 
+def _cross_conviction_score(crosses: list[dict[str, Any]]) -> float:
+    score = 0.0
+    for c in crosses or []:
+        if not isinstance(c, dict):
+            continue
+        sig = str(c.get("signal", "")).strip().lower()
+        typ = str(c.get("type", "")).strip().lower()
+        if not sig and not typ:
+            continue
+        is_buy = ("매수" in sig) or ("buy" in sig) or ("골든" in typ) or ("golden" in typ)
+        is_sell = ("매도" in sig) or ("sell" in sig) or ("데드" in typ) or ("dead" in typ)
+        if is_buy and not is_sell:
+            score += 0.5
+        elif is_sell and not is_buy:
+            score -= 0.5
+    return score
+
+
 def _parse_symbols(raw: str) -> list[str]:
     text = (raw or "").replace("\n", ",").replace(";", ",").replace("|", ",")
     parts = [p.strip().upper() for p in text.split(",") if p.strip()]
@@ -708,6 +726,30 @@ def _sector_room_pct(
     return max(0.0, cap - total_sector)
 
 
+def _sector_cap_violations(
+    weights_pct: dict[str, float],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    sector_cap_pct: float,
+) -> list[dict[str, Any]]:
+    cap = max(0.0, min(100.0, float(sector_cap_pct)))
+    if cap >= 100.0:
+        return []
+    totals = _sector_totals_pct(weights_pct, feature_by_symbol)
+    out = []
+    for sector, total in totals.items():
+        if float(total) > cap + 1e-9:
+            out.append(
+                {
+                    "sector": sector,
+                    "total_pct": round(float(total), 2),
+                    "cap_pct": round(cap, 2),
+                    "excess_pct": round(float(total) - cap, 2),
+                }
+            )
+    out.sort(key=lambda x: float(x.get("excess_pct", 0.0)), reverse=True)
+    return out
+
+
 def _is_fill_eligible(row: dict[str, Any]) -> bool:
     warnings = row.get("warnings", [])
     if not isinstance(warnings, list):
@@ -958,6 +1000,7 @@ def _apply_turnover_cap(
     if cap <= 0:
         return target_weights_pct, {
             "mode": "turnover_cap_disabled",
+            "asset_scope": "equity_only_ex_cash",
             "turnover_definition": turnover_definition,
             "before_pct": round(before, 2),
             "after_pct": round(before, 2),
@@ -970,6 +1013,7 @@ def _apply_turnover_cap(
     if not _has_invested_positions(prev_port):
         return target_weights_pct, {
             "mode": "initial_build_no_constraint",
+            "asset_scope": "equity_only_ex_cash",
             "turnover_definition": turnover_definition,
             "before_pct": round(before, 2),
             "after_pct": round(before, 2),
@@ -982,6 +1026,7 @@ def _apply_turnover_cap(
     if before <= cap + 1e-9:
         return target_weights_pct, {
             "mode": "rebalancing",
+            "asset_scope": "equity_only_ex_cash",
             "turnover_definition": turnover_definition,
             "before_pct": round(before, 2),
             "after_pct": round(before, 2),
@@ -1062,6 +1107,7 @@ def _apply_turnover_cap(
     after = _turnover_pct(prev_port, new_target, definition=turnover_definition)
     return new_target, {
         "mode": "rebalancing",
+        "asset_scope": "equity_only_ex_cash",
         "turnover_definition": turnover_definition,
         "before_pct": round(before, 2),
         "after_pct": round(after, 2),
@@ -1420,12 +1466,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             continue
         info = get_stock_info(sym)
         crosses = ind.get("crosses", []) or []
-        cross_score = 0.0
-        for c in crosses:
-            sig = str(c.get("signal", "")).lower()
-            typ = str(c.get("type", "")).lower()
-            if "매수" in sig or "golden" in typ or "macd" in typ:
-                cross_score += 0.5
+        cross_score = _cross_conviction_score(crosses)
         rsi = _f(ind.get("rsi", 50.0))
         bb_pos = _f(ind.get("bb_position", 50.0))
         vol_ratio = _f(ind.get("volume_ratio", 1.0))
@@ -1570,9 +1611,17 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         regime_note=regime["note"],
     )
 
+    ai_error_reason: str | None = None
     raw = analyzer._call(prompt, max_tokens=2000) if analyzer.has_api_access else None
     parsed = _extract_json(raw or "")
     if not parsed:
+        if analyzer.has_api_access:
+            if raw:
+                ai_error_reason = "AI response was not valid JSON; used fallback portfolio"
+            else:
+                ai_error_reason = "AI call returned empty output; used fallback portfolio"
+        else:
+            ai_error_reason = "AI unavailable; used fallback portfolio"
         if not analyzer.has_api_access and not allow_fallback:
             raise RuntimeError("AI call failed and fallback disabled.")
         parsed = _fallback_portfolio(
@@ -1642,10 +1691,12 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     before_final_sector_cap = float(sum(weights_pct.values()))
     weights_pct, sector_cap_audit_final = _apply_sector_cap(weights_pct, cand_by_symbol, sector_cap_pct)
     after_final_sector_cap = float(sum(weights_pct.values()))
+    target_sector_cap_violations = _sector_cap_violations(weights_pct, cand_by_symbol, sector_cap_pct)
     min_trade_reconcile_audit["post_final_sector_cap_adjustment_pct"] = round(
         max(0.0, before_final_sector_cap - after_final_sector_cap),
         2,
     )
+    min_trade_reconcile_audit["target_sector_cap_violation_count"] = len(target_sector_cap_violations)
 
     achieved_exposure_pct = float(sum(weights_pct.values()))
     cash_pct = max(0.0, 100.0 - achieved_exposure_pct)
@@ -1670,10 +1721,12 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         prev_port,
         orders,
     )
+    executed_sector_cap_violations = _sector_cap_violations(executed_weights_pct, cand_by_symbol, sector_cap_pct)
     execution_gap_pct = max(0.0, float(effective_exposure_target_pct) - achieved_exposure_after_execution_pct)
     execution_matches_target_weights = len(orders_skipped) == 0 and abs(
         achieved_exposure_after_execution_pct - achieved_exposure_pct
     ) <= 1e-6
+    min_trade_reconcile_audit["executed_sector_cap_violation_count"] = len(executed_sector_cap_violations)
 
     chart_rationale = {
         sym: _chart_rationale(cand_by_symbol.get(sym, {}))
@@ -1758,13 +1811,15 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             "final": sector_cap_audit_final,
             "sector_cap_pct": round(sector_cap_pct, 2),
         },
+        "sector_cap_violations_target": target_sector_cap_violations,
+        "sector_cap_violations_executed": executed_sector_cap_violations,
         "missing_symbols": missing[:200],
         "missing_diagnostics": missing_diagnostics,
         "orders": orders,
         "orders_skipped": orders_skipped,
         "chart_rationale": chart_rationale,
         "ai_raw": raw if isinstance(raw, str) else "",
-        "ai_error": None if analyzer.has_api_access else "AI unavailable; used fallback portfolio",
+        "ai_error": ai_error_reason,
         "ai_fallback": bool(parsed.get("_fallback", False)),
     }
 

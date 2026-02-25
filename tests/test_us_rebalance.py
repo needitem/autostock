@@ -102,8 +102,20 @@ def test_apply_turnover_cap_limits_rebalance_turnover():
     }
     out, audit = reb._apply_turnover_cap(prev, target, turnover_target_pct=30.0, feature_by_symbol=feat)
     assert audit["cap_applied"] is True
+    assert audit["asset_scope"] == "equity_only_ex_cash"
     assert audit["after_pct"] <= 30.0
     assert reb._turnover_pct(prev, out) <= 30.0 + 1e-6
+
+
+def test_cross_conviction_score_penalizes_dead_cross():
+    crosses = [
+        {"type": "MACD골든", "signal": "매수"},
+        {"type": "MACD데드", "signal": "매도"},
+        {"type": "골든크로스", "signal": "매수"},
+    ]
+    score = reb._cross_conviction_score(crosses)
+    assert score > 0
+    assert score < 1.5
 
 
 def test_fill_to_target_exposure_boosts_clean_symbols():
@@ -341,3 +353,57 @@ def test_turnover_pct_defaults_to_half_l1():
     t_half = reb._turnover_pct(prev, target)
     t_l1 = reb._turnover_pct(prev, target, definition="l1")
     assert abs(t_l1 - (t_half * 2.0)) < 1e-9
+
+
+def test_run_us_rebalance_fallback_sets_ai_error(monkeypatch):
+    base = Path("data") / "test_tmp" / f"us_rebalance_{uuid4().hex}"
+    report_dir = base / "outputs" / "run_2026-02-24"
+    report_dir.mkdir(parents=True)
+    report_path = report_dir / "report.json"
+    report_path.write_text(json.dumps({"module1_liquidity": {"risk_on_off": {"label": "neutral"}}}))
+
+    monkeypatch.setenv("AI_UNIVERSE", "custom")
+    monkeypatch.setenv("AI_SYMBOLS", "AAPL,MSFT")
+    monkeypatch.setenv("AI_REBALANCE_MAX_SYMBOLS", "2")
+    monkeypatch.setenv("AI_CURRENT_PORTFOLIO_JSON", str(base / "current_portfolio.json"))
+
+    def fake_get_stock_data(symbol: str, period: str = "15mo"):
+        return _fake_df()
+
+    def fake_calculate_indicators(df):
+        return {
+            "price": 150.0,
+            "return_63d": 12.0,
+            "return_21d": 4.0,
+            "rsi": 55.0,
+            "adx": 22.0,
+            "ma50_gap": 3.0,
+            "ma200_gap": 6.0,
+            "bb_position": 60.0,
+            "atr_pct": 2.0,
+            "volume_ratio": 1.2,
+            "support": [140.0],
+            "resistance": [160.0],
+        }
+
+    monkeypatch.setattr(reb, "get_stock_data", fake_get_stock_data)
+    monkeypatch.setattr(reb, "calculate_indicators", fake_calculate_indicators)
+    monkeypatch.setattr(reb, "get_stock_info", lambda symbol: {"sector": "Tech", "price": 150.0})
+    monkeypatch.setattr(
+        reb,
+        "get_market_condition",
+        lambda: {"message": "neutral", "benchmark_return_21d": 0.0, "benchmark_return_63d": 0.0, "price": 100.0, "ma50": 100.0, "ma200": 95.0},
+    )
+
+    class DummyAnalyzerBadJSON:
+        has_api_access = True
+
+        def _call(self, prompt: str, max_tokens: int = 2000):
+            return "not a json"
+
+    monkeypatch.setattr(reb, "AIAnalyzer", lambda: DummyAnalyzerBadJSON())
+    result = reb.run_us_rebalance(report_dir=str(report_path))
+    payload = result["result"]
+    assert payload.get("ai_fallback") is True
+    assert isinstance(payload.get("ai_error"), str)
+    assert "fallback" in payload.get("ai_error", "").lower()
