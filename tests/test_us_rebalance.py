@@ -127,6 +127,70 @@ def test_fill_to_target_exposure_boosts_clean_symbols():
     assert "AAPL" in audit["boosted_symbols"] or "NVDA" in audit["boosted_symbols"]
 
 
+def test_fill_to_target_exposure_respects_sector_cap():
+    target = {"AAA": 20.0, "BBB": 20.0, "CCC": 5.0}
+    candidates = [
+        {"symbol": "AAA", "selection_score": 90.0, "warnings": [], "ma50_gap": 4.0, "ma200_gap": 8.0, "sector": "Tech"},
+        {"symbol": "BBB", "selection_score": 85.0, "warnings": [], "ma50_gap": 4.0, "ma200_gap": 8.0, "sector": "Tech"},
+        {"symbol": "CCC", "selection_score": 70.0, "warnings": [], "ma50_gap": 3.0, "ma200_gap": 6.0, "sector": "Health"},
+    ]
+    feat = {row["symbol"]: row for row in candidates}
+    out, _ = reb._fill_to_target_exposure(
+        target_weights_pct=target,
+        desired_exposure_pct=65.0,
+        max_weight_pct=30.0,
+        top_k=3,
+        ordered_candidates=candidates,
+        feature_by_symbol=feat,
+        sector_cap_pct=40.0,
+    )
+    tech_total = float(out.get("AAA", 0.0) + out.get("BBB", 0.0))
+    assert tech_total <= 40.0 + 1e-6
+
+
+def test_is_rebound_candidate_rule():
+    cfg = {
+        "enabled": True,
+        "max_weight_pct": 4.0,
+        "max_count": 2,
+        "max_ma200_drawdown_pct": -15.0,
+        "min_volume_ratio": 1.0,
+    }
+    ok = reb._is_rebound_candidate(
+        rsi=30.0,
+        bb_pos=18.0,
+        entry_conviction=0.7,
+        volume_ratio=1.2,
+        ma200_gap=-7.0,
+        rebound_cfg=cfg,
+    )
+    bad = reb._is_rebound_candidate(
+        rsi=52.0,
+        bb_pos=45.0,
+        entry_conviction=0.1,
+        volume_ratio=1.1,
+        ma200_gap=-6.0,
+        rebound_cfg=cfg,
+    )
+    assert ok is True
+    assert bad is False
+
+
+def test_apply_rebound_limits_caps_weight_and_count():
+    weights = {"AAA": 8.0, "BBB": 6.0, "CCC": 10.0}
+    feat = {
+        "AAA": {"sleeve": "rebound", "selection_score": 90.0, "entry_conviction": 1.0},
+        "BBB": {"sleeve": "rebound", "selection_score": 80.0, "entry_conviction": 0.9},
+        "CCC": {"sleeve": "momentum", "selection_score": 95.0, "entry_conviction": 1.2},
+    }
+    out, audit = reb._apply_rebound_limits(weights, feat, rebound_max_weight_pct=4.0, rebound_max_count=1)
+    assert "AAA" in out
+    assert "BBB" not in out
+    assert out["AAA"] <= 4.0 + 1e-9
+    assert audit["enabled"] is True
+    assert "AAA" in audit["capped_symbols"]
+
+
 def test_build_orders_with_skips_records_below_min_trade():
     prev = {"AAPL": 0.0, "__CASH__": 1.0}
     target = {"AAPL": 0.5, "MSFT": 2.0}
@@ -268,3 +332,12 @@ def test_run_us_rebalance_smoke(monkeypatch):
     lines = out_csv.read_text(encoding="utf-8").strip().splitlines()
     assert lines and lines[0].startswith("symbol,action")
     assert "turnover_audit" in result["result"]
+    assert result["result"].get("turnover_definition") in {"half_l1", "l1", "sum_abs"}
+
+
+def test_turnover_pct_defaults_to_half_l1():
+    prev = {"AAPL": 0.5, "MSFT": 0.5}
+    target = {"AAPL": 20.0, "NVDA": 80.0}
+    t_half = reb._turnover_pct(prev, target)
+    t_l1 = reb._turnover_pct(prev, target, definition="l1")
+    assert abs(t_l1 - (t_half * 2.0)) < 1e-9

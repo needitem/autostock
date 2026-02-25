@@ -28,6 +28,25 @@ def _f(x: Any, d: float = 0.0) -> float:
         return d
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    raw = str(os.getenv(key, "1" if default else "0")).strip().lower()
+    return raw in {"1", "true", "yes", "on", "y"}
+
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        return int(os.getenv(key, str(default)))
+    except Exception:
+        return int(default)
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float(os.getenv(key, str(default)))
+    except Exception:
+        return float(default)
+
+
 def _selection_score(rs63: float, rs21: float) -> float:
     # Momentum-first ranking: longer trend has slightly higher weight.
     return round(0.6 * float(rs63) + 0.4 * float(rs21), 2)
@@ -205,6 +224,7 @@ def _portfolio_prompt(
             f"ma50_gap={x.get('ma50_gap', 0):.1f}% ma200_gap={x.get('ma200_gap', 0):.1f}% "
             f"bb_pos={x.get('bb_position', 50):.0f} vol_ratio={x.get('volume_ratio', 1):.2f} "
             f"atr_pct={x.get('atr_pct', 0):.2f} sector={x.get('sector', 'N/A')} "
+            f"sleeve={x.get('sleeve', 'momentum')} "
             f"conv={x.get('entry_conviction', 0):.1f} "
             f"warn={warn or 'none'}"
         )
@@ -216,6 +236,7 @@ def _portfolio_prompt(
         "Momentum (rs63/rs21) is primary. selection_score=0.6*rs63+0.4*rs21.\n"
         "Use risk filters (rsi/ma gaps/adx/vol) and size overheat names conservatively.\n"
         "Avoid names with weak chart structure or extreme overextension.\n\n"
+        "If rebound_sleeve appears in candidates, keep it as a minor sleeve only.\n\n"
         "Macro research summary inputs:\n"
         f"- Risk-on/off: {risk}\n"
         f"- Macro scenarios: {macro}\n"
@@ -417,6 +438,44 @@ def _market_exposure_filter(market_ctx: dict[str, Any]) -> dict[str, Any]:
     return {"multiplier": 1.0, "reason": "benchmark_above_ma50"}
 
 
+def _rebound_settings() -> dict[str, Any]:
+    enabled = _env_bool("AI_ENABLE_REBOUND_SLEEVE", False)
+    max_weight_pct = max(1.0, min(10.0, _env_float("AI_REBOUND_MAX_WEIGHT_PCT", 4.0)))
+    max_count = max(0, _env_int("AI_REBOUND_MAX_COUNT", 2))
+    max_ma200_drawdown_pct = min(-1.0, _env_float("AI_REBOUND_MAX_MA200_DRAWDOWN_PCT", -15.0))
+    min_volume_ratio = max(0.5, _env_float("AI_REBOUND_MIN_VOLUME_RATIO", 1.0))
+    min_adx = max(5.0, _env_float("AI_REBOUND_MIN_ADX", 10.0))
+    return {
+        "enabled": enabled,
+        "max_weight_pct": max_weight_pct,
+        "max_count": max_count,
+        "max_ma200_drawdown_pct": max_ma200_drawdown_pct,
+        "min_volume_ratio": min_volume_ratio,
+        "min_adx": min_adx,
+    }
+
+
+def _is_rebound_candidate(
+    *,
+    rsi: float,
+    bb_pos: float,
+    entry_conviction: float,
+    volume_ratio: float,
+    ma200_gap: float,
+    rebound_cfg: dict[str, Any],
+) -> bool:
+    if not rebound_cfg.get("enabled"):
+        return False
+    if volume_ratio < _f(rebound_cfg.get("min_volume_ratio", 1.0), 1.0):
+        return False
+    if ma200_gap < _f(rebound_cfg.get("max_ma200_drawdown_pct", -15.0), -15.0):
+        return False
+    if entry_conviction <= 0:
+        return False
+    # Rebound sleeve is for oversold + mean-reversion setups.
+    return (rsi <= 35.0 or bb_pos <= 20.0) and rsi < 55.0
+
+
 def _candidate_warnings(row: dict[str, Any]) -> list[str]:
     flags: list[str] = []
     rsi = _f(row.get("rsi", 50.0))
@@ -442,6 +501,7 @@ def _position_multiplier(row: dict[str, Any]) -> tuple[float, list[str]]:
     bb_pos = _f(row.get("bb_position", 50.0))
     vol_ratio = _f(row.get("volume_ratio", 1.0))
     conv = _f(row.get("entry_conviction", 0.0))
+    sleeve = str(row.get("sleeve", "momentum") or "momentum").strip().lower()
 
     if rsi >= 80 or bb_pos >= 95:
         mult *= 0.25
@@ -456,6 +516,11 @@ def _position_multiplier(row: dict[str, Any]) -> tuple[float, list[str]]:
     if conv < 0:
         mult *= 0.5
         flags.append("entry_negative")
+
+    if sleeve == "rebound":
+        # Keep rebound sleeve intentionally small vs momentum sleeve.
+        mult *= 0.35
+        flags.append("rebound_sleeve")
 
     if vol_ratio >= 1.5:
         mult *= 1.2
@@ -507,6 +572,72 @@ def _apply_weight_multipliers(
     return out, audit
 
 
+def _apply_rebound_limits(
+    target_weights_pct: dict[str, float],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    rebound_max_weight_pct: float,
+    rebound_max_count: int,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    out = {k: float(v) for k, v in target_weights_pct.items() if float(v) > 1e-9}
+    max_w = max(0.0, float(rebound_max_weight_pct))
+    max_n = max(0, int(rebound_max_count))
+    removed: list[str] = []
+    if not out or max_n <= 0:
+        # Rebound sleeve disabled or not allowed.
+        if max_n <= 0:
+            for sym in list(out.keys()):
+                row = feature_by_symbol.get(sym, {})
+                if str(row.get("sleeve", "")).lower() == "rebound":
+                    removed.append(sym)
+                    out.pop(sym, None)
+        return out, {
+            "enabled": max_n > 0,
+            "rebound_max_weight_pct": round(max_w, 2),
+            "rebound_max_count": int(max_n),
+            "kept_symbols": [],
+            "removed_symbols": removed,
+            "capped_symbols": [],
+        }
+
+    rebound_rows = []
+    for sym, w in out.items():
+        row = feature_by_symbol.get(sym, {})
+        if str(row.get("sleeve", "momentum")).strip().lower() != "rebound":
+            continue
+        rebound_rows.append(
+            (
+                sym,
+                float(w),
+                _f(row.get("selection_score", 0.0)),
+                _f(row.get("entry_conviction", 0.0)),
+            )
+        )
+    rebound_rows.sort(key=lambda x: (x[2], x[3], x[1]), reverse=True)
+
+    keep_set = {sym for sym, *_ in rebound_rows[:max_n]}
+    kept_symbols: list[str] = []
+    removed_symbols: list[str] = []
+    capped_symbols: list[str] = []
+    for sym, cur_w, *_ in rebound_rows:
+        if sym not in keep_set:
+            out.pop(sym, None)
+            removed_symbols.append(sym)
+            continue
+        kept_symbols.append(sym)
+        if cur_w > max_w > 0:
+            out[sym] = max_w
+            capped_symbols.append(sym)
+
+    return out, {
+        "enabled": True,
+        "rebound_max_weight_pct": round(max_w, 2),
+        "rebound_max_count": int(max_n),
+        "kept_symbols": kept_symbols,
+        "removed_symbols": removed_symbols,
+        "capped_symbols": capped_symbols,
+    }
+
+
 def _apply_sector_cap(
     target_weights_pct: dict[str, float],
     feature_by_symbol: dict[str, dict[str, Any]],
@@ -549,6 +680,32 @@ def _apply_sector_cap(
         "capped_sectors": capped_sectors,
         "total_after_pct": round(float(sum(out.values())), 2),
     }
+
+
+def _sector_totals_pct(weights_pct: dict[str, float], feature_by_symbol: dict[str, dict[str, Any]]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for sym, w in weights_pct.items():
+        if float(w) <= 1e-9:
+            continue
+        sector = str((feature_by_symbol.get(sym, {}) or {}).get("sector", "Unknown")) or "Unknown"
+        totals[sector] = float(totals.get(sector, 0.0)) + float(w)
+    return totals
+
+
+def _sector_room_pct(
+    symbol: str,
+    weights_pct: dict[str, float],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    sector_cap_pct: float,
+) -> float:
+    cap = max(0.0, min(100.0, float(sector_cap_pct)))
+    if cap >= 100.0:
+        return 100.0
+    row = feature_by_symbol.get(symbol, {}) or {}
+    sector = str(row.get("sector", "Unknown")) or "Unknown"
+    totals = _sector_totals_pct(weights_pct, feature_by_symbol)
+    total_sector = float(totals.get(sector, 0.0))
+    return max(0.0, cap - total_sector)
 
 
 def _is_fill_eligible(row: dict[str, Any]) -> bool:
@@ -616,6 +773,7 @@ def _fill_to_target_exposure(
     feature_by_symbol: dict[str, dict[str, Any]],
     fill_style: str = "balanced",
     max_positions: int | None = None,
+    sector_cap_pct: float = 100.0,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     out = {k: float(v) for k, v in target_weights_pct.items() if float(v) > 0}
     desired = max(0.0, min(100.0, float(desired_exposure_pct)))
@@ -687,7 +845,10 @@ def _fill_to_target_exposure(
                 continue
             if len(out) >= int(max_positions):
                 break
-            add = min(max_w, budget - used)
+            sector_room = _sector_room_pct(sym, out, feature_by_symbol, sector_cap_pct)
+            if sector_room <= 1e-9:
+                continue
+            add = min(max_w, budget - used, sector_room)
             if add <= 1e-9:
                 continue
             out[sym] = float(add)
@@ -701,7 +862,11 @@ def _fill_to_target_exposure(
             return used
         loops = 0
         while used < budget - 1e-9 and elig_existing and loops < 10:
-            rooms = {sym: max(0.0, max_w - float(out.get(sym, 0.0))) for sym in elig_existing}
+            rooms = {}
+            for sym in elig_existing:
+                indiv_room = max(0.0, max_w - float(out.get(sym, 0.0)))
+                sector_room = _sector_room_pct(sym, out, feature_by_symbol, sector_cap_pct)
+                rooms[sym] = max(0.0, min(indiv_room, sector_room))
             active = [sym for sym in elig_existing if rooms[sym] > 1e-9]
             if not active:
                 break
@@ -713,7 +878,8 @@ def _fill_to_target_exposure(
             rem_budget = budget - used
             for sym in active:
                 share = rem_budget * (scores[sym] / denom)
-                add = min(rooms[sym], share)
+                live_sector_room = _sector_room_pct(sym, out, feature_by_symbol, sector_cap_pct)
+                add = min(rooms[sym], share, live_sector_room)
                 if add <= 1e-9:
                     continue
                 out[sym] = float(out.get(sym, 0.0)) + float(add)
@@ -757,10 +923,19 @@ def _fill_to_target_exposure(
     }
 
 
-def _turnover_pct(prev_port: dict[str, float], target_weights_pct: dict[str, float]) -> float:
+def _turnover_l1_pct(prev_port: dict[str, float], target_weights_pct: dict[str, float]) -> float:
     prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
     syms = set(prev_pct.keys()) | set(target_weights_pct.keys())
     return float(sum(abs(float(target_weights_pct.get(s, 0.0)) - float(prev_pct.get(s, 0.0))) for s in syms))
+
+
+def _turnover_pct(prev_port: dict[str, float], target_weights_pct: dict[str, float], definition: str = "half_l1") -> float:
+    mode = str(definition or "half_l1").strip().lower()
+    l1 = _turnover_l1_pct(prev_port, target_weights_pct)
+    if mode in {"l1", "sum_abs"}:
+        return float(l1)
+    # Industry-standard portfolio turnover proxy: 0.5 * sum(|delta weight|).
+    return float(l1 * 0.5)
 
 
 def _has_invested_positions(prev_port: dict[str, float]) -> bool:
@@ -773,30 +948,47 @@ def _apply_turnover_cap(
     turnover_target_pct: float,
     feature_by_symbol: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, float], dict[str, Any]]:
+    turnover_definition = str(os.getenv("AI_TURNOVER_DEFINITION", "half_l1")).strip().lower() or "half_l1"
+    if turnover_definition not in {"half_l1", "l1", "sum_abs"}:
+        turnover_definition = "half_l1"
     cap = max(0.0, float(turnover_target_pct))
-    before = _turnover_pct(prev_port, target_weights_pct)
+    before = _turnover_pct(prev_port, target_weights_pct, definition=turnover_definition)
+    before_l1 = _turnover_l1_pct(prev_port, target_weights_pct)
+    l1_cap_budget = cap if turnover_definition in {"l1", "sum_abs"} else cap * 2.0
     if cap <= 0:
         return target_weights_pct, {
             "mode": "turnover_cap_disabled",
+            "turnover_definition": turnover_definition,
             "before_pct": round(before, 2),
             "after_pct": round(before, 2),
+            "before_l1_pct": round(before_l1, 2),
+            "after_l1_pct": round(before_l1, 2),
             "cap_pct": cap,
+            "l1_cap_budget_pct": round(l1_cap_budget, 2),
             "cap_applied": False,
         }
     if not _has_invested_positions(prev_port):
         return target_weights_pct, {
             "mode": "initial_build_no_constraint",
+            "turnover_definition": turnover_definition,
             "before_pct": round(before, 2),
             "after_pct": round(before, 2),
+            "before_l1_pct": round(before_l1, 2),
+            "after_l1_pct": round(before_l1, 2),
             "cap_pct": cap,
+            "l1_cap_budget_pct": round(l1_cap_budget, 2),
             "cap_applied": False,
         }
     if before <= cap + 1e-9:
         return target_weights_pct, {
             "mode": "rebalancing",
+            "turnover_definition": turnover_definition,
             "before_pct": round(before, 2),
             "after_pct": round(before, 2),
+            "before_l1_pct": round(before_l1, 2),
+            "after_l1_pct": round(before_l1, 2),
             "cap_pct": cap,
+            "l1_cap_budget_pct": round(l1_cap_budget, 2),
             "cap_applied": False,
         }
 
@@ -844,20 +1036,20 @@ def _apply_turnover_cap(
         return used
 
     if buys and sells:
-        used_buy = _consume(buys, cap * 0.5)
-        used_sell = _consume(sells, cap * 0.5)
+        used_buy = _consume(buys, l1_cap_budget * 0.5)
+        used_sell = _consume(sells, l1_cap_budget * 0.5)
     elif buys:
-        used_buy = _consume(buys, cap)
+        used_buy = _consume(buys, l1_cap_budget)
         used_sell = 0.0
     else:
         used_buy = 0.0
-        used_sell = _consume(sells, cap)
+        used_sell = _consume(sells, l1_cap_budget)
 
-    rem = max(0.0, cap - (used_buy + used_sell))
+    rem = max(0.0, l1_cap_budget - (used_buy + used_sell))
     if rem > 1e-9:
         rows.sort(key=lambda x: float(x["priority"]), reverse=True)
         _consume(rows, rem)
-        rem = max(0.0, cap - sum(abs(float(v)) for v in applied.values()))
+        rem = max(0.0, l1_cap_budget - sum(abs(float(v)) for v in applied.values()))
 
     new_target: dict[str, float] = {}
     for sym in syms:
@@ -866,12 +1058,17 @@ def _apply_turnover_cap(
         if nxt > 1e-6:
             new_target[sym] = nxt
 
-    after = _turnover_pct(prev_port, new_target)
+    after_l1 = _turnover_l1_pct(prev_port, new_target)
+    after = _turnover_pct(prev_port, new_target, definition=turnover_definition)
     return new_target, {
         "mode": "rebalancing",
+        "turnover_definition": turnover_definition,
         "before_pct": round(before, 2),
         "after_pct": round(after, 2),
+        "before_l1_pct": round(before_l1, 2),
+        "after_l1_pct": round(after_l1, 2),
         "cap_pct": cap,
+        "l1_cap_budget_pct": round(l1_cap_budget, 2),
         "cap_applied": True,
         "remaining_unused_pct": round(max(0.0, rem), 4),
     }
@@ -1197,7 +1394,9 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     missing_diagnostics: list[dict[str, Any]] = []
     max_symbols = int(os.getenv("AI_REBALANCE_MAX_SYMBOLS", "0") or "0")
     volume_hard_floor = max(0.05, min(1.0, _f(os.getenv("AI_MIN_VOLUME_HARD_FLOOR", "0.10"), 0.10)))
+    rebound_cfg = _rebound_settings()
     regime["volume_hard_floor"] = round(volume_hard_floor, 3)
+    regime["rebound_sleeve"] = rebound_cfg
     if max_symbols > 0:
         symbols = symbols[:max_symbols]
 
@@ -1246,13 +1445,30 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             entry_conviction -= 0.5
         if rsi <= 30:
             entry_conviction += 0.2
+        rebound_candidate = _is_rebound_candidate(
+            rsi=rsi,
+            bb_pos=bb_pos,
+            entry_conviction=entry_conviction,
+            volume_ratio=vol_ratio,
+            ma200_gap=ma200_gap,
+            rebound_cfg=rebound_cfg,
+        )
+        sleeve = "rebound" if rebound_candidate else "momentum"
         failed: list[str] = []
-        if adx < regime["min_adx"]:
+        rebound_min_adx = _f(rebound_cfg.get("min_adx", 10.0), 10.0)
+        allow_rebound_adx = rebound_candidate and adx >= rebound_min_adx
+        if adx < regime["min_adx"] and not allow_rebound_adx:
             failed.append("adx_below_min")
         if vol_ratio < volume_hard_floor:
             failed.append("volume_ratio_hard_floor")
         if ma50_gap <= 0 or ma200_gap <= 0:
-            failed.append("trend_below_ma")
+            if rebound_candidate:
+                # keep it in rebound sleeve with small sizing cap later
+                pass
+            else:
+                failed.append("trend_below_ma")
+        if sleeve == "rebound" and entry_conviction <= 0:
+            failed.append("rebound_conviction_weak")
         if failed:
             excluded_candidates.append(
                 {
@@ -1267,6 +1483,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
                     "bb_position": bb_pos,
                     "volume_ratio": vol_ratio,
                     "entry_conviction": round(entry_conviction, 2),
+                    "sleeve": sleeve,
                     "filters_failed": failed,
                 }
             )
@@ -1288,9 +1505,12 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             "support": ind.get("support", []),
             "resistance": ind.get("resistance", []),
             "entry_conviction": round(entry_conviction, 2),
+            "sleeve": sleeve,
             "filters_failed": [],
         }
         row["warnings"] = _candidate_warnings(row)
+        if sleeve == "rebound":
+            row["warnings"].append("rebound_sleeve")
         if vol_ratio < _f(regime.get("volume_warn_threshold", 1.0), 1.0):
             row["warnings"].append("volume_below_warn_threshold")
         # backward-compat alias for existing consumers
@@ -1380,8 +1600,16 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         reverse=True,
     )
     weights_pct, sizing_audit = _apply_weight_multipliers(weights_pct, cand_by_symbol, max_weight_pct)
+    rebound_max_weight_pct = _f(rebound_cfg.get("max_weight_pct"), 4.0)
+    rebound_max_count = int(rebound_cfg.get("max_count", 2) or 2)
+    weights_pct, rebound_audit = _apply_rebound_limits(
+        weights_pct,
+        cand_by_symbol,
+        rebound_max_weight_pct=rebound_max_weight_pct,
+        rebound_max_count=rebound_max_count,
+    )
     sector_cap_pct = max(0.0, min(100.0, _f(os.getenv("AI_SECTOR_CAP_PCT", "100"), 100.0)))
-    weights_pct, sector_cap_audit = _apply_sector_cap(weights_pct, cand_by_symbol, sector_cap_pct)
+    weights_pct, sector_cap_audit_prefill = _apply_sector_cap(weights_pct, cand_by_symbol, sector_cap_pct)
     weights_pct, fill_audit = _fill_to_target_exposure(
         target_weights_pct=weights_pct,
         desired_exposure_pct=effective_exposure_target_pct,
@@ -1391,7 +1619,9 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         feature_by_symbol=cand_by_symbol,
         fill_style=resolved_fill_style,
         max_positions=resolved_max_positions,
+        sector_cap_pct=sector_cap_pct,
     )
+    weights_pct, sector_cap_audit_postfill = _apply_sector_cap(weights_pct, cand_by_symbol, sector_cap_pct)
     weights_pct, turnover_audit = _apply_turnover_cap(prev_port, weights_pct, turnover_target_pct, cand_by_symbol)
     turnover_audit["base_turnover_cap_pct"] = round(base_turnover_target_pct, 2)
     turnover_audit["regime_turnover_cap_pct"] = round(regime_turnover_target_pct, 2)
@@ -1408,6 +1638,13 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         max_weight_pct=max_weight_pct,
         feature_by_symbol=cand_by_symbol,
         allow_refill=allow_min_trade_refill,
+    )
+    before_final_sector_cap = float(sum(weights_pct.values()))
+    weights_pct, sector_cap_audit_final = _apply_sector_cap(weights_pct, cand_by_symbol, sector_cap_pct)
+    after_final_sector_cap = float(sum(weights_pct.values()))
+    min_trade_reconcile_audit["post_final_sector_cap_adjustment_pct"] = round(
+        max(0.0, before_final_sector_cap - after_final_sector_cap),
+        2,
     )
 
     achieved_exposure_pct = float(sum(weights_pct.values()))
@@ -1464,6 +1701,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "reason_not_filled_to_top_k": reason_not_filled_to_top_k,
         "max_weight_pct": max_weight_pct,
         "turnover_target_pct": turnover_target_pct,
+        "turnover_definition": turnover_audit.get("turnover_definition", "half_l1"),
         "effective_turnover_target_pct": effective_turnover_target_pct,
         "effective_turnover_source": "min(user,regime)",
         "turnover_audit": turnover_audit,
@@ -1513,7 +1751,13 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "candidates": candidates,
         "excluded_candidates": excluded_candidates[:500],
         "position_sizing_audit": sizing_audit,
-        "sector_cap_audit": sector_cap_audit,
+        "rebound_audit": rebound_audit,
+        "sector_cap_audit": {
+            "prefill": sector_cap_audit_prefill,
+            "postfill": sector_cap_audit_postfill,
+            "final": sector_cap_audit_final,
+            "sector_cap_pct": round(sector_cap_pct, 2),
+        },
         "missing_symbols": missing[:200],
         "missing_diagnostics": missing_diagnostics,
         "orders": orders,

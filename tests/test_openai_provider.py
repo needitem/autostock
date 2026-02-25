@@ -1,4 +1,6 @@
 from unittest.mock import PropertyMock, patch
+import subprocess
+from pathlib import Path
 
 from ai.analyzer import AIAnalyzer
 
@@ -48,3 +50,22 @@ def test_analyze_full_market_uses_ai_call(_mock_call, _mock_access):
     assert result.get("mode") == "codex-cli"
     assert result.get("total") == 2
     assert result.get("analysis") == "ai analysis text"
+
+
+@patch.object(AIAnalyzer, "has_api_access", new_callable=PropertyMock, return_value=True)
+def test_ai_call_enforces_token_budget_prompt_and_truncation(_mock_access):
+    analyzer = AIAnalyzer()
+    long_text = "X" * 3000
+
+    def fake_run(cmd, prompt, max_tokens, timeout=240):
+        assert "Response length budget" in prompt
+        assert max_tokens == 100
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.write_text(long_text, encoding="utf-8")
+        return True, subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""), analyzer.model
+
+    with patch.object(analyzer, "_run_codex", side_effect=fake_run):
+        result = analyzer._call("test prompt", max_tokens=100)
+
+    assert result is not None
+    assert "[output truncated to token budget]" in result

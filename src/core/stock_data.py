@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import math
+import time
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -89,6 +90,20 @@ def _clean_symbol(symbol: str) -> str:
     return (symbol or "").strip().upper()
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    raw = str(os.getenv(key, "1" if default else "0")).strip().lower()
+    return raw in {"1", "true", "yes", "on", "y"}
+
+
+def _cache_bucket(env_key: str, default_minutes: int) -> int:
+    try:
+        ttl = int(os.getenv(env_key, str(default_minutes)))
+    except Exception:
+        ttl = int(default_minutes)
+    ttl = max(1, ttl)
+    return int(time.time() // (ttl * 60))
+
+
 def _days_until_ts(value: Any) -> int | None:
     ts = int(_to_float(value, 0))
     if ts <= 0:
@@ -101,20 +116,17 @@ def _days_until_ts(value: Any) -> int | None:
         return None
 
 
-@lru_cache(maxsize=256)
-def get_stock_data(symbol: str, period: str = "15mo") -> pd.DataFrame | None:
-    """
-    Fetch OHLCV history from Yahoo Finance.
-
-    Returns None when data is unavailable.
-    """
-    symbol = _clean_symbol(symbol)
-    if not symbol:
-        return None
-
+@lru_cache(maxsize=512)
+def _get_stock_data_cached(
+    symbol: str,
+    period: str,
+    auto_adjust: bool,
+    bucket: int,
+) -> pd.DataFrame | None:
+    _ = bucket
     try:
         ticker = yf.Ticker(symbol)
-        df = ticker.history(period=period, actions=False, auto_adjust=False)
+        df = ticker.history(period=period, actions=False, auto_adjust=auto_adjust)
         if df is None or df.empty:
             return None
 
@@ -133,8 +145,25 @@ def get_stock_data(symbol: str, period: str = "15mo") -> pd.DataFrame | None:
         return None
 
 
-@lru_cache(maxsize=256)
-def _get_ticker_info(symbol: str) -> dict[str, Any]:
+def get_stock_data(symbol: str, period: str = "15mo", auto_adjust: bool | None = None) -> pd.DataFrame | None:
+    """
+    Fetch OHLCV history from Yahoo Finance.
+
+    Returns None when data is unavailable.
+    """
+    symbol = _clean_symbol(symbol)
+    if not symbol:
+        return None
+
+    if auto_adjust is None:
+        auto_adjust = _env_bool("AI_YF_AUTO_ADJUST", True)
+    bucket = _cache_bucket("AI_YF_CACHE_TTL_MINUTES", 60)
+    return _get_stock_data_cached(symbol, period, bool(auto_adjust), bucket)
+
+
+@lru_cache(maxsize=512)
+def _get_ticker_info_cached(symbol: str, bucket: int) -> dict[str, Any]:
+    _ = bucket
     symbol = _clean_symbol(symbol)
     if not symbol:
         return {}
@@ -142,6 +171,11 @@ def _get_ticker_info(symbol: str) -> dict[str, Any]:
         return yf.Ticker(symbol).info or {}
     except Exception:
         return {}
+
+
+def _get_ticker_info(symbol: str) -> dict[str, Any]:
+    bucket = _cache_bucket("AI_YF_INFO_CACHE_TTL_MINUTES", 360)
+    return _get_ticker_info_cached(symbol, bucket)
 
 
 def get_stock_info(symbol: str) -> dict[str, Any]:

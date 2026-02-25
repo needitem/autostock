@@ -141,12 +141,34 @@ class AIAnalyzer:
 
         return False, proc if "proc" in locals() and proc is not None else subprocess.CompletedProcess(cmd, 1), last_error
 
+    def _truncate_to_token_budget(self, text: str, max_tokens: int) -> str:
+        if not text:
+            return text
+        budget = max(64, int(max_tokens))
+        chars_per_token = max(1.0, self._f_env("AI_CHAR_PER_TOKEN", 4.0))
+        max_chars = int(budget * chars_per_token)
+        if len(text) <= max_chars:
+            return text
+        cut = text[:max_chars]
+        for sep in ("\n\n", "\n", ". ", " "):
+            idx = cut.rfind(sep)
+            if idx >= int(max_chars * 0.6):
+                cut = cut[:idx]
+                break
+        return cut.rstrip() + "\n\n[output truncated to token budget]"
+
     def _call(self, prompt: str, max_tokens: int = 1400) -> str | None:
         if not self.has_api_access:
             return None
 
         out_file: tempfile.NamedTemporaryFile | None = None
         try:
+            token_budget = max(64, int(max_tokens))
+            prompt_with_budget = (
+                f"Response length budget: about {token_budget} tokens maximum.\n"
+                "If needed, prioritize key actions and omit low-priority detail.\n\n"
+                f"{prompt}"
+            )
             out_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
             out_file.close()
 
@@ -165,7 +187,7 @@ class AIAnalyzer:
                 out_file.name,
                 "-",
             ]
-            ok, proc, used_model = self._run_codex(cmd, prompt, max_tokens, timeout=240)
+            ok, proc, used_model = self._run_codex(cmd, prompt_with_budget, token_budget, timeout=240)
             if not ok:
                 return None
 
@@ -173,7 +195,9 @@ class AIAnalyzer:
                 text = fh.read().strip()
             if not text and (proc.stdout or proc.stderr):
                 text = (proc.stdout or "").strip() or (proc.stderr or "").strip()
-            return text or None
+            if not text:
+                return None
+            return self._truncate_to_token_budget(text, token_budget)
         except Exception:
             return None
         finally:
