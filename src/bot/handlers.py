@@ -20,9 +20,7 @@ from core.indicators import get_full_analysis
 from core.scoring import calculate_score
 from core.stock_data import get_fear_greed_index, get_market_condition
 from trading.kis_api import kis
-from trading.monitor import monitor
 from trading.portfolio import portfolio
-from trading.watchlist import watchlist
 
 
 def _chat_id_from_query(query) -> str:
@@ -69,9 +67,9 @@ async def _guard_trading_ready(query) -> bool:
     if kb.trading_enabled():
         return True
 
-    text = "??<b>?몃젅?대뵫 鍮꾪솢?깊솕</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += "KIS API ?ㅺ? ?ㅼ젙?섏? ?딆븯?듬땲??\n\n"
-    text += "?꾩닔 ?섍꼍蹂?? <code>KIS_APP_KEY</code>, <code>KIS_APP_SECRET</code>, <code>KIS_ACCOUNT_NO</code>"
+    text = "<b>Trading is disabled</b>\n" + ("-" * 26) + "\n\n"
+    text += "KIS API credentials are not configured.\n\n"
+    text += "Required env vars: <code>KIS_APP_KEY</code>, <code>KIS_APP_SECRET</code>, <code>KIS_ACCOUNT_NO</code>"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
     return False
 
@@ -105,44 +103,35 @@ def _diversify_by_sector(stocks: list[dict], limit: int = 10, max_per_sector: in
 
 
 async def handle_main(query) -> None:
-    data = watchlist.get_all()
-    settings = data.get("settings", {})
-
-    stock_count = len(data.get("stocks", {}))
-    monitor_on = settings.get("monitor_enabled", True)
-    auto_buy = settings.get("auto_buy", False)
-    auto_sell = settings.get("auto_sell", False)
     style = _style_from_query(query)
 
-    text = "?룧 <b>AutoStock</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += "<b>泥섏쓬?대씪硫??대젃寃??쒖옉?섏꽭??/b>\n"
-    text += "1) ?? ?ㅻ뒛 萸??닿퉴\n"
-    text += "2) ?뱤 醫낅ぉ ?쎄쾶 蹂닿린\n"
-    text += "3) ?? 愿?ъ쥌紐??깅줉\n\n"
-    text += f"愿?ъ쥌紐? <b>{stock_count}</b>媛?| 紐⑤땲?곕쭅 {'ON' if monitor_on else 'OFF'}\n"
-    text += f"?먮룞留ㅼ닔/?먯젅: {'ON' if auto_buy else 'OFF'} / {'ON' if auto_sell else 'OFF'}\n"
-    text += f"?붾㈃ 紐⑤뱶: <b>{style_label(style)}</b>\n"
-    text += f"트레이딩: {'ON' if kb.trading_enabled() else 'OFF'}\n\n"
-    text += "?곗빱留?蹂대궡??諛붾줈 遺꾩꽍?⑸땲?? (?? <code>AAPL</code>)"
+    text = "<b>AutoStock</b>\n" + ("-" * 26) + "\n\n"
+    text += "Quick start:\n"
+    text += "1) See recommendations\n"
+    text += "2) Analyze a ticker\n"
+    text += "3) Check risk sentiment\n\n"
+    text += f"Display mode: <b>{style_label(style)}</b>\n"
+    text += f"Trading: {'ON' if kb.trading_enabled() else 'OFF'}\n\n"
+    text += "Type a ticker directly for instant analysis. Example: <code>AAPL</code>"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
 
 
 async def handle_help(query) -> None:
-    text = "?뱦 <b>珥덈낫 媛?대뱶</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += "1) <b>?ㅻ뒛 萸??닿퉴</b>: 吏湲?留ㅼ닔/?湲곕쭔 鍮좊Ⅴ寃??뺤씤\n"
-    text += "2) <b>醫낅ぉ ?쎄쾶 蹂닿린</b>: ??醫낅ぉ???ㅽ뻾??留ㅼ닔/?먯젅/紐⑺몴)?쇰줈 ?뺤씤\n"
-    text += "3) <b>愿?ъ쥌紐?/b>: ?뚮┝ 耳쒕몢怨??좏샇 ???뚮쭔 泥댄겕\n\n"
-    text += "?⑹뼱媛 ?대졄?ㅻ㈃ <b>珥덈낫(沅뚯옣)</b> 紐⑤뱶瑜??ъ슜?섏꽭??"
+    text = "<b>Beginner Guide</b>\n" + ("-" * 26) + "\n\n"
+    text += "1) <b>Recommendations</b>: quick buy/wait candidates\n"
+    text += "2) <b>Analyze</b>: full score + entry/stop/target\n"
+    text += "3) <b>Fear/Greed</b>: check current risk sentiment\n\n"
+    text += "If unsure, use <b>Beginner</b> display mode."
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
 
 
 async def handle_display_settings(query) -> None:
     style = _style_from_query(query)
-    text = "?숋툘 <b>?쒖떆 ?ㅼ젙</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += f"?꾩옱 ?ㅽ??? <b>{style_label(style)}</b>\n\n"
-    text += "??珥덈낫(沅뚯옣): 吏湲?????以묒떖\n"
-    text += "???쒖?: 湲곕낯 吏??+ 留ㅻℓ ?뺣낫\n"
-    text += "???곸꽭: 蹂댁“ 吏??寃쎄퀬源뚯? ?꾩껜 ?쒖떆"
+    text = "<b>Display Settings</b>\n" + ("-" * 26) + "\n\n"
+    text += f"Current: <b>{style_label(style)}</b>\n\n"
+    text += "Beginner: concise actions\n"
+    text += "Standard: balanced detail\n"
+    text += "Detail: full metrics"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(style))
 
 
@@ -152,16 +141,16 @@ async def handle_set_style(query, data: str) -> None:
     style = normalize_style(requested)
 
     if not chat_id:
-        await query.answer("梨꾪똿 ?뺣낫瑜?李얠쓣 ???놁뒿?덈떎.")
+        await query.answer("Chat context missing")
         return
 
     saved = set_chat_style(chat_id, style)
-    await query.answer(f"?쒖떆 ?ㅽ??? {style_label(saved)}")
+    await query.answer(f"Display mode: {style_label(saved)}")
     await handle_display_settings(query)
 
 
 async def handle_recommend(query) -> None:
-    await query.edit_message_text("?뱢 異붿쿇 醫낅ぉ ?앹꽦 以?.. (??5~10遺?")
+    await query.edit_message_text("Building recommendations... (can take 5-10 min)")
 
     try:
         from config import load_all_us_stocks
@@ -240,14 +229,14 @@ async def handle_recommend(query) -> None:
         picks = _diversify_by_sector(ranked, limit=10, max_per_sector=3)
         text = fmt.format_recommendations(picks, result["total"], style=style)
         if used_cache:
-            text += "\n\n<i>理쒓렐 ?ㅼ틪 罹먯떆 ?ъ슜</i>"
+            text += "\n\n<i>Using recent cached scan.</i>"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as exc:
-        await query.edit_message_text(f"異붿쿇 ?앹꽦 ?ㅽ뙣: {exc}", reply_markup=kb.back())
+        await query.edit_message_text(f"Recommendation failed: {exc}", reply_markup=kb.back())
 
 
 async def handle_scan(query) -> None:
-    await query.edit_message_text("?뵊 ?꾩껜 ?ㅼ틪 以?.. (??5~10遺?")
+    await query.edit_message_text("Running full scan... (can take 5-10 min)")
 
     try:
         from config import load_all_us_stocks
@@ -256,10 +245,10 @@ async def handle_scan(query) -> None:
         result, used_cache = get_scan_result(load_all_us_stocks(), max_age_sec=240)
         text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
         if used_cache:
-            text += "\n\n<i>理쒓렐 ?ㅼ틪 罹먯떆 ?ъ슜</i>"
+            text += "\n\n<i>Using recent cached scan.</i>"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as exc:
-        await query.edit_message_text(f"?ㅼ틪 ?ㅽ뙣: {exc}", reply_markup=kb.back())
+        await query.edit_message_text(f"Scan failed: {exc}", reply_markup=kb.back())
 
 
 async def handle_ai_recommend(query) -> None:
@@ -312,125 +301,74 @@ async def handle_ai_recommend(query) -> None:
 
 
 async def handle_analyze_menu(query) -> None:
-    text = "?뱤 <b>醫낅ぉ ?쎄쾶 蹂닿린</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += "踰꾪듉???꾨Ⅴ嫄곕굹 ?곗빱瑜?吏곸젒 ?낅젰?섏꽭??\n"
-    text += "?? <code>AAPL</code>, <code>TSLA</code>"
+    text = "<b>Analyze Ticker</b>\n" + ("-" * 26) + "\n\n"
+    text += "Use buttons below or type ticker directly.\n"
+    text += "Examples: <code>AAPL</code>, <code>TSLA</code>"
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.analyze_menu())
 
 
 async def handle_analyze_input(query) -> None:
-    text = "?⑨툘 <b>吏곸젒 ?낅젰 紐⑤뱶</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += "梨꾪똿李쎌뿉 ?곗빱留??낅젰?섎㈃ ?⑸땲??\n"
-    text += "?? <code>NVDA</code>, <code>MSFT</code>"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back("analyze_menu", "醫낅ぉ ?쎄쾶 蹂닿린"))
+    text = "<b>Manual Input Mode</b>\n" + ("-" * 26) + "\n\n"
+    text += "Send just a ticker in chat.\n"
+    text += "Examples: <code>NVDA</code>, <code>MSFT</code>"
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back("analyze_menu", "Analyze"))
 
 
 async def handle_fear_greed(query) -> None:
-    await query.edit_message_text("?삺 ?쒖옣 ?щ━ 遺덈윭?ㅻ뒗 以?..")
+    await query.edit_message_text("Loading Fear & Greed...")
     try:
         style = _style_from_query(query)
         fg = get_fear_greed_index()
         text = fmt.format_fear_greed(fg, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as exc:
-        await query.edit_message_text(f"議고쉶 ?ㅽ뙣: {exc}", reply_markup=kb.back())
+        await query.edit_message_text(f"Fetch failed: {exc}", reply_markup=kb.back())
 
 
 async def handle_trading_menu(query) -> None:
     if not await _guard_trading_ready(query):
         return
 
-    text = "?뮥 <b>?몃젅?대뵫</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += "KIS API瑜??듯븳 二쇰Ц/?먮룞留ㅻℓ ?ㅼ젙 硫붾돱?낅땲??\n"
-    text += "?먮룞留ㅻℓ??諛섎뱶??紐⑥쓽怨꾩쥖濡?癒쇱? ?먭??섏꽭??"
+    text = "<b>Trading</b>\n" + ("-" * 26) + "\n\n"
+    text += "Order and account utilities via KIS API.\n"
+    text += "Use paper mode first before live account usage."
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
-
-
-async def handle_auto_settings(query) -> None:
-    await query.answer("자동매매는 현재 비활성화 상태입니다.")
-    await query.edit_message_text("자동매매는 현재 비활성화 상태입니다.")
-    return
-    if not await _guard_trading_ready(query):
-        return
-
-    auto_buy = watchlist.is_auto_buy()
-    auto_sell = watchlist._load().get("settings", {}).get("auto_sell", False)
-
-    text = fmt.header("?먮룞留ㅻℓ ?ㅼ젙", "?숋툘")
-    text += f"\n?먮룞留ㅼ닔: {'ON' if auto_buy else 'OFF'}"
-    text += f"\n?먮룞?먯젅: {'ON' if auto_sell else 'OFF'}\n"
-    text += "\n???먮룞留ㅼ닔: 愿?ъ쥌紐?????좏샇 湲곕컲"
-    text += "\n???먮룞?먯젅: 蹂댁쑀醫낅ぉ -7% ?댄븯"
-    await query.edit_message_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=kb.auto_settings_menu(auto_buy, auto_sell),
-    )
-
-
-async def handle_toggle_auto_buy(query) -> None:
-    await query.answer("자동매매는 현재 비활성화 상태입니다.")
-    await query.edit_message_text("자동매매는 현재 비활성화 상태입니다.")
-    return
-    if not await _guard_trading_ready(query):
-        return
-
-    current = watchlist.is_auto_buy()
-    watchlist.set_auto_buy(not current)
-    await query.answer(f"?먮룞留ㅼ닔 {'ON' if not current else 'OFF'}")
-    await handle_auto_settings(query)
-
-
-async def handle_toggle_auto_sell(query) -> None:
-    await query.answer("자동매매는 현재 비활성화 상태입니다.")
-    await query.edit_message_text("자동매매는 현재 비활성화 상태입니다.")
-    return
-    if not await _guard_trading_ready(query):
-        return
-
-    data = watchlist._load()
-    current = data.get("settings", {}).get("auto_sell", False)
-    data.setdefault("settings", {})["auto_sell"] = not current
-    watchlist._save()
-
-    await query.answer(f"?먮룞?먯젅 {'ON' if not current else 'OFF'}")
-    await handle_auto_settings(query)
 
 
 async def handle_balance(query) -> None:
     if not await _guard_trading_ready(query):
         return
 
-    await query.edit_message_text("?뮫 ?붽퀬 議고쉶 以?..")
+    await query.edit_message_text("Loading balance...")
     try:
         style = _style_from_query(query)
         result = portfolio.get_status()
         if "error" in result:
-            await query.edit_message_text(f"??{result['error']}", reply_markup=kb.trading_menu())
+            await query.edit_message_text(f"Error: {result['error']}", reply_markup=kb.trading_menu())
             return
 
         text = fmt.format_balance(result, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
     except Exception as exc:
-        await query.edit_message_text(f"?붽퀬 議고쉶 ?ㅽ뙣: {exc}", reply_markup=kb.trading_menu())
+        await query.edit_message_text(f"Balance fetch failed: {exc}", reply_markup=kb.trading_menu())
 
 
 async def handle_orders(query) -> None:
     if not await _guard_trading_ready(query):
         return
 
-    await query.edit_message_text("?뱥 誘몄껜寃?二쇰Ц 議고쉶 以?..")
+    await query.edit_message_text("Loading open orders...")
     try:
         style = _style_from_query(query)
         result = kis.get_orders()
         if "error" in result:
-            await query.edit_message_text(f"??{result['error']}", reply_markup=kb.trading_menu())
+            await query.edit_message_text(f"Error: {result['error']}", reply_markup=kb.trading_menu())
             return
 
         text = fmt.format_orders(result.get("orders", []), style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
     except Exception as exc:
-        await query.edit_message_text(f"二쇰Ц 議고쉶 ?ㅽ뙣: {exc}", reply_markup=kb.trading_menu())
+        await query.edit_message_text(f"Order fetch failed: {exc}", reply_markup=kb.trading_menu())
 
 
 async def handle_api_status(query) -> None:
@@ -443,145 +381,25 @@ async def handle_api_status(query) -> None:
         text = fmt.format_api_status(status, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.trading_menu())
     except Exception as exc:
-        await query.edit_message_text(f"?곹깭 ?뺤씤 ?ㅽ뙣: {exc}", reply_markup=kb.trading_menu())
-
-
-async def handle_watchlist_main(query) -> None:
-    data = watchlist.get_all()
-    settings = data.get("settings", {})
-
-    stock_count = len(data.get("stocks", {}))
-    monitor_on = settings.get("monitor_enabled", True)
-    interval = settings.get("monitor_interval", 30)
-    auto_buy = settings.get("auto_buy", False)
-
-    text = "?? <b>愿?ъ쥌紐?/b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += f"?깅줉 醫낅ぉ: {stock_count}媛?n"
-    text += f"紐⑤땲?곕쭅: {'ON' if monitor_on else 'OFF'} ({interval}遺?\n"
-    text += f"?먮룞留ㅼ닔: {'ON' if auto_buy else 'OFF'}\n\n"
-    text += "?좏샇 湲곗?: RSI, BB ?꾩튂, ?④린 ?섎씫, ?댄룊 愿대━"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
-
-
-async def handle_watchlist_status(query) -> None:
-    await query.edit_message_text("?뱥 愿?ъ쥌紐??곹깭 遺덈윭?ㅻ뒗 以?..")
-
-    try:
-        style = _style_from_query(query)
-        stocks = watchlist.get_status()
-        text = fmt.format_watchlist(stocks, watchlist.is_auto_buy(), style=style)
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
-    except Exception as exc:
-        await query.edit_message_text(f"議고쉶 ?ㅽ뙣: {exc}", reply_markup=kb.watchlist_main_menu())
-
-
-async def handle_watchlist_check_now(query) -> None:
-    await query.edit_message_text("??愿?ъ쥌紐?利됱떆 泥댄겕 以?..")
-
-    try:
-        style = _style_from_query(query)
-        results = monitor.check_all_watchlist()
-        if results:
-            text = monitor.format_alert_message(results)
-            await send_long_message(query, text, reply_markup=kb.watchlist_main_menu())
-            return
-
-        total = len(watchlist.get_all().get("stocks", {}))
-        text = fmt.format_watchlist_signals([], total, style=style)
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
-    except Exception as exc:
-        await query.edit_message_text(f"泥댄겕 ?ㅽ뙣: {exc}", reply_markup=kb.watchlist_main_menu())
-
-
-async def handle_watchlist_add_menu(query) -> None:
-    text = "??<b>愿?ъ쥌紐?異붽?</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n"
-    text += "踰꾪듉?쇰줈 ?좏깮?섍굅?? ?щ낵??吏곸젒 ?낅젰?대룄 ?⑸땲??"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_add())
-
-
-async def handle_watchlist_remove_menu(query) -> None:
-    stocks = list(watchlist.get_all().get("stocks", {}).keys())
-    if not stocks:
-        await query.edit_message_text("??젣??醫낅ぉ???놁뒿?덈떎.", reply_markup=kb.watchlist_main_menu())
-        return
-
-    text = "??<b>愿?ъ쥌紐???젣</b>\n?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺\n\n??젣??醫낅ぉ???좏깮?섏꽭??"
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_remove_menu(stocks))
-
-
-async def handle_watchlist_remove(query, data: str) -> None:
-    symbol = data[9:]
-    result = watchlist.remove(symbol)
-
-    if result.get("success"):
-        await query.answer(f"{symbol} ??젣 ?꾨즺")
-    else:
-        await query.answer(f"??젣 ?ㅽ뙣: {result.get('error', 'unknown')}"[:180])
-
-    await handle_watchlist_remove_menu(query)
-
-
-async def handle_watchlist_alert_settings(query) -> None:
-    settings = watchlist.get_all().get("settings", {})
-    monitor_on = settings.get("monitor_enabled", True)
-    interval = settings.get("monitor_interval", 30)
-
-    text = fmt.header("愿?ъ쥌紐??뚮┝ ?ㅼ젙", "?숋툘")
-    text += f"\n紐⑤땲?곕쭅: {'ON' if monitor_on else 'OFF'}"
-    text += f"\n泥댄겕 媛꾧꺽: {interval}遺?n"
-    text += "\n媛꾧꺽 蹂寃쎌? 15 ??30 ??60遺??쒗솚?낅땲??"
-
-    await query.edit_message_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=kb.watchlist_alert_settings(settings),
-    )
-
-
-async def handle_toggle_monitor(query) -> None:
-    data = watchlist._load()
-    settings = data.setdefault("settings", {})
-
-    current = settings.get("monitor_enabled", True)
-    settings["monitor_enabled"] = not current
-    watchlist._save()
-
-    await query.answer(f"紐⑤땲?곕쭅 {'ON' if not current else 'OFF'}")
-    await handle_watchlist_alert_settings(query)
-
-
-async def handle_change_interval(query) -> None:
-    data = watchlist._load()
-    settings = data.setdefault("settings", {})
-
-    current = settings.get("monitor_interval", 30)
-    intervals = [15, 30, 60]
-    idx = intervals.index(current) if current in intervals else 1
-    new_interval = intervals[(idx + 1) % len(intervals)]
-
-    settings["monitor_interval"] = new_interval
-    watchlist._save()
-
-    await query.answer(f"체크 간격 {new_interval}분")
-    await handle_watchlist_alert_settings(query)
+        await query.edit_message_text(f"Status check failed: {exc}", reply_markup=kb.trading_menu())
 
 
 async def handle_analyze_stock(query, data: str) -> None:
     symbol = data[2:]
-    await query.edit_message_text(f"?뵊 {symbol} 遺꾩꽍 以?..")
+    await query.edit_message_text(f"Analyzing {symbol}...")
 
     try:
         style = _style_from_query(query)
         analysis = get_full_analysis(symbol)
         if analysis is None:
-            await query.edit_message_text(f"'{symbol}' ?곗씠???놁쓬", reply_markup=kb.back())
+            await query.edit_message_text(f"No data for '{symbol}'", reply_markup=kb.back())
             return
 
         analysis["score"] = calculate_score(analysis)
         text = fmt.format_analysis(analysis, style=style)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
     except Exception as exc:
-        await query.edit_message_text(f"遺꾩꽍 ?ㅽ뙣: {exc}", reply_markup=kb.back())
+        await query.edit_message_text(f"Analysis failed: {exc}", reply_markup=kb.back())
 
 
 async def handle_ai_stock(query, data: str) -> None:
@@ -609,25 +427,6 @@ async def handle_ai_stock(query, data: str) -> None:
         await query.edit_message_text(f"AI analysis failed: {exc}", reply_markup=kb.back())
 
 
-async def handle_watchlist_add(query, data: str) -> None:
-    symbol = data[9:]
-    await query.edit_message_text(f"??{symbol} 異붽? 以?..")
-
-    try:
-        result = watchlist.add(symbol)
-        if result.get("success"):
-            text = "??<b>愿?ъ쥌紐?異붽? ?꾨즺</b>\n\n"
-            text += f"醫낅ぉ: {symbol}\n"
-            text += f"?꾩옱媛: ${result['price']}\n"
-            text += f"紐⑺몴媛: ${result['target_price']}"
-        else:
-            text = f"??異붽? ?ㅽ뙣: {result.get('error', 'unknown')}"
-
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.watchlist_main_menu())
-    except Exception as exc:
-        await query.edit_message_text(f"異붽? ?ㅽ뙣: {exc}", reply_markup=kb.watchlist_main_menu())
-
-
 EXACT_HANDLERS = {
     "main": handle_main,
     "help": handle_help,
@@ -639,25 +438,12 @@ EXACT_HANDLERS = {
     "analyze_input": handle_analyze_input,
     "fear_greed": handle_fear_greed,
     "trading_menu": handle_trading_menu,
-    "auto_settings": handle_auto_settings,
-    "toggle_auto_buy": handle_toggle_auto_buy,
-    "toggle_auto_sell": handle_toggle_auto_sell,
     "balance": handle_balance,
     "orders": handle_orders,
     "api_status": handle_api_status,
-    "watchlist_main": handle_watchlist_main,
-    "watchlist_status": handle_watchlist_status,
-    "watchlist_add": handle_watchlist_add_menu,
-    "watchlist_check_now": handle_watchlist_check_now,
-    "watchlist_remove_menu": handle_watchlist_remove_menu,
-    "watchlist_alert_settings": handle_watchlist_alert_settings,
-    "toggle_monitor": handle_toggle_monitor,
-    "change_interval": handle_change_interval,
 }
 
 PREFIX_HANDLERS = [
-    ("watchdel_", handle_watchlist_remove),
-    ("watchadd_", handle_watchlist_add),
     ("style_", handle_set_style),
     ("ai_", handle_ai_stock),
     ("a_", handle_analyze_stock),
@@ -679,6 +465,4 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await handler(query, data)
             return
 
-    await query.edit_message_text("?????녿뒗 硫붾돱?낅땲??", reply_markup=kb.main_menu())
-
-
+    await query.edit_message_text("Unknown menu action.", reply_markup=kb.main_menu())

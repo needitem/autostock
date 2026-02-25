@@ -64,7 +64,7 @@ def main_menu() -> InlineKeyboardMarkup:
     rows = [
         [btn("Today Picks", "recommend"), btn("Market Scan", "scan")],
         [btn("Stock Analyze", "analyze_menu"), btn("AI Report", "ai_recommend")],
-        [btn("Watchlist", "watchlist_main"), btn("Fear/Greed", "fear_greed")],
+        [btn("Fear/Greed", "fear_greed")],
         [btn("Display Settings", "display_settings")],
     ]
     if trading_enabled():
@@ -88,7 +88,7 @@ def analyze_menu() -> InlineKeyboardMarkup:
 def stock_detail(symbol: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [btn("AI Summary", f"ai_{symbol}"), btn("Add Watchlist", f"watchadd_{symbol}")],
+            [btn("AI Summary", f"ai_{symbol}")],
             [btn("Other Ticker", "analyze_menu"), btn("Recommendations", "recommend")],
             [btn("Main", "main")],
         ]
@@ -99,59 +99,7 @@ def trading_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [btn("Balance", "balance"), btn("Open Orders", "orders")],
-            [btn("Auto Trading", "auto_settings")],
             [btn("API Status", "api_status")],
-            [btn("Main", "main")],
-        ]
-    )
-
-
-def watchlist_main_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [btn("List", "watchlist_status"), btn("Check Now", "watchlist_check_now")],
-            [btn("Add", "watchlist_add"), btn("Remove", "watchlist_remove_menu")],
-            [btn("Alert Settings", "watchlist_alert_settings")],
-            [btn("Main", "main")],
-        ]
-    )
-
-
-def watchlist_remove_menu(stocks: list[str]) -> InlineKeyboardMarkup:
-    keyboard = [[btn(f"Delete {symbol}", f"watchdel_{symbol}")] for symbol in stocks]
-    keyboard.append([btn("Back", "watchlist_main")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def watchlist_alert_settings(settings: dict) -> InlineKeyboardMarkup:
-    monitor_on = settings.get("monitor_enabled", True)
-    interval = settings.get("monitor_interval", 30)
-    monitor_status = "ON" if monitor_on else "OFF"
-
-    return InlineKeyboardMarkup(
-        [
-            [btn(f"Monitor: {monitor_status}", "toggle_monitor")],
-            [btn(f"Interval: {interval}m", "change_interval")],
-            [btn("Back", "watchlist_main")],
-        ]
-    )
-
-
-def watchlist_add() -> InlineKeyboardMarkup:
-    keyboard = grid(TOP_STOCKS, "watchadd_", cols=4)
-    keyboard.append([btn("Back", "watchlist_main")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def auto_settings_menu(auto_buy: bool, auto_sell: bool) -> InlineKeyboardMarkup:
-    buy_status = "ON" if auto_buy else "OFF"
-    sell_status = "ON" if auto_sell else "OFF"
-    return InlineKeyboardMarkup(
-        [
-            [btn(f"Auto Buy: {buy_status}", "toggle_auto_buy")],
-            [btn(f"Auto Sell: {sell_status}", "toggle_auto_sell")],
-            [btn("Balance", "balance"), btn("API", "api_status")],
-            [btn("Watchlist", "watchlist_main"), btn("Trading", "trading_menu")],
             [btn("Main", "main")],
         ]
     )

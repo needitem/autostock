@@ -1,4 +1,4 @@
-"""Telegram bot entry module."""
+﻿"""Telegram bot entry module."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import sys
 
 from dotenv import load_dotenv
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -74,19 +75,41 @@ async def send_long_message_bot(bot, chat_id: str, text: str, max_len: int = 400
         await bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML")
 
 
+async def app_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Prevent silent crashes and handle malformed HTML parse errors gracefully."""
+    err = context.error
+    print(f"[bot] handler error: {err}")
+
+    if isinstance(err, BadRequest) and "Can't parse entities" in str(err):
+        try:
+            cb = getattr(update, "callback_query", None)
+            if cb is not None:
+                await cb.answer("Message format error. Please try again.")
+                await cb.message.reply_text("Message format error occurred. Please retry.")
+                return
+            msg = getattr(update, "message", None)
+            if msg is not None:
+                await msg.reply_text("Message format error occurred. Please retry.")
+        except Exception as inner:
+            print(f"[bot] error handler fallback failed: {inner}")
+
+
 async def _send_main_menu(update: Update) -> None:
+    if update.effective_chat is None or update.message is None:
+        return
+
     chat_id = str(update.effective_chat.id)
     save_chat_id(chat_id)
     style = get_chat_style(chat_id)
 
-    text = "? <b>AutoStock ?작</b>\n?━?━?━?━?━?━?━?━?━\n\n"
-    text += "처음?면 ?래 ?서?보세??\n"
-    text += "1) ?? ?늘 ??까\n"
-    text += "2) ? 종목 ?게 보기\n"
-    text += "3) ?? 관?종??록\n\n"
-    text += f"?재 ?면 모드: <b>{style_label(style)}</b>\n"
-    text += "?커?직접 보내??바로 분석?니??\n"
-    text += "?? <code>AAPL</code>, <code>TSLA</code>"
+    text = "<b>AutoStock</b>\n" + ("-" * 26) + "\n\n"
+    text += "Quick start:\n"
+    text += "1) Check top ideas\n"
+    text += "2) Analyze a ticker\n"
+    text += "3) Check risk sentiment\n\n"
+    text += f"Display mode: <b>{style_label(style)}</b>\n"
+    text += "You can also type a ticker directly.\n"
+    text += "Example: <code>AAPL</code>, <code>TSLA</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
 
 
@@ -99,26 +122,32 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def style_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat is None or update.message is None:
+        return
+
     chat_id = str(update.effective_chat.id)
     save_chat_id(chat_id)
 
     if context.args:
         requested = normalize_style(context.args[0])
         saved = set_chat_style(chat_id, requested)
-        text = f"?️ ?면 모드?<b>{style_label(saved)}</b>??정?습?다."
+        text = f"Display mode set to <b>{style_label(saved)}</b>."
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(saved))
         return
 
     current = get_chat_style(chat_id)
-    text = "?️ <b>?면 모드 ?정</b>\n?━?━?━?━?━?━?━?━?━\n\n"
-    text += f"?재: <b>{style_label(current)}</b>\n\n"
-    text += "추천: beginner(초보)\n"
-    text += "명령 ?시: <code>/style beginner</code> | <code>/style standard</code> | <code>/style detail</code>"
+    text = "<b>Display Mode</b>\n" + ("-" * 26) + "\n\n"
+    text += f"Current: <b>{style_label(current)}</b>\n\n"
+    text += "Recommended: beginner\n"
+    text += "Command: <code>/style beginner</code> | <code>/style standard</code> | <code>/style detail</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(current))
 
 
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("? ?캔 ?..")
+    if update.message is None or update.effective_chat is None:
+        return
+
+    await update.message.reply_text("Running scan...")
 
     try:
         from config import load_all_us_stocks
@@ -129,19 +158,22 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
         if used_cache:
-            text += "\n\n<i>최근 ?캔 캐시 ?용</i>"
+            text += "\n\n<i>Using recent cached scan.</i>"
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as e:
-        await update.message.reply_text(f"?캔 ?패: {e}", reply_markup=kb.back())
+        await update.message.reply_text(f"Scan failed: {e}", reply_markup=kb.back())
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
     if not context.args:
-        await update.message.reply_text("종목 ?택:", reply_markup=kb.analyze_menu())
+        await update.message.reply_text("Please enter a ticker.", reply_markup=kb.analyze_menu())
         return
 
     symbol = context.args[0].upper()
-    await update.message.reply_text(f"? {symbol} 분석 ?..")
+    await update.message.reply_text(f"Analyzing {symbol}...")
 
     try:
         from core.indicators import get_full_analysis
@@ -152,23 +184,26 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         analysis = get_full_analysis(symbol)
         if analysis is None:
-            await update.message.reply_text(f"'{symbol}' ?이???음")
+            await update.message.reply_text(f"No data found for '{symbol}'.")
             return
 
         analysis["score"] = calculate_score(analysis)
         text = fmt.format_analysis(analysis, style=style)
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
     except Exception as e:
-        await update.message.reply_text(f"분석 ?패: {e}")
+        await update.message.reply_text(f"Analysis failed: {e}")
 
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
     text = update.message.text.strip().upper()
     if not text.isalpha() or len(text) > 5:
         return
 
     symbol = text
-    await update.message.reply_text(f"? {symbol} 분석 ?..")
+    await update.message.reply_text(f"Analyzing {symbol}...")
 
     try:
         from core.indicators import get_full_analysis
@@ -180,8 +215,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         analysis = get_full_analysis(symbol)
         if analysis is None:
             await update.message.reply_text(
-                f"??'{symbol}' ?이?? 찾을 ???습?다.\n\n?효??미국 주식 ?볼?? ?인?주?요.",
-                reply_markup=kb.back("analyze_menu", "종목분석"),
+                f"No data found for '{symbol}'.\n\nPlease send a valid US ticker.",
+                reply_markup=kb.back("analyze_menu", "Analyze"),
             )
             return
 
@@ -189,7 +224,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         msg = fmt.format_analysis(analysis, style=style)
         await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb.stock_detail(symbol))
     except Exception as e:
-        await update.message.reply_text(f"분석 ?패: {e}", reply_markup=kb.back())
+        await update.message.reply_text(f"Analysis failed: {e}", reply_markup=kb.back())
 
 
 async def _run_us_report_pipeline() -> dict:
@@ -246,7 +281,7 @@ async def scheduled_daily_scan(context) -> None:
         result, used_cache = get_scan_result(load_all_us_stocks(), max_age_sec=3600)
         text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
         if used_cache:
-            text += "\n\n<i>최근 ?캔 캐시 ?용</i>"
+            text += "\n\n<i>Using recent cached scan.</i>"
 
         await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
         print("[scheduler] daily scan sent")
@@ -279,62 +314,14 @@ async def scheduled_ai_recommendation(context) -> None:
             return
 
         stats = ai_result.get("stats", {})
-        text = f"? <b>AI 리포??/b> ({ai_result.get('total', 0)}?분석)\n"
-        text += f"?균 RSI {stats.get('avg_rsi', 0):.0f} | ?균 ?수 {stats.get('avg_score', 0):.0f}\n"
-        text += f"?시 ???? {style_label(style)}\n"
-        text += "?━?━?━?━?━?━?━?━?━\n\n"
+        text = f"<b>AI Report</b> ({ai_result.get('total', 0)} symbols)\n"
+        text += f"avg RSI {stats.get('avg_rsi', 0):.0f} | avg score {stats.get('avg_score', 0):.0f}\n"
+        text += f"display mode: {style_label(style)}\n\n"
         text += ai_result["analysis"]
         await send_long_message_bot(context.bot, chat_id, text)
         print("[scheduler] ai recommendation sent")
     except Exception as e:
         print(f"[scheduler] ai recommendation failed: {e}")
-
-
-async def scheduled_watchlist_scan(context) -> None:
-    chat_id = get_saved_chat_id()
-    if not chat_id:
-        return
-
-    print("[scheduler] watchlist scan started")
-    try:
-        from trading.watchlist import watchlist
-
-        style = get_chat_style(chat_id)
-        signals = watchlist.scan_signals()
-        total = len(watchlist.get_all().get("stocks", {}))
-        if signals:
-            signal_text = fmt.format_watchlist_signals(signals, total, style=style)
-            await context.bot.send_message(chat_id=chat_id, text=signal_text, parse_mode="HTML")
-        else:
-            print("[scheduler] no watchlist signals")
-
-        print("[scheduler] watchlist scan done")
-    except Exception as e:
-        print(f"[scheduler] watchlist scan failed: {e}")
-
-
-async def scheduled_watchlist_monitor(context) -> None:
-    chat_id = get_saved_chat_id()
-    if not chat_id:
-        return
-
-    try:
-        from trading.monitor import monitor
-        from trading.watchlist import watchlist
-
-        data = watchlist._load()
-        settings = data.get("settings", {})
-        if not settings.get("monitor_enabled", True):
-            return
-
-        results = monitor.check_all_watchlist()
-        if results:
-            text = monitor.format_alert_message(results)
-            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
-            print(f"[monitor] alerts sent: {len(results)} symbols")
-    except Exception as e:
-        print(f"[monitor] failed: {e}")
-
 
 
 async def scheduled_us_report(context) -> None:
@@ -365,6 +352,7 @@ async def scheduled_us_rebalance(context) -> None:
     except Exception as e:
         print(f"[scheduler] weekly us rebalance failed: {e}")
 
+
 def run_bot(with_scheduler: bool = True) -> None:
     from datetime import time as dt_time
 
@@ -385,23 +373,13 @@ def run_bot(with_scheduler: bool = True) -> None:
     app.add_handler(CommandHandler("us_rebalance", us_rebalance_command))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
+    app.add_error_handler(app_error_handler)
 
     if with_scheduler:
         settings = schedule_settings()
         tz_name = str(settings["timezone"])
         bot_tz = pytz.timezone(tz_name)
 
-        app.job_queue.run_repeating(
-            scheduled_watchlist_monitor,
-            interval=1800,
-            first=10,
-            name="watchlist_monitor",
-        )
-        app.job_queue.run_daily(
-            scheduled_watchlist_scan,
-            time=dt_time(hour=21, minute=0, tzinfo=bot_tz),
-            name="watchlist_scan",
-        )
         app.job_queue.run_daily(
             scheduled_us_report,
             time=dt_time(
@@ -423,17 +401,15 @@ def run_bot(with_scheduler: bool = True) -> None:
         )
 
         print("=" * 52)
-        print("? ??줄러 ?함 ??행 ?..")
+        print("Scheduler enabled")
         print("=" * 52)
-        print("? 30분마??- 관?종?모니?링")
-        print("?? 21:00 - ???/???????? ???")
-        print("?? 00:00 - US ????????????? ???/???")
-        print("?? 00:10 - US ?????????")
+        print("Daily 00:00 - US report")
+        print("Weekly 00:10 - US rebalance")
         print("=" * 52)
     else:
-        print("??행 ?.. (??줄러 ?음)")
+        print("Bot started without scheduler")
 
-    print("/start ?는 /menu ??작")
+    print("Use /start or /menu")
     app.run_polling()
 
 
