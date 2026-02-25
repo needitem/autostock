@@ -345,6 +345,11 @@ def test_run_us_rebalance_smoke(monkeypatch):
     assert lines and lines[0].startswith("symbol,action")
     assert "turnover_audit" in result["result"]
     assert result["result"].get("turnover_definition") in {"half_l1", "l1", "sum_abs"}
+    assert result["result"].get("final_target_turnover_pct", 0) >= 0
+    assert result["result"].get("final_executed_turnover_pct", 0) >= 0
+    audit = result["result"]["turnover_audit"]
+    assert "final_target_pct" in audit
+    assert "final_executed_pct" in audit
 
 
 def test_turnover_pct_defaults_to_half_l1():

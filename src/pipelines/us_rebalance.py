@@ -1722,6 +1722,15 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         orders,
     )
     executed_sector_cap_violations = _sector_cap_violations(executed_weights_pct, cand_by_symbol, sector_cap_pct)
+    turnover_definition = str(turnover_audit.get("turnover_definition", "half_l1") or "half_l1")
+    final_target_turnover_pct = _turnover_pct(prev_port, weights_pct, definition=turnover_definition)
+    final_executed_turnover_pct = _turnover_pct(prev_port, executed_weights_pct, definition=turnover_definition)
+    final_target_turnover_l1_pct = _turnover_l1_pct(prev_port, weights_pct)
+    final_executed_turnover_l1_pct = _turnover_l1_pct(prev_port, executed_weights_pct)
+    turnover_audit["final_target_pct"] = round(final_target_turnover_pct, 2)
+    turnover_audit["final_executed_pct"] = round(final_executed_turnover_pct, 2)
+    turnover_audit["final_target_l1_pct"] = round(final_target_turnover_l1_pct, 2)
+    turnover_audit["final_executed_l1_pct"] = round(final_executed_turnover_l1_pct, 2)
     execution_gap_pct = max(0.0, float(effective_exposure_target_pct) - achieved_exposure_after_execution_pct)
     execution_matches_target_weights = len(orders_skipped) == 0 and abs(
         achieved_exposure_after_execution_pct - achieved_exposure_pct
@@ -1755,6 +1764,8 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "max_weight_pct": max_weight_pct,
         "turnover_target_pct": turnover_target_pct,
         "turnover_definition": turnover_audit.get("turnover_definition", "half_l1"),
+        "final_target_turnover_pct": round(final_target_turnover_pct, 2),
+        "final_executed_turnover_pct": round(final_executed_turnover_pct, 2),
         "effective_turnover_target_pct": effective_turnover_target_pct,
         "effective_turnover_source": "min(user,regime)",
         "turnover_audit": turnover_audit,
