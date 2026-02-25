@@ -285,6 +285,7 @@ def test_symbol_price_plan_uses_next_support_when_primary_is_above_price():
         risk_budget_pct=0.5,
         max_support_distance_atr=2.0,
         risk_off_context=False,
+        volume_warn_threshold=1.0,
     )
     assert plan["anchors"]["support_used"] == 95.0
     assert "support0_above_price_using_next_support" in plan["warnings"]
@@ -307,6 +308,7 @@ def test_symbol_price_plan_applies_stop_distance_risk_cap():
         risk_budget_pct=0.5,
         max_support_distance_atr=2.0,
         risk_off_context=False,
+        volume_warn_threshold=1.0,
     )
     risk_cap = plan["risk_cap"]
     assert risk_cap["enabled"] is True
@@ -333,6 +335,7 @@ def test_apply_execution_risk_cap_reduces_target_weights_when_needed():
         risk_budget_pct=0.5,
         max_support_distance_atr=2.0,
         risk_off_context=False,
+        volume_warn_threshold=1.0,
         enabled=True,
     )
     assert "AAPL" in out
@@ -359,6 +362,31 @@ def test_build_orders_with_skips_includes_execution_price_hints():
     assert "stop_plan" in by_symbol["MSFT"]
     assert "target_plan" in by_symbol["MSFT"]
     assert "reduce_plan" in by_symbol["AAPL"]
+
+
+def test_symbol_price_plan_sets_watch_mode_for_weak_volume():
+    row = {
+        "price": 100.0,
+        "atr": 2.0,
+        "atr_pct": 2.0,
+        "volume_ratio": 0.8,
+        "support": [98.0, 96.0],
+        "resistance": [105.0, 108.0],
+    }
+    plan = reb._symbol_price_plan(
+        symbol="TEST",
+        row=row,
+        target_weight_pct=5.0,
+        current_weight_pct=0.0,
+        risk_budget_pct=0.5,
+        max_support_distance_atr=2.0,
+        risk_off_context=False,
+        volume_warn_threshold=1.0,
+    )
+    assert plan["entry"]["mode"] == "watch_retest"
+    assert plan["entry"]["levels"][0]["split_pct"] == 100.0
+    assert plan["entry"]["levels"][1]["split_pct"] == 0.0
+    assert "volume_below_warn_threshold_watch_mode" in plan["warnings"]
 
 
 def test_executed_portfolio_from_orders_matches_only_executed_orders():

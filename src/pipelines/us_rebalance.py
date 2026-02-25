@@ -783,6 +783,7 @@ def _symbol_price_plan(
     risk_budget_pct: float,
     max_support_distance_atr: float,
     risk_off_context: bool,
+    volume_warn_threshold: float,
 ) -> dict[str, Any]:
     plan: dict[str, Any] = {
         "symbol": symbol,
@@ -793,6 +794,8 @@ def _symbol_price_plan(
             "risk_budget_pct": round(float(max(0.0, risk_budget_pct)), 4),
             "stop_distance_pct": None,
             "max_weight_by_risk_pct": None,
+            "target_weight_before_cap_raw_pct": round(float(max(0.0, target_weight_pct)), 4),
+            "target_weight_after_cap_raw_pct": round(float(max(0.0, target_weight_pct)), 4),
             "target_weight_before_cap_pct": round(float(max(0.0, target_weight_pct)), 2),
             "target_weight_after_cap_pct": round(float(max(0.0, target_weight_pct)), 2),
             "cap_applied": False,
@@ -821,6 +824,7 @@ def _symbol_price_plan(
 
     supports = _normalized_price_levels(row.get("support"), ascending=False)
     resistances = _normalized_price_levels(row.get("resistance"), ascending=True)
+    volume_ratio = _f(row.get("volume_ratio"), 1.0)
     support_primary = supports[0] if supports else None
     resistance_primary = resistances[0] if resistances else None
 
@@ -867,6 +871,10 @@ def _symbol_price_plan(
     elif support_distance_atr > max(0.5, float(max_support_distance_atr)):
         entry_mode = "watch_retest"
         activation_reason = "support_too_far_in_atr"
+    elif volume_ratio < max(0.0, float(volume_warn_threshold)):
+        entry_mode = "watch_retest"
+        activation_reason = "volume_below_warn_threshold"
+        plan["warnings"].append("volume_below_warn_threshold_watch_mode")
 
     buy1 = min(price - atr * 0.1, support_used + atr * 0.2)
     buy2 = support_used - atr * 0.6
@@ -912,9 +920,11 @@ def _symbol_price_plan(
         max_w = min(100.0, max(0.0, float(risk_budget_pct) / (stop_distance_pct / 100.0)))
         capped_target = min(float(target_weight_pct), float(max_w))
         risk_cap["max_weight_by_risk_pct"] = round(max_w, 4)
+        risk_cap["target_weight_after_cap_raw_pct"] = round(capped_target, 4)
         risk_cap["target_weight_after_cap_pct"] = round(capped_target, 2)
         risk_cap["cap_applied"] = bool(capped_target + 1e-9 < float(target_weight_pct))
     else:
+        risk_cap["target_weight_after_cap_raw_pct"] = round(float(max(0.0, target_weight_pct)), 4)
         risk_cap["target_weight_after_cap_pct"] = round(float(max(0.0, target_weight_pct)), 2)
 
     reduce_delta_pct = max(0.0, float(current_weight_pct) - float(target_weight_pct))
@@ -938,6 +948,8 @@ def _symbol_price_plan(
             "anchors": {
                 "price": round(price, 4),
                 "atr": round(atr, 4),
+                "volume_ratio": round(volume_ratio, 4),
+                "volume_warn_threshold": round(max(0.0, float(volume_warn_threshold)), 4),
                 "support_primary": support_primary,
                 "support_used": round(support_used, 4),
                 "support_source": support_source,
@@ -1008,6 +1020,7 @@ def _build_execution_plans(
     risk_budget_pct: float,
     max_support_distance_atr: float,
     risk_off_context: bool,
+    volume_warn_threshold: float,
     symbols: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
@@ -1026,6 +1039,7 @@ def _build_execution_plans(
             risk_budget_pct=risk_budget_pct,
             max_support_distance_atr=max_support_distance_atr,
             risk_off_context=risk_off_context,
+            volume_warn_threshold=volume_warn_threshold,
         )
     return out
 
@@ -1037,6 +1051,7 @@ def _apply_execution_risk_cap(
     risk_budget_pct: float,
     max_support_distance_atr: float,
     risk_off_context: bool,
+    volume_warn_threshold: float,
     enabled: bool = True,
 ) -> tuple[dict[str, float], dict[str, dict[str, Any]], dict[str, Any]]:
     plans = _build_execution_plans(
@@ -1046,6 +1061,7 @@ def _apply_execution_risk_cap(
         risk_budget_pct=risk_budget_pct,
         max_support_distance_atr=max_support_distance_atr,
         risk_off_context=risk_off_context,
+        volume_warn_threshold=volume_warn_threshold,
         symbols=sorted(target_weights_pct.keys()),
     )
 
@@ -1647,9 +1663,9 @@ def _build_orders(
             {
                 "symbol": sym,
                 "action": action,
-                "current_weight_pct": round(cur, 2),
-                "target_weight_pct": round(tgt, 2),
-                "delta_pct": round(delta, 2),
+                "current_weight_pct": round(cur, 4),
+                "target_weight_pct": round(tgt, 4),
+                "delta_pct": round(delta, 4),
             }
         )
         plan = execution_plans.get(sym, {})
@@ -1698,9 +1714,9 @@ def _build_orders_with_skips(
             {
                 "symbol": sym,
                 "action": action,
-                "current_weight_pct": round(cur, 2),
-                "target_weight_pct": round(tgt, 2),
-                "delta_pct": round(delta, 2),
+                "current_weight_pct": round(cur, 4),
+                "target_weight_pct": round(tgt, 4),
+                "delta_pct": round(delta, 4),
             }
         )
         plan = execution_plans.get(sym, {})
@@ -2040,6 +2056,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
 
     risk_budget_pct = max(0.0, _env_float("AI_POSITION_RISK_BUDGET_PCT", 0.5))
     max_support_distance_atr = max(0.5, _env_float("AI_ENTRY_MAX_SUPPORT_DISTANCE_ATR", 2.0))
+    volume_warn_threshold = max(0.0, _f(regime.get("volume_warn_threshold", 1.0), 1.0))
     enable_execution_risk_cap = _env_bool("AI_ENABLE_EXECUTION_RISK_CAP", True)
     risk_off_context = str(regime.get("label", "neutral")).strip().lower() == "risk_off" or str(
         (market_filter or {}).get("reason", "")
@@ -2051,6 +2068,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         risk_budget_pct=risk_budget_pct,
         max_support_distance_atr=max_support_distance_atr,
         risk_off_context=risk_off_context,
+        volume_warn_threshold=volume_warn_threshold,
         enabled=enable_execution_risk_cap,
     )
 
@@ -2087,6 +2105,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         risk_budget_pct=risk_budget_pct,
         max_support_distance_atr=max_support_distance_atr,
         risk_off_context=risk_off_context,
+        volume_warn_threshold=volume_warn_threshold,
     )
     orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct, execution_plans=execution_plans)
     if orders_skipped:
@@ -2105,6 +2124,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             risk_budget_pct=risk_budget_pct,
             max_support_distance_atr=max_support_distance_atr,
             risk_off_context=risk_off_context,
+            volume_warn_threshold=volume_warn_threshold,
         )
         orders, orders_skipped = _build_orders_with_skips(
             prev_port,
@@ -2140,6 +2160,21 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         for sym in weights_pct.keys()
         if sym in cand_by_symbol
     }
+    # Ensure sizing audit covers symbols added during fill/constraints (e.g., late additions).
+    for sym, final_w in weights_pct.items():
+        if sym in sizing_audit:
+            continue
+        row = cand_by_symbol.get(sym, {})
+        mult, flags = _position_multiplier(row if isinstance(row, dict) else {})
+        sizing_audit[sym] = {
+            "base_weight_pct": round(float(final_w), 2),
+            "multiplier": round(float(mult), 3),
+            "adjusted_weight_pct": round(float(final_w), 2),
+            "flags": flags,
+            "source": "post_fill_backfill",
+        }
+    sizing_audit["_coverage_symbols"] = int(len(weights_pct))
+    sizing_audit["_covered_symbols"] = int(len([s for s in weights_pct.keys() if s in sizing_audit]))
 
     initial_selected_symbols = [str(k) for k in list(weights_pct.keys())]
     final_selected_symbols = [str(k) for k in list(executed_weights_pct.keys())]
