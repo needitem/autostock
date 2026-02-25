@@ -76,8 +76,8 @@ def set_chat_style(chat_id: str | int, style: str) -> str:
 
 def style_label(style: str) -> str:
     mapping = {
-        "beginner": "초보",
-        "standard": "표준",
-        "detail": "상세",
+        "beginner": "Beginner",
+        "standard": "Standard",
+        "detail": "Detail",
     }
-    return mapping.get(normalize_style(style), "초보")
+    return mapping.get(normalize_style(style), "Beginner")

@@ -24,7 +24,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bot import formatters as fmt
 from bot import keyboards as kb
 from bot.handlers import button_callback
-from bot.scan_cache import get_scan_result
 from bot.scheduler_config import (
     format_us_rebalance_message,
     format_us_report_message,
@@ -102,13 +101,13 @@ async def _send_main_menu(update: Update) -> None:
     save_chat_id(chat_id)
     style = get_chat_style(chat_id)
 
-    text = "<b>AutoStock</b>\n" + ("-" * 26) + "\n\n"
+    text = "<b>AutoStock Rebalance Hub</b>\n" + ("-" * 26) + "\n\n"
     text += "Quick start:\n"
-    text += "1) Check top ideas\n"
-    text += "2) Analyze a ticker\n"
-    text += "3) Check risk sentiment\n\n"
+    text += "1) Run US report (daily data refresh)\n"
+    text += "2) Run US rebalance (portfolio recommendation)\n"
+    text += "3) Check latest rebalance snapshot\n\n"
     text += f"Display mode: <b>{style_label(style)}</b>\n"
-    text += "You can also type a ticker directly.\n"
+    text += "You can also type a ticker directly for chart analysis.\n"
     text += "Example: <code>AAPL</code>, <code>TSLA</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
 
@@ -143,33 +142,12 @@ async def style_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(current))
 
 
-async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message is None or update.effective_chat is None:
-        return
-
-    await update.message.reply_text("Running scan...")
-
-    try:
-        from config import load_all_us_stocks
-
-        chat_id = str(update.effective_chat.id)
-        style = get_chat_style(chat_id)
-        result, used_cache = get_scan_result(load_all_us_stocks(), max_age_sec=240)
-
-        text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
-        if used_cache:
-            text += "\n\n<i>Using recent cached scan.</i>"
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.back())
-    except Exception as e:
-        await update.message.reply_text(f"Scan failed: {e}", reply_markup=kb.back())
-
-
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.effective_chat is None:
         return
 
     if not context.args:
-        await update.message.reply_text("Please enter a ticker.", reply_markup=kb.analyze_menu())
+        await update.message.reply_text("Please enter a ticker. Example: /analyze AAPL", reply_markup=kb.back())
         return
 
     symbol = context.args[0].upper()
@@ -216,7 +194,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         if analysis is None:
             await update.message.reply_text(
                 f"No data found for '{symbol}'.\n\nPlease send a valid US ticker.",
-                reply_markup=kb.back("analyze_menu", "Analyze"),
+                reply_markup=kb.back(),
             )
             return
 
@@ -267,63 +245,6 @@ async def us_rebalance_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"US rebalance failed: {e}")
 
 
-async def scheduled_daily_scan(context) -> None:
-    chat_id = get_saved_chat_id()
-    if not chat_id:
-        print("[scheduler] chat_id missing; skip daily scan")
-        return
-
-    print("[scheduler] daily scan started")
-    try:
-        from config import load_all_us_stocks
-
-        style = get_chat_style(chat_id)
-        result, used_cache = get_scan_result(load_all_us_stocks(), max_age_sec=3600)
-        text = fmt.format_scan_brief(result["results"], result["total"], top_n=10, style=style)
-        if used_cache:
-            text += "\n\n<i>Using recent cached scan.</i>"
-
-        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
-        print("[scheduler] daily scan sent")
-    except Exception as e:
-        print(f"[scheduler] daily scan failed: {e}")
-
-
-async def scheduled_ai_recommendation(context) -> None:
-    chat_id = get_saved_chat_id()
-    if not chat_id:
-        print("[scheduler] chat_id missing; skip ai recommendation")
-        return
-
-    print("[scheduler] ai recommendation started")
-    try:
-        from ai.analyzer import ai
-        from config import load_all_us_stocks, load_stock_categories
-        from core.stock_data import get_fear_greed_index, get_market_condition
-
-        style = get_chat_style(chat_id)
-        stocks = get_scan_result(load_all_us_stocks(), max_age_sec=5400)[0]["results"]
-        market_data = {
-            "fear_greed": get_fear_greed_index(),
-            "market_condition": get_market_condition(),
-        }
-        ai_result = ai.analyze_full_market(stocks, {}, market_data, load_stock_categories())
-
-        if "error" in ai_result:
-            print(f"[scheduler] ai failed: {ai_result['error']}")
-            return
-
-        stats = ai_result.get("stats", {})
-        text = f"<b>AI Report</b> ({ai_result.get('total', 0)} symbols)\n"
-        text += f"avg RSI {stats.get('avg_rsi', 0):.0f} | avg score {stats.get('avg_score', 0):.0f}\n"
-        text += f"display mode: {style_label(style)}\n\n"
-        text += ai_result["analysis"]
-        await send_long_message_bot(context.bot, chat_id, text)
-        print("[scheduler] ai recommendation sent")
-    except Exception as e:
-        print(f"[scheduler] ai recommendation failed: {e}")
-
-
 async def scheduled_us_report(context) -> None:
     print("[scheduler] daily us report started")
     try:
@@ -367,7 +288,6 @@ def run_bot(with_scheduler: bool = True) -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("style", style_command))
-    app.add_handler(CommandHandler("scan", scan_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("us_report", us_report_command))
     app.add_handler(CommandHandler("us_rebalance", us_rebalance_command))

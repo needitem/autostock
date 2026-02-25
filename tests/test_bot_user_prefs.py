@@ -10,4 +10,4 @@ def test_short_alias_maps_to_beginner():
 
 
 def test_style_label_uses_beginner_for_legacy_value():
-    assert style_label("compact") == "초보"
+    assert style_label("compact") == "Beginner"

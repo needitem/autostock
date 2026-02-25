@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Telegram inline keyboard builders."""
 
 from __future__ import annotations
@@ -9,21 +9,6 @@ import sys
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-TOP_STOCKS = [
-    "NVDA",
-    "AAPL",
-    "MSFT",
-    "GOOGL",
-    "AMZN",
-    "META",
-    "TSLA",
-    "AMD",
-    "NFLX",
-    "AVGO",
-    "SPY",
-    "QQQ",
-]
 
 
 def btn(text: str, data: str) -> InlineKeyboardButton:
@@ -47,24 +32,11 @@ def trading_enabled() -> bool:
     )
 
 
-def grid(items: list[str], prefix: str, cols: int = 4) -> list[list[InlineKeyboardButton]]:
-    rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
-    for item in items:
-        row.append(btn(item, f"{prefix}{item}"))
-        if len(row) == cols:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    return rows
-
-
 def main_menu() -> InlineKeyboardMarkup:
     rows = [
-        [btn("Today Picks", "recommend"), btn("Market Scan", "scan")],
-        [btn("Stock Analyze", "analyze_menu"), btn("AI Report", "ai_recommend")],
-        [btn("Fear/Greed", "fear_greed")],
+        [btn("Run US Report", "run_us_report")],
+        [btn("Run US Rebalance", "run_us_rebalance")],
+        [btn("Latest Rebalance", "latest_rebalance")],
         [btn("Display Settings", "display_settings")],
     ]
     if trading_enabled():
@@ -78,18 +50,11 @@ def back(to: str = "main", label: str = "Back") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[btn(label, to), btn("Main", "main")]])
 
 
-def analyze_menu() -> InlineKeyboardMarkup:
-    keyboard = grid(TOP_STOCKS, "a_", cols=4)
-    keyboard.append([btn("Type ticker manually", "analyze_input")])
-    keyboard.append([btn("Main", "main")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def stock_detail(symbol: str) -> InlineKeyboardMarkup:
+def stock_detail(symbol: str) -> InlineKeyboardMarkup:  # noqa: ARG001 - kept for call-site compatibility
     return InlineKeyboardMarkup(
         [
-            [btn("AI Summary", f"ai_{symbol}")],
-            [btn("Other Ticker", "analyze_menu"), btn("Recommendations", "recommend")],
+            [btn("Run US Rebalance", "run_us_rebalance")],
+            [btn("Latest Rebalance", "latest_rebalance")],
             [btn("Main", "main")],
         ]
     )

@@ -58,15 +58,6 @@ def _style_level(style: str) -> int:
     return 0
 
 
-def _stage_label(stage: str) -> str:
-    mapping = {
-        "right_knee": "Early uptrend",
-        "mid_trend": "Trend continuation",
-        "right_shoulder": "Late trend",
-    }
-    return mapping.get(stage, stage or "-")
-
-
 def _decision_text(total_score: float, grade: str, risk_score: float) -> tuple[str, str]:
     if risk_score >= 70:
         return "WAIT", "Risk score is high."
@@ -161,81 +152,6 @@ def format_analysis(data: dict, style: str = "beginner") -> str:
     return text
 
 
-def format_recommendations(stocks: list, total: int, style: str = "beginner") -> str:
-    level = _style_level(style)
-    text = header("Recommendations", "TOP") + "\n"
-    text += f"Universe analyzed: {total}\n"
-
-    if not stocks:
-        text += "\nNo candidates passed current filters."
-        return text
-
-    shown = stocks[:10]
-    for i, row in enumerate(shown, 1):
-        score = row.get("score", {})
-        plan = row.get("trade_plan", {})
-
-        symbol = str(row.get("symbol", "-"))
-        price = _safe_float(row.get("price", 0))
-        total_score = _safe_float(score.get("total_score", row.get("investability_score", 0)))
-        grade = str(score.get("grade", "C"))
-        tradeable = bool(plan.get("tradeable", False))
-        stage = _stage_label(str(plan.get("positioning", {}).get("stage", "")))
-        rr2 = _safe_float(plan.get("risk_reward", {}).get("rr2", 0))
-
-        text += f"\n\n<b>{i}. {symbol}</b> {usd(price)}"
-        text += f"\nScore {total_score:.0f} ({grade}) | Stage {stage} | RR2 {rr2:.2f}"
-
-        if level == 0:
-            text += "\nAction: BUY candidate" if tradeable else "\nAction: WAIT"
-        else:
-            entry = _safe_float(plan.get("entry", {}).get("buy2", 0))
-            stop = _safe_float(plan.get("stop_loss", 0))
-            target2 = _safe_float(plan.get("targets", {}).get("target2", 0))
-            if entry > 0:
-                text += f"\nEntry {usd(entry)}"
-            if stop > 0:
-                text += f" | Stop {usd(stop)}"
-            if target2 > 0:
-                text += f" | Target2 {usd(target2)}"
-
-    text += f"\n\n{LINE}\nShown: {len(shown)}"
-    return text
-
-
-def format_scan_brief(results: list, total: int, top_n: int = 12, style: str = "beginner") -> str:
-    level = _style_level(style)
-    ranked = sorted(
-        results,
-        key=lambda x: -_safe_float(
-            x.get("investability_score", x.get("quality_score", (x.get("score", {}) or {}).get("total_score", 0)))
-        ),
-    )
-
-    text = header("Market Scan", "SCAN")
-    text += f"\nTotal analyzed: {total}"
-
-    if not ranked:
-        return text + "\n\nNo scan results."
-
-    for i, row in enumerate(ranked[:top_n], 1):
-        score = row.get("score", {})
-        total_score = _safe_float(score.get("total_score", row.get("investability_score", 0)))
-        grade = str(score.get("grade", "C"))
-        symbol = str(row.get("symbol", "-"))
-        price = _safe_float(row.get("price", 0))
-        rsi = _safe_float(row.get("rsi", 50))
-        rs63 = _safe_float(row.get("relative_strength_63d", 0))
-        text += f"\n\n<b>{i}. {symbol}</b> {usd(price)}"
-        text += f"\nScore {total_score:.0f} ({grade}) | RSI {rsi:.0f} | RS63 {rs63:+.1f}%"
-        if level >= 2:
-            vol_ratio = _safe_float(row.get("volume_ratio", 1.0))
-            bb = _safe_float(row.get("bb_position", 50))
-            text += f"\nBB {bb:.0f}% | Volume {vol_ratio:.2f}x"
-
-    return text
-
-
 def format_balance(balance: dict, style: str = "beginner") -> str:
     level = _style_level(style)
     holdings = balance.get("holdings", []) or []
@@ -293,26 +209,5 @@ def format_api_status(status: dict, style: str = "beginner") -> str:
         text += f"\nAccount: {status.get('account', '-') }"
     else:
         text += f"\nError: {status.get('error', '-') }"
-
-    return text
-
-
-def format_fear_greed(fg: dict, style: str = "beginner") -> str:
-    score = _safe_float(fg.get("score", 0))
-    rating = str(fg.get("rating", "N/A"))
-    text = header("Fear & Greed", "FG")
-    text += f"\nScore: <b>{score:.0f}</b>/100"
-    text += f"\nRating: {rating}"
-
-    if score <= 25:
-        text += "\nContext: Extreme fear (high volatility regime)."
-    elif score <= 45:
-        text += "\nContext: Fear (risk-sensitive)."
-    elif score < 55:
-        text += "\nContext: Neutral."
-    elif score < 75:
-        text += "\nContext: Greed (risk-on bias)."
-    else:
-        text += "\nContext: Extreme greed (overheat risk)."
 
     return text
