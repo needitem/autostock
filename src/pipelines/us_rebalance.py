@@ -762,6 +762,344 @@ def _is_fill_eligible(row: dict[str, Any]) -> bool:
     return True
 
 
+def _normalized_price_levels(values: Any, *, ascending: bool) -> list[float]:
+    out: list[float] = []
+    for v in values or []:
+        fv = _f(v, 0.0)
+        if fv > 0:
+            out.append(float(fv))
+    if not out:
+        return []
+    unique = sorted(set(round(x, 4) for x in out), reverse=not ascending)
+    return [float(x) for x in unique]
+
+
+def _symbol_price_plan(
+    *,
+    symbol: str,
+    row: dict[str, Any] | None,
+    target_weight_pct: float,
+    current_weight_pct: float,
+    risk_budget_pct: float,
+    max_support_distance_atr: float,
+    risk_off_context: bool,
+) -> dict[str, Any]:
+    plan: dict[str, Any] = {
+        "symbol": symbol,
+        "status": "ok",
+        "warnings": [],
+        "risk_cap": {
+            "enabled": False,
+            "risk_budget_pct": round(float(max(0.0, risk_budget_pct)), 4),
+            "stop_distance_pct": None,
+            "max_weight_by_risk_pct": None,
+            "target_weight_before_cap_pct": round(float(max(0.0, target_weight_pct)), 2),
+            "target_weight_after_cap_pct": round(float(max(0.0, target_weight_pct)), 2),
+            "cap_applied": False,
+        },
+    }
+    if not isinstance(row, dict):
+        plan["status"] = "no_feature_data"
+        plan["warnings"].append("missing_candidate_features")
+        return plan
+
+    price = _f(row.get("price"), 0.0)
+    if price <= 0:
+        plan["status"] = "invalid_price"
+        plan["warnings"].append("price_missing_or_non_positive")
+        return plan
+
+    atr = _f(row.get("atr"), 0.0)
+    if atr <= 0:
+        atr_pct = abs(_f(row.get("atr_pct"), 0.0))
+        if atr_pct > 0:
+            atr = price * atr_pct / 100.0
+    if atr <= 0:
+        atr = max(price * 0.01, 0.01)
+        plan["warnings"].append("atr_fallback_used")
+    atr = max(atr, 0.01)
+
+    supports = _normalized_price_levels(row.get("support"), ascending=False)
+    resistances = _normalized_price_levels(row.get("resistance"), ascending=True)
+    support_primary = supports[0] if supports else None
+    resistance_primary = resistances[0] if resistances else None
+
+    supports_below = [x for x in supports if x < price]
+    if supports_below:
+        support_used = supports_below[0]
+        support_source = f"support[{supports.index(support_used)}]"
+        if support_primary is not None and support_primary >= price:
+            plan["warnings"].append("support0_above_price_using_next_support")
+    else:
+        support_used = max(0.01, price - atr)
+        support_source = "fallback_price_minus_1atr"
+        if supports:
+            plan["warnings"].append("no_support_below_price_using_fallback")
+        else:
+            plan["warnings"].append("missing_support_using_fallback")
+
+    resistances_above = [x for x in resistances if x > price]
+    if resistances_above:
+        resistance_used = resistances_above[0]
+        resistance_source = f"resistance[{resistances.index(resistance_used)}]"
+        next_resistance = resistances_above[1] if len(resistances_above) > 1 else None
+    else:
+        if resistances:
+            resistance_used = max(resistances)
+            resistance_source = "highest_known_resistance_breakout"
+            plan["warnings"].append("price_above_known_resistance_breakout")
+        else:
+            resistance_used = price + atr * 1.8
+            resistance_source = "fallback_price_plus_1.8atr"
+            plan["warnings"].append("missing_resistance_using_fallback")
+        next_resistance = None
+
+    is_breakout = bool(resistance_primary is not None and price >= resistance_primary)
+    support_distance_atr = max(0.0, (price - support_used) / atr)
+    entry_mode = "active"
+    activation_reason = "support_valid"
+    if support_used >= price:
+        entry_mode = "hold"
+        activation_reason = "support_not_below_price"
+    elif is_breakout:
+        entry_mode = "breakout_retest_only"
+        activation_reason = "price_at_or_above_resistance"
+    elif support_distance_atr > max(0.5, float(max_support_distance_atr)):
+        entry_mode = "watch_retest"
+        activation_reason = "support_too_far_in_atr"
+
+    buy1 = min(price - atr * 0.1, support_used + atr * 0.2)
+    buy2 = support_used - atr * 0.6
+    buy3 = support_used - atr * 1.0
+    buy_levels = [max(0.01, buy1), max(0.01, buy2), max(0.01, buy3)]
+    for i in range(1, len(buy_levels)):
+        if buy_levels[i] >= buy_levels[i - 1]:
+            buy_levels[i] = max(0.01, buy_levels[i - 1] - max(atr * 0.05, 0.01))
+
+    if entry_mode == "active":
+        buy_split = [40.0, 35.0, 25.0]
+    else:
+        # Safety-first: place only the first ladder level until structure is confirmed.
+        buy_split = [100.0, 0.0, 0.0]
+
+    split_sum = max(1e-9, sum(x for x in buy_split if x > 0))
+    avg_entry = float(sum(px * (w / split_sum) for px, w in zip(buy_levels, buy_split)))
+    stop = max(0.01, support_used - atr * 1.5)
+    hard_stop = max(0.01, stop - atr * 0.2)
+    risk_unit = max(avg_entry - stop, max(0.01, atr * 0.2))
+
+    tp1_rr = avg_entry + risk_unit * 1.5
+    tp2_rr = avg_entry + risk_unit * 2.5
+    tp1_cap = resistance_used - atr * 0.2 if resistance_used > 0 else tp1_rr
+    tp1 = min(tp1_rr, tp1_cap)
+    tp1 = max(tp1, avg_entry + atr * 0.2)
+    if next_resistance is not None and next_resistance > 0:
+        tp2_cap = next_resistance - atr * 0.2
+    elif resistance_used > 0:
+        tp2_cap = resistance_used + atr * 0.6
+    else:
+        tp2_cap = tp2_rr
+    tp2 = min(tp2_rr, tp2_cap)
+    tp2 = max(tp2, tp1 + atr * 0.2)
+
+    stop_distance_pct = 0.0
+    if avg_entry > 0:
+        stop_distance_pct = max(0.0, (avg_entry - stop) / avg_entry * 100.0)
+    risk_cap = plan["risk_cap"]
+    risk_cap["enabled"] = bool(stop_distance_pct > 0 and risk_budget_pct > 0 and target_weight_pct > 0)
+    risk_cap["stop_distance_pct"] = round(stop_distance_pct, 4) if stop_distance_pct > 0 else None
+    if risk_cap["enabled"]:
+        max_w = min(100.0, max(0.0, float(risk_budget_pct) / (stop_distance_pct / 100.0)))
+        capped_target = min(float(target_weight_pct), float(max_w))
+        risk_cap["max_weight_by_risk_pct"] = round(max_w, 4)
+        risk_cap["target_weight_after_cap_pct"] = round(capped_target, 2)
+        risk_cap["cap_applied"] = bool(capped_target + 1e-9 < float(target_weight_pct))
+    else:
+        risk_cap["target_weight_after_cap_pct"] = round(float(max(0.0, target_weight_pct)), 2)
+
+    reduce_delta_pct = max(0.0, float(current_weight_pct) - float(target_weight_pct))
+    structure_break = bool(price <= support_used)
+    immediate_reduce_pct = 0.0
+    if reduce_delta_pct > 1e-9 and (risk_off_context or structure_break):
+        immediate_reduce_pct = 50.0
+
+    base_res_for_sell = resistance_used if resistance_used > 0 else price
+    sell1 = max(price, base_res_for_sell - atr * 0.2)
+    sell2 = base_res_for_sell + atr * 0.3
+    sell3 = base_res_for_sell + atr * 0.8
+    if sell2 < sell1:
+        sell2 = sell1 + atr * 0.2
+    if sell3 < sell2:
+        sell3 = sell2 + atr * 0.2
+
+    plan.update(
+        {
+            "symbol": symbol,
+            "anchors": {
+                "price": round(price, 4),
+                "atr": round(atr, 4),
+                "support_primary": support_primary,
+                "support_used": round(support_used, 4),
+                "support_source": support_source,
+                "resistance_primary": resistance_primary,
+                "resistance_used": round(resistance_used, 4) if resistance_used > 0 else None,
+                "resistance_source": resistance_source,
+                "next_resistance_used": round(next_resistance, 4) if next_resistance else None,
+                "is_breakout": bool(is_breakout),
+                "support_distance_atr": round(support_distance_atr, 4),
+                "max_support_distance_atr": round(max(0.5, float(max_support_distance_atr)), 4),
+            },
+            "entry": {
+                "mode": entry_mode,
+                "activation_reason": activation_reason,
+                "waterfall": True,
+                "levels": [
+                    {"name": "buy1", "price": round(buy_levels[0], 2), "split_pct": round(buy_split[0], 2)},
+                    {"name": "buy2", "price": round(buy_levels[1], 2), "split_pct": round(buy_split[1], 2)},
+                    {"name": "buy3", "price": round(buy_levels[2], 2), "split_pct": round(buy_split[2], 2)},
+                ],
+                "average_entry_price": round(avg_entry, 2),
+            },
+            "stop": {
+                "close_stop_price": round(stop, 2),
+                "hard_stop_price": round(hard_stop, 2),
+                "close_rule": "daily_close_below_stop",
+                "hard_stop_buffer_atr": 0.2,
+            },
+            "targets": {
+                "tp1_price": round(tp1, 2),
+                "tp2_price": round(tp2, 2),
+                "take_profit_split_pct": [50.0, 25.0, 25.0],
+                "after_tp1_stop_policy": "move_stop_to_entry_minus_0.1atr",
+                "runner_trailing": {
+                    "runner_pct": 25.0,
+                    "method": "highest_close_minus_atr",
+                    "atr_multiple": 2.0,
+                },
+            },
+            "rebalance_reduce": {
+                "reduce_needed_pct": round(reduce_delta_pct, 2),
+                "immediate_reduce_pct": round(immediate_reduce_pct, 2),
+                "limit_levels": [
+                    {"name": "sell1", "price": round(sell1, 2), "split_pct": 40.0},
+                    {"name": "sell2", "price": round(sell2, 2), "split_pct": 35.0},
+                    {"name": "sell3", "price": round(sell3, 2), "split_pct": 25.0},
+                ],
+                "context_flags": {
+                    "risk_off_context": bool(risk_off_context),
+                    "structure_break": bool(structure_break),
+                },
+            },
+            "risk": {
+                "r_price": round(risk_unit, 4),
+                "stop_distance_pct": round(stop_distance_pct, 4),
+                "risk_budget_pct": round(float(max(0.0, risk_budget_pct)), 4),
+            },
+        }
+    )
+    return plan
+
+
+def _build_execution_plans(
+    *,
+    target_weights_pct: dict[str, float],
+    prev_port: dict[str, float],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    risk_budget_pct: float,
+    max_support_distance_atr: float,
+    risk_off_context: bool,
+    symbols: list[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
+    if symbols is None:
+        symbols = sorted(set(target_weights_pct.keys()) | set(prev_pct.keys()))
+    out: dict[str, dict[str, Any]] = {}
+    for sym in symbols:
+        tgt = float(target_weights_pct.get(sym, 0.0))
+        cur = float(prev_pct.get(sym, 0.0))
+        row = feature_by_symbol.get(sym)
+        out[sym] = _symbol_price_plan(
+            symbol=sym,
+            row=row,
+            target_weight_pct=tgt,
+            current_weight_pct=cur,
+            risk_budget_pct=risk_budget_pct,
+            max_support_distance_atr=max_support_distance_atr,
+            risk_off_context=risk_off_context,
+        )
+    return out
+
+
+def _apply_execution_risk_cap(
+    target_weights_pct: dict[str, float],
+    prev_port: dict[str, float],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    risk_budget_pct: float,
+    max_support_distance_atr: float,
+    risk_off_context: bool,
+    enabled: bool = True,
+) -> tuple[dict[str, float], dict[str, dict[str, Any]], dict[str, Any]]:
+    plans = _build_execution_plans(
+        target_weights_pct=target_weights_pct,
+        prev_port=prev_port,
+        feature_by_symbol=feature_by_symbol,
+        risk_budget_pct=risk_budget_pct,
+        max_support_distance_atr=max_support_distance_atr,
+        risk_off_context=risk_off_context,
+        symbols=sorted(target_weights_pct.keys()),
+    )
+
+    if not enabled:
+        return (
+            {k: float(v) for k, v in target_weights_pct.items() if float(v) > 1e-9},
+            plans,
+            {
+                "enabled": False,
+                "risk_budget_pct": round(float(max(0.0, risk_budget_pct)), 4),
+                "symbols_capped": [],
+                "target_before_pct": round(float(sum(target_weights_pct.values())), 2),
+                "target_after_pct": round(float(sum(target_weights_pct.values())), 2),
+                "exposure_reduction_pct": 0.0,
+            },
+        )
+
+    out: dict[str, float] = {}
+    capped: list[dict[str, Any]] = []
+    before = float(sum(target_weights_pct.values()))
+    for sym, tgt in target_weights_pct.items():
+        tgt_f = float(tgt)
+        plan = plans.get(sym, {})
+        risk_cap = plan.get("risk_cap", {}) if isinstance(plan, dict) else {}
+        capped_target = tgt_f
+        if bool(risk_cap.get("enabled")):
+            max_w = _f(risk_cap.get("max_weight_by_risk_pct"), tgt_f)
+            if max_w > 0:
+                capped_target = min(tgt_f, float(max_w))
+        if capped_target > 1e-9:
+            out[sym] = float(capped_target)
+        if capped_target + 1e-9 < tgt_f:
+            capped.append(
+                {
+                    "symbol": sym,
+                    "target_before_pct": round(tgt_f, 2),
+                    "target_after_pct": round(capped_target, 2),
+                    "max_weight_by_risk_pct": round(_f(risk_cap.get("max_weight_by_risk_pct"), 0.0), 4),
+                    "stop_distance_pct": risk_cap.get("stop_distance_pct"),
+                }
+            )
+
+    after = float(sum(out.values()))
+    audit = {
+        "enabled": True,
+        "risk_budget_pct": round(float(max(0.0, risk_budget_pct)), 4),
+        "symbols_capped": capped,
+        "target_before_pct": round(before, 2),
+        "target_after_pct": round(after, 2),
+        "exposure_reduction_pct": round(max(0.0, before - after), 2),
+    }
+    return out, plans, audit
+
+
 def _resolve_fill_max_positions(
     fill_style: str,
     top_k: int,
@@ -1292,10 +1630,12 @@ def _build_orders(
     prev_port: dict[str, float],
     target_weights_pct: dict[str, float],
     min_trade_pct: float,
+    execution_plans: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     orders: list[dict[str, Any]] = []
     prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
     next_pct = {k: float(v) for k, v in target_weights_pct.items()}
+    execution_plans = execution_plans or {}
     for sym in sorted(set(prev_pct) | set(next_pct)):
         cur = prev_pct.get(sym, 0.0)
         tgt = next_pct.get(sym, 0.0)
@@ -1303,7 +1643,7 @@ def _build_orders(
         if abs(delta) < min_trade_pct:
             continue
         action = "BUY" if delta > 0 else "SELL"
-        orders.append(
+        order = (
             {
                 "symbol": sym,
                 "action": action,
@@ -1312,6 +1652,15 @@ def _build_orders(
                 "delta_pct": round(delta, 2),
             }
         )
+        plan = execution_plans.get(sym, {})
+        if isinstance(plan, dict):
+            if action == "BUY":
+                order["entry_plan"] = plan.get("entry", {})
+                order["stop_plan"] = plan.get("stop", {})
+                order["target_plan"] = plan.get("targets", {})
+            else:
+                order["reduce_plan"] = plan.get("rebalance_reduce", {})
+        orders.append(order)
     return orders
 
 
@@ -1319,11 +1668,13 @@ def _build_orders_with_skips(
     prev_port: dict[str, float],
     target_weights_pct: dict[str, float],
     min_trade_pct: float,
+    execution_plans: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     orders: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     prev_pct = {k: float(v) * 100.0 for k, v in prev_port.items() if k != "__CASH__"}
     next_pct = {k: float(v) for k, v in target_weights_pct.items()}
+    execution_plans = execution_plans or {}
     for sym in sorted(set(prev_pct) | set(next_pct)):
         cur = prev_pct.get(sym, 0.0)
         tgt = next_pct.get(sym, 0.0)
@@ -1343,7 +1694,7 @@ def _build_orders_with_skips(
                     }
                 )
             continue
-        orders.append(
+        order = (
             {
                 "symbol": sym,
                 "action": action,
@@ -1352,6 +1703,15 @@ def _build_orders_with_skips(
                 "delta_pct": round(delta, 2),
             }
         )
+        plan = execution_plans.get(sym, {})
+        if isinstance(plan, dict):
+            if action == "BUY":
+                order["entry_plan"] = plan.get("entry", {})
+                order["stop_plan"] = plan.get("stop", {})
+                order["target_plan"] = plan.get("targets", {})
+            else:
+                order["reduce_plan"] = plan.get("rebalance_reduce", {})
+        orders.append(order)
     return orders, skipped
 
 
@@ -1541,6 +1901,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             "ma50_gap": ma50_gap,
             "ma200_gap": ma200_gap,
             "bb_position": bb_pos,
+            "atr": _f(ind.get("atr", 0.0)),
             "atr_pct": _f(ind.get("atr_pct", 0.0)),
             "volume_ratio": vol_ratio,
             "support": ind.get("support", []),
@@ -1677,8 +2038,24 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     turnover_audit["selected_turnover_cap_pct"] = round(turnover_target_pct, 2)
     turnover_audit["applied_cap_pct"] = None if turnover_audit.get("mode") == "initial_build_no_constraint" else round(turnover_target_pct, 2)
 
+    risk_budget_pct = max(0.0, _env_float("AI_POSITION_RISK_BUDGET_PCT", 0.5))
+    max_support_distance_atr = max(0.5, _env_float("AI_ENTRY_MAX_SUPPORT_DISTANCE_ATR", 2.0))
+    enable_execution_risk_cap = _env_bool("AI_ENABLE_EXECUTION_RISK_CAP", True)
+    risk_off_context = str(regime.get("label", "neutral")).strip().lower() == "risk_off" or str(
+        (market_filter or {}).get("reason", "")
+    ).strip().lower() in {"benchmark_below_ma200"}
+    weights_pct, execution_plans_target, execution_risk_audit = _apply_execution_risk_cap(
+        target_weights_pct=weights_pct,
+        prev_port=prev_port,
+        feature_by_symbol=cand_by_symbol,
+        risk_budget_pct=risk_budget_pct,
+        max_support_distance_atr=max_support_distance_atr,
+        risk_off_context=risk_off_context,
+        enabled=enable_execution_risk_cap,
+    )
+
     min_trade_pct = float(os.getenv("AI_REBALANCE_MIN_TRADE_PCT", "1.0"))
-    allow_min_trade_refill = turnover_audit.get("mode") == "initial_build_no_constraint"
+    allow_min_trade_refill = turnover_audit.get("mode") == "initial_build_no_constraint" and not enable_execution_risk_cap
     weights_pct, min_trade_reconcile_audit = _reconcile_target_with_min_trade(
         prev_port=prev_port,
         target_weights_pct=weights_pct,
@@ -1703,7 +2080,15 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     exposure_gap_pct = max(0.0, float(effective_exposure_target_pct) - achieved_exposure_pct)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct)
+    execution_plans = _build_execution_plans(
+        target_weights_pct=weights_pct,
+        prev_port=prev_port,
+        feature_by_symbol=cand_by_symbol,
+        risk_budget_pct=risk_budget_pct,
+        max_support_distance_atr=max_support_distance_atr,
+        risk_off_context=risk_off_context,
+    )
+    orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct, execution_plans=execution_plans)
     if orders_skipped:
         # Final safety: align displayed target with executable portfolio if a residual small-delta skip remains.
         aligned_weights, aligned_cash, aligned_exposure = _executed_portfolio_from_orders(prev_port, orders)
@@ -1713,7 +2098,20 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         exposure_gap_pct = max(0.0, float(effective_exposure_target_pct) - achieved_exposure_pct)
         min_trade_reconcile_audit["forced_execution_alignment"] = True
         min_trade_reconcile_audit["residual_orders_skipped"] = orders_skipped
-        orders, orders_skipped = _build_orders_with_skips(prev_port, weights_pct, min_trade_pct)
+        execution_plans = _build_execution_plans(
+            target_weights_pct=weights_pct,
+            prev_port=prev_port,
+            feature_by_symbol=cand_by_symbol,
+            risk_budget_pct=risk_budget_pct,
+            max_support_distance_atr=max_support_distance_atr,
+            risk_off_context=risk_off_context,
+        )
+        orders, orders_skipped = _build_orders_with_skips(
+            prev_port,
+            weights_pct,
+            min_trade_pct,
+            execution_plans=execution_plans,
+        )
     else:
         min_trade_reconcile_audit["forced_execution_alignment"] = False
 
@@ -1815,6 +2213,20 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "candidates": candidates,
         "excluded_candidates": excluded_candidates[:500],
         "position_sizing_audit": sizing_audit,
+        "execution_risk_audit": execution_risk_audit,
+        "execution_price_model": {
+            "enabled": True,
+            "risk_cap_enabled": bool(enable_execution_risk_cap),
+            "risk_budget_pct": round(risk_budget_pct, 4),
+            "max_support_distance_atr": round(max_support_distance_atr, 4),
+            "entry_style": "waterfall",
+            "entry_split_pct_default": [40.0, 35.0, 25.0],
+            "entry_split_pct_watch": [100.0, 0.0, 0.0],
+            "target_split_pct": [50.0, 25.0, 25.0],
+            "runner_trailing_atr": 2.0,
+        },
+        "execution_plans_target_stage": execution_plans_target,
+        "execution_plans": execution_plans,
         "rebound_audit": rebound_audit,
         "sector_cap_audit": {
             "prefill": sector_cap_audit_prefill,

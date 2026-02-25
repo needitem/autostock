@@ -269,6 +269,98 @@ def test_reconcile_target_with_min_trade_blocks_risky_refill_symbols():
     assert any(b["symbol"] == "AEP" for b in audit["refill_blocked_symbols"])
 
 
+def test_symbol_price_plan_uses_next_support_when_primary_is_above_price():
+    row = {
+        "price": 100.0,
+        "atr": 5.0,
+        "atr_pct": 5.0,
+        "support": [105.0, 95.0, 90.0],
+        "resistance": [110.0, 120.0],
+    }
+    plan = reb._symbol_price_plan(
+        symbol="TEST",
+        row=row,
+        target_weight_pct=10.0,
+        current_weight_pct=0.0,
+        risk_budget_pct=0.5,
+        max_support_distance_atr=2.0,
+        risk_off_context=False,
+    )
+    assert plan["anchors"]["support_used"] == 95.0
+    assert "support0_above_price_using_next_support" in plan["warnings"]
+    assert plan["entry"]["mode"] in {"active", "watch_retest", "breakout_retest_only", "hold"}
+
+
+def test_symbol_price_plan_applies_stop_distance_risk_cap():
+    row = {
+        "price": 100.0,
+        "atr": 5.0,
+        "atr_pct": 5.0,
+        "support": [95.0, 90.0],
+        "resistance": [108.0, 115.0],
+    }
+    plan = reb._symbol_price_plan(
+        symbol="TEST",
+        row=row,
+        target_weight_pct=12.0,
+        current_weight_pct=0.0,
+        risk_budget_pct=0.5,
+        max_support_distance_atr=2.0,
+        risk_off_context=False,
+    )
+    risk_cap = plan["risk_cap"]
+    assert risk_cap["enabled"] is True
+    assert float(risk_cap["max_weight_by_risk_pct"]) < 12.0
+    assert risk_cap["cap_applied"] is True
+
+
+def test_apply_execution_risk_cap_reduces_target_weights_when_needed():
+    prev = {"__CASH__": 1.0}
+    target = {"AAPL": 12.0}
+    feat = {
+        "AAPL": {
+            "price": 100.0,
+            "atr": 5.0,
+            "atr_pct": 5.0,
+            "support": [95.0, 90.0],
+            "resistance": [108.0, 115.0],
+        }
+    }
+    out, plans, audit = reb._apply_execution_risk_cap(
+        target_weights_pct=target,
+        prev_port=prev,
+        feature_by_symbol=feat,
+        risk_budget_pct=0.5,
+        max_support_distance_atr=2.0,
+        risk_off_context=False,
+        enabled=True,
+    )
+    assert "AAPL" in out
+    assert out["AAPL"] < 12.0
+    assert len(audit["symbols_capped"]) == 1
+    assert plans["AAPL"]["risk_cap"]["cap_applied"] is True
+
+
+def test_build_orders_with_skips_includes_execution_price_hints():
+    prev = {"AAPL": 0.1, "__CASH__": 0.9}
+    target = {"AAPL": 0.0, "MSFT": 3.0}
+    execution_plans = {
+        "MSFT": {"entry": {"mode": "active"}, "stop": {"close_stop_price": 10.0}, "targets": {"tp1_price": 12.0}},
+        "AAPL": {"rebalance_reduce": {"limit_levels": [{"name": "sell1", "price": 100.0, "split_pct": 40.0}]}}
+    }
+    orders, _ = reb._build_orders_with_skips(
+        prev_port=prev,
+        target_weights_pct=target,
+        min_trade_pct=0.5,
+        execution_plans=execution_plans,
+    )
+    by_symbol = {o["symbol"]: o for o in orders}
+    assert "entry_plan" in by_symbol["MSFT"]
+    assert "stop_plan" in by_symbol["MSFT"]
+    assert "target_plan" in by_symbol["MSFT"]
+    assert "reduce_plan" in by_symbol["AAPL"]
+
+
 def test_executed_portfolio_from_orders_matches_only_executed_orders():
     prev = {"AAPL": 0.02, "MSFT": 0.03, "__CASH__": 0.95}
     orders = [
