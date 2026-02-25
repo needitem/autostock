@@ -12,12 +12,19 @@ import subprocess
 import tempfile
 import shutil
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 
 class AIAnalyzer:
     def __init__(self, model: str | None = None):
         self.provider = os.getenv("AI_PROVIDER", "codex-cli")
+        # Keep CLI auth path stable across shells. Without CODEX_HOME, some sessions
+        # fail to find existing login state and report false "Not logged in".
+        if not os.getenv("CODEX_HOME"):
+            home = Path.home() / ".codex"
+            if home.exists():
+                os.environ["CODEX_HOME"] = str(home)
         configured = os.getenv("CODEX_BIN", "codex")
         if os.name == "nt" and (configured or "").strip().lower() == "codex":
             configured = shutil.which("codex.cmd") or configured

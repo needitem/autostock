@@ -392,6 +392,9 @@ def _regime_controls(report: dict[str, Any]) -> dict[str, Any]:
         "max_weight_pct": max_weight,
         "turnover_target_pct": turnover,
         "min_adx": min_adx,
+        # Soft volume threshold used for warnings/sizing bias.
+        "volume_warn_threshold": min_vol_ratio,
+        # Backward-compat key kept for downstream readers.
         "min_volume_ratio": min_vol_ratio,
         "flow_confidence": flow_conf_key,
         "flow_confidence_multiplier": flow_conf_multiplier,
@@ -502,6 +505,50 @@ def _apply_weight_multipliers(
         audit["_scaled_to_100"] = False
     audit["_total_after_pct"] = round(float(sum(out.values())), 2)
     return out, audit
+
+
+def _apply_sector_cap(
+    target_weights_pct: dict[str, float],
+    feature_by_symbol: dict[str, dict[str, Any]],
+    sector_cap_pct: float,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    cap = max(0.0, min(100.0, float(sector_cap_pct)))
+    out = {k: float(v) for k, v in target_weights_pct.items() if float(v) > 1e-9}
+    if cap >= 100.0 or not out:
+        return out, {"enabled": False, "sector_cap_pct": round(cap, 2), "capped_sectors": []}
+
+    by_sector: dict[str, list[tuple[str, float]]] = {}
+    for sym, w in out.items():
+        sector = str((feature_by_symbol.get(sym, {}) or {}).get("sector", "Unknown")) or "Unknown"
+        by_sector.setdefault(sector, []).append((sym, float(w)))
+
+    capped_sectors: list[dict[str, Any]] = []
+    for sector, rows in by_sector.items():
+        total = float(sum(w for _, w in rows))
+        if total <= cap + 1e-9:
+            continue
+        scale = cap / total if total > 0 else 0.0
+        before = total
+        after = 0.0
+        for sym, w in rows:
+            nw = float(w) * scale
+            out[sym] = nw
+            after += nw
+        capped_sectors.append(
+            {
+                "sector": sector,
+                "before_pct": round(before, 2),
+                "after_pct": round(after, 2),
+                "scale": round(scale, 4),
+            }
+        )
+
+    return out, {
+        "enabled": True,
+        "sector_cap_pct": round(cap, 2),
+        "capped_sectors": capped_sectors,
+        "total_after_pct": round(float(sum(out.values())), 2),
+    }
 
 
 def _is_fill_eligible(row: dict[str, Any]) -> bool:
@@ -1120,9 +1167,11 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     max_weight_pct = min(max_weight_pct, regime["max_weight_pct"])
     regime_turnover_target_pct = float(regime.get("turnover_target_pct", base_turnover_target_pct))
     turnover_target_pct = min(base_turnover_target_pct, regime_turnover_target_pct)
+    effective_turnover_target_pct = turnover_target_pct
     regime["base_turnover_cap_pct"] = base_turnover_target_pct
     regime["regime_turnover_cap_pct"] = regime_turnover_target_pct
     regime["selected_turnover_cap_pct"] = turnover_target_pct
+    regime["effective_turnover_target_pct"] = effective_turnover_target_pct
 
     current_path = Path(os.getenv("AI_CURRENT_PORTFOLIO_JSON", str(OUTPUT_DIR / "current_portfolio.json")))
     if not current_path.exists():
@@ -1145,19 +1194,30 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     features: list[dict[str, Any]] = []
     excluded_candidates: list[dict[str, Any]] = []
     missing: list[str] = []
+    missing_diagnostics: list[dict[str, Any]] = []
     max_symbols = int(os.getenv("AI_REBALANCE_MAX_SYMBOLS", "0") or "0")
     volume_hard_floor = max(0.05, min(1.0, _f(os.getenv("AI_MIN_VOLUME_HARD_FLOOR", "0.10"), 0.10)))
+    regime["volume_hard_floor"] = round(volume_hard_floor, 3)
     if max_symbols > 0:
         symbols = symbols[:max_symbols]
 
     for sym in symbols:
         df = get_stock_data(sym)
-        if df is None or len(df) < 200:
+        if df is None:
             missing.append(sym)
+            if len(missing_diagnostics) < 200:
+                missing_diagnostics.append({"symbol": sym, "reason": "no_ohlcv"})
+            continue
+        if len(df) < 200:
+            missing.append(sym)
+            if len(missing_diagnostics) < 200:
+                missing_diagnostics.append({"symbol": sym, "reason": "insufficient_history", "rows": int(len(df))})
             continue
         ind = calculate_indicators(df)
         if not ind:
             missing.append(sym)
+            if len(missing_diagnostics) < 200:
+                missing_diagnostics.append({"symbol": sym, "reason": "indicator_calc_failed"})
             continue
         info = get_stock_info(sym)
         crosses = ind.get("crosses", []) or []
@@ -1231,11 +1291,27 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
             "filters_failed": [],
         }
         row["warnings"] = _candidate_warnings(row)
-        if vol_ratio < _f(regime.get("min_volume_ratio", 1.0), 1.0):
+        if vol_ratio < _f(regime.get("volume_warn_threshold", 1.0), 1.0):
+            row["warnings"].append("volume_below_warn_threshold")
+        # backward-compat alias for existing consumers
+        if "volume_below_warn_threshold" in row["warnings"]:
             row["warnings"].append("volume_below_regime_min")
         features.append(row)
 
+    requested_symbols = max(1, len(symbols))
+    fetched_symbols = requested_symbols - len(missing)
+    coverage_pct = round(100.0 * float(fetched_symbols) / float(requested_symbols), 2)
+    min_coverage_pct = max(0.0, min(100.0, _f(os.getenv("AI_REBALANCE_MIN_COVERAGE_PCT", "20"), 20.0)))
+    if coverage_pct < min_coverage_pct:
+        raise RuntimeError(
+            f"Insufficient market data coverage: {coverage_pct:.2f}% "
+            f"(required >= {min_coverage_pct:.2f}%). "
+            f"Fetched {fetched_symbols}/{requested_symbols} symbols."
+        )
+
     candidates = _select_candidates(features, prompt_max_symbols, include_symbols=prev_syms)
+    if not candidates:
+        raise RuntimeError("No candidates after filters. Check data source connectivity and filter thresholds.")
     fill_style = str(os.getenv("AI_FILL_TO_TARGET_STYLE", "balanced")).strip().lower()
     fill_max_positions_raw = int(os.getenv("AI_FILL_TO_TARGET_MAX_POSITIONS", "0") or "0")
     inferred_current_positions = min(int(top_k), len(candidates))
@@ -1304,6 +1380,8 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         reverse=True,
     )
     weights_pct, sizing_audit = _apply_weight_multipliers(weights_pct, cand_by_symbol, max_weight_pct)
+    sector_cap_pct = max(0.0, min(100.0, _f(os.getenv("AI_SECTOR_CAP_PCT", "100"), 100.0)))
+    weights_pct, sector_cap_audit = _apply_sector_cap(weights_pct, cand_by_symbol, sector_cap_pct)
     weights_pct, fill_audit = _fill_to_target_exposure(
         target_weights_pct=weights_pct,
         desired_exposure_pct=effective_exposure_target_pct,
@@ -1366,13 +1444,28 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         if sym in cand_by_symbol
     }
 
+    initial_selected_symbols = [str(k) for k in list(weights_pct.keys())]
+    final_selected_symbols = [str(k) for k in list(executed_weights_pct.keys())]
+    final_positions_n = len(final_selected_symbols)
+    reason_not_filled_to_top_k = None
+    if final_positions_n < int(top_k):
+        reason_not_filled_to_top_k = (
+            "insufficient_clean_candidates" if len(candidates) < int(top_k) else "post_filters_and_constraints"
+        )
+
     result = {
         "generated_at": datetime.now().isoformat(),
         "report_path": str(report_path),
         "universe": universe_name,
         "top_k": top_k,
+        "final_positions_n": final_positions_n,
+        "initial_selected_symbols": initial_selected_symbols,
+        "final_selected_symbols": final_selected_symbols,
+        "reason_not_filled_to_top_k": reason_not_filled_to_top_k,
         "max_weight_pct": max_weight_pct,
         "turnover_target_pct": turnover_target_pct,
+        "effective_turnover_target_pct": effective_turnover_target_pct,
+        "effective_turnover_source": "min(user,regime)",
         "turnover_audit": turnover_audit,
         "desired_exposure_raw_pct": round(final_exposure_target_pct, 2),
         "desired_exposure_pct": round(effective_exposure_target_pct, 2),
@@ -1420,7 +1513,9 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
         "candidates": candidates,
         "excluded_candidates": excluded_candidates[:500],
         "position_sizing_audit": sizing_audit,
+        "sector_cap_audit": sector_cap_audit,
         "missing_symbols": missing[:200],
+        "missing_diagnostics": missing_diagnostics,
         "orders": orders,
         "orders_skipped": orders_skipped,
         "chart_rationale": chart_rationale,
