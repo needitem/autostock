@@ -11,7 +11,10 @@ Usage:
   python src/main.py --deep-us        # US-only free pipeline report
   python src/main.py --all-us         # US-only full run (engines + rendered report)
   python src/main.py --rebalance-us   # US-only rebalance using report + charts
-  python src/main.py --backtest       # one-time strategy validation
+  python src/main.py --backtest       # Strategy V2 baseline + verification
+  python src/main.py --stock-backtest # Strategy V3 stock-first baseline + verification
+  python src/main.py --legacy-backtest  # legacy ticker-level backtest
+  python src/main.py --inventory-report  # inventory ledger/replenishment report (beta)
 """
 
 from __future__ import annotations
@@ -133,7 +136,108 @@ def run_ai_once() -> None:
         )
 
 
-def run_backtest_once(limit: int = 40) -> None:
+def run_strategy_v2_once(verify: bool = True) -> None:
+    from pipelines.strategy_v2_pipeline import run_strategy_v2_pipeline
+
+    print(f"[{datetime.now()}] strategy v2 baseline started...")
+    result = run_strategy_v2_pipeline(run_verify=verify)
+    summary = result.get("summary", {}) if isinstance(result, dict) else {}
+    verification = result.get("verification", {}) if isinstance(result, dict) else {}
+
+    metrics = verification.get("metrics", {}) if isinstance(verification, dict) else {}
+    portfolio_metrics = summary.get("portfolio_metrics", {}) if isinstance(summary, dict) else {}
+    ai = metrics.get("ai_portfolio") if isinstance(metrics.get("ai_portfolio"), dict) else portfolio_metrics.get("ai_portfolio", {})
+    qqq = metrics.get("benchmark") if isinstance(metrics.get("benchmark"), dict) else portfolio_metrics.get("benchmark", {})
+    alpha = verification.get("alpha", {}) if isinstance(verification, dict) else {}
+    turnover = verification.get("turnover", {}) if isinstance(verification, dict) else {}
+    turnover_ai = turnover.get("ai", {}) if isinstance(turnover.get("ai"), dict) else {}
+
+    ai_cagr = float(ai.get("cagr_pct", 0.0) or 0.0)
+    qqq_cagr = float(qqq.get("cagr_pct", 0.0) or 0.0)
+    ai_mdd = float(ai.get("max_drawdown_pct", 0.0) or 0.0)
+    qqq_mdd = float(qqq.get("max_drawdown_pct", 0.0) or 0.0)
+
+    print("\nstrategy v2 baseline")
+    print("=" * 70)
+    print(f"run_tag: {summary.get('run_tag', '-')}")
+    print(
+        f"window: {summary.get('start_date', '-')} -> {summary.get('end_date', '-')} "
+        f"({summary.get('snapshot_freq', '-')})"
+    )
+    print(f"engine: {summary.get('decision_engine', '-')}")
+    print(f"strategy CAGR: {ai_cagr:.2f}% | Sharpe: {float(ai.get('sharpe', 0.0) or 0.0):.2f} | MDD: {ai_mdd:.2f}%")
+    print(
+        f"benchmark CAGR: {qqq_cagr:.2f}% | Sharpe: {float(qqq.get('sharpe', 0.0) or 0.0):.2f} | "
+        f"MDD: {qqq_mdd:.2f}%"
+    )
+    print(f"CAGR diff: {ai_cagr - qqq_cagr:.2f}%p | MDD diff: {ai_mdd - qqq_mdd:.2f}%p")
+    if alpha:
+        print(
+            "alpha stats: "
+            f"NW p(two-sided)={float(alpha.get('nw_p_two_sided', 1.0) or 1.0):.3f} | "
+            f"P(alpha>0)={float(alpha.get('nw_p_gt0', 0.5) or 0.5):.3f}"
+        )
+    if turnover_ai:
+        print(f"avg turnover: {float(turnover_ai.get('mean', 0.0) or 0.0):.3f}")
+    print(f"summary_json: {result.get('summary_path')}")
+    if verify:
+        print(f"verification_json: {result.get('verification_json_path')}")
+        print(f"verification_md: {result.get('verification_md_path')}")
+    print("=" * 70)
+
+
+def run_strategy_v3_stock_once(verify: bool = True) -> None:
+    from pipelines.strategy_v4_stock_pipeline import run_strategy_v4_stock_pipeline
+
+    print(f"[{datetime.now()}] strategy v4 stock-momentum baseline started...")
+    result = run_strategy_v4_stock_pipeline(run_verify=verify)
+    summary = result.get("summary", {}) if isinstance(result, dict) else {}
+    verification = result.get("verification", {}) if isinstance(result, dict) else {}
+
+    metrics = verification.get("metrics", {}) if isinstance(verification, dict) else {}
+    portfolio_metrics = summary.get("portfolio_metrics", {}) if isinstance(summary, dict) else {}
+    ai = metrics.get("ai_portfolio") if isinstance(metrics.get("ai_portfolio"), dict) else portfolio_metrics.get("ai_portfolio", {})
+    qqq = metrics.get("benchmark") if isinstance(metrics.get("benchmark"), dict) else portfolio_metrics.get("benchmark", {})
+    alpha = verification.get("alpha", {}) if isinstance(verification, dict) else {}
+    turnover = verification.get("turnover", {}) if isinstance(verification, dict) else {}
+    turnover_ai = turnover.get("ai", {}) if isinstance(turnover.get("ai"), dict) else {}
+
+    ai_cagr = float(ai.get("cagr_pct", 0.0) or 0.0)
+    qqq_cagr = float(qqq.get("cagr_pct", 0.0) or 0.0)
+    ai_mdd = float(ai.get("max_drawdown_pct", 0.0) or 0.0)
+    qqq_mdd = float(qqq.get("max_drawdown_pct", 0.0) or 0.0)
+
+    print("\nstrategy v4 stock-momentum baseline")
+    print("=" * 70)
+    print(f"run_tag: {summary.get('run_tag', '-')}")
+    print(
+        f"window: {summary.get('start_date', '-')} -> {summary.get('end_date', '-')} "
+        f"({summary.get('snapshot_freq', '-')})"
+    )
+    print(f"engine: {summary.get('decision_engine', '-')}")
+    print(f"universe: {summary.get('universe', '-')}")
+    print(f"strategy CAGR: {ai_cagr:.2f}% | Sharpe: {float(ai.get('sharpe', 0.0) or 0.0):.2f} | MDD: {ai_mdd:.2f}%")
+    print(
+        f"benchmark CAGR: {qqq_cagr:.2f}% | Sharpe: {float(qqq.get('sharpe', 0.0) or 0.0):.2f} | "
+        f"MDD: {qqq_mdd:.2f}%"
+    )
+    print(f"CAGR diff: {ai_cagr - qqq_cagr:.2f}%p | MDD diff: {ai_mdd - qqq_mdd:.2f}%p")
+    if alpha:
+        print(
+            "alpha stats: "
+            f"NW p(two-sided)={float(alpha.get('nw_p_two_sided', 1.0) or 1.0):.3f} | "
+            f"P(alpha>0)={float(alpha.get('nw_p_gt0', 0.5) or 0.5):.3f}"
+        )
+    if turnover_ai:
+        print(f"avg turnover: {float(turnover_ai.get('mean', 0.0) or 0.0):.3f}")
+    print(f"summary_json: {result.get('summary_path')}")
+    if verify:
+        print(f"verification_json: {result.get('verification_json_path')}")
+        print(f"verification_md: {result.get('verification_md_path')}")
+    print("=" * 70)
+
+
+def run_legacy_backtest_once(limit: int = 40) -> None:
     from config import load_nasdaq_100
     from core.backtest import backtest_symbols
 
@@ -210,11 +314,35 @@ def run_all_us_once() -> None:
 
 
 def run_rebalance_us_once() -> None:
+    from pipelines.us_orchestrator import run_all_us_engines
     from pipelines.us_rebalance import run_us_rebalance
 
     print(f"[{datetime.now()}] us rebalance started...")
-    result = run_us_rebalance()
+    report_result = run_all_us_engines()
+    report_path = str(report_result.get("report_path", "") or "")
+    result = run_us_rebalance(report_path if report_path else None)
+    if report_path:
+        print(f"source_report_json: {report_path}")
     print(f"orders_csv: {result.get('orders_csv')}")
+
+
+def run_inventory_report_once() -> None:
+    from pipelines.inventory_report import run_inventory_report
+
+    print(f"[{datetime.now()}] inventory report started...")
+    result = run_inventory_report()
+    summary = result.get("summary", {}) if isinstance(result, dict) else {}
+    print(f"inventory_report_json: {result.get('report_path')}")
+    print(f"inventory_report_md: {result.get('md_path')}")
+    if isinstance(summary, dict):
+        print(
+            "summary: "
+            f"movements={summary.get('movement_count', 0)}, "
+            f"balances={summary.get('balance_count', 0)}, "
+            f"low_stock={summary.get('low_stock_count', 0)}, "
+            f"snapshot={summary.get('channel_snapshot_count', 0)}, "
+            f"mismatch={summary.get('mismatch_count', 0)}"
+        )
 
 
 def run_bot(with_scheduler: bool = True) -> None:
@@ -233,9 +361,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     mode.add_argument("--deep-us", action="store_true", help="Run US-only free pipeline")
     mode.add_argument("--all-us", action="store_true", help="Run US-only full engines + report")
     mode.add_argument("--rebalance-us", action="store_true", help="Run US-only rebalance")
-    mode.add_argument("--backtest", action="store_true", help="Run one-time backtest")
+    mode.add_argument(
+        "--backtest",
+        "--strategy-v2",
+        dest="backtest",
+        action="store_true",
+        help="Run Strategy V2 baseline + verification",
+    )
+    mode.add_argument("--stock-backtest", action="store_true", help="Run Strategy V3 stock-first baseline + verification")
+    mode.add_argument("--legacy-backtest", action="store_true", help="Run legacy ticker-level backtest")
+    mode.add_argument("--inventory-report", action="store_true", help="Run inventory report (beta)")
     parser.add_argument("--no-schedule", action="store_true", help="Run bot without scheduler")
-    parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan/backtest mode")
+    parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan/legacy-backtest mode")
     return parser.parse_args(argv)
 
 
@@ -265,7 +402,16 @@ def main(argv: list[str] | None = None) -> None:
         run_rebalance_us_once()
         return
     if args.backtest:
-        run_backtest_once(limit=args.limit)
+        run_strategy_v2_once(verify=True)
+        return
+    if args.stock_backtest:
+        run_strategy_v3_stock_once(verify=True)
+        return
+    if args.legacy_backtest:
+        run_legacy_backtest_once(limit=args.limit)
+        return
+    if args.inventory_report:
+        run_inventory_report_once()
         return
 
     run_bot(with_scheduler=not args.no_schedule)

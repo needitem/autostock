@@ -12,6 +12,20 @@ The AI path uses **Codex CLI login only** (ChatGPT session), with no manual API 
 
 `News collection modules were removed from runtime and tests.`
 
+## Current Direction
+
+The current baseline is moving away from weekly AI stock picking as the primary production thesis.
+
+- Strategy reference: `docs/strategy-v2.md`
+- Implementation plan: `.omx/plans/strategy-v2-regime-core.md`
+- Baseline runner: `python scripts/run_strategy_v2_baseline.py`
+- Experimental balance runner: `python scripts/run_strategy_v3_balance.py`
+- Stock-first runner: `python scripts/run_strategy_v3_stock_selector.py`
+- Stock-momentum runner: `python scripts/run_strategy_v4_stock_momentum.py`
+
+The checked-in V2 baseline currently uses a mixed `risk_on` sleeve of `TQQQ 80% + QQQ 20%`, plus a `QLD MA50` filter that downshifts leveraged states into `QQQ` before they stay too hot for too long.
+The stock-first redesign keeps `QQQ` as a market filter but buys individual Nasdaq-100 names instead of ETFs.
+
 ## Requirements
 
 - Python 3.11+
@@ -34,7 +48,7 @@ TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
 
 # Codex CLI only (no API key flow)
 AI_PROVIDER="codex-cli"
-AI_MODEL="gpt-5.2"
+AI_MODEL="gpt-5.4"
 CODEX_BIN="codex"
 
 # If your shell has a dead local proxy like http://127.0.0.1:9
@@ -52,7 +66,7 @@ US_REBALANCE_WEEKDAY="0"        # 0=Mon ... 6=Sun
 # Optional Codex retry/fallback
 AI_CLI_RETRIES=2
 AI_CLI_RETRY_DELAY_SEC=1.5
-AI_MODEL_FALLBACKS="gpt-5.3"
+AI_MODEL_FALLBACKS="gpt-5.4-pro,gpt-5.3,gpt-5.2"
 AI_FALLBACK_ON_AI_FAIL=1
 
 # Optional KIS integration
@@ -84,6 +98,13 @@ Telegram manual triggers (in chat):
 
 - `/us_report` : run report now
 - `/us_rebalance` : run rebalance now
+- `/inventory_report` : run inventory report (beta)
+
+Inventory report one-time (CLI):
+
+```bash
+python src/main.py --inventory-report
+```
 
 Telegram bot (without scheduler):
 
@@ -106,7 +127,8 @@ python src/main.py --ai
 One-time strategy backtest summary:
 
 ```bash
-python src/main.py --backtest --limit 40
+python src/main.py --backtest
+python src/main.py --legacy-backtest --limit 40
 ```
 
 ## AI Portfolio Backtest (Primary)
