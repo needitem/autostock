@@ -816,82 +816,6 @@ def _chart_momentum_portfolio(
     return {"positions": positions, "cash_pct": 0.0, "_chart_mode": True, "_sit_out": False}
 
 
-def _selector_stock_portfolio(
-    candidates: list[dict[str, Any]],
-    top_k: int,
-    weight_mode: str = "inv_vol",
-    min_positions_for_invest: int = 2,
-    scoring_mode: str = "balanced",
-) -> dict[str, Any]:
-    if not candidates or top_k <= 0:
-        return {"positions": [], "cash_pct": 100.0, "_selector_mode": True, "_sit_out": True}
-
-    eligible: list[dict[str, Any]] = []
-    for row in candidates:
-        if not isinstance(row, dict):
-            continue
-        r63 = _f(row.get("return_63d"), 0.0)
-        vol_ratio = _f(row.get("volume_ratio"), 1.0)
-        trend_ok = bool(row.get("trend_template_pass", False)) or (
-            _f(row.get("ma200_gap"), -99.0) > 0 and _f(row.get("ma50_gap"), -99.0) > 0
-        )
-        if not trend_ok:
-            continue
-        if r63 <= 0:
-            continue
-        if vol_ratio < 0.7:
-            continue
-        eligible.append(row)
-
-    min_required = max(1, int(min_positions_for_invest))
-    if len(eligible) < min_required:
-        return {"positions": [], "cash_pct": 100.0, "_selector_mode": True, "_sit_out": True}
-
-    ranked = sorted(
-        eligible,
-        key=lambda x: (
-            _chart_rank_score(x, scoring_mode=scoring_mode),
-            _f(x.get("return_63d"), -999.0),
-            _f(x.get("return_21d"), -999.0),
-        ),
-        reverse=True,
-    )
-    picked = ranked[: max(1, min(int(top_k), len(ranked)))]
-    if not picked:
-        return {"positions": [], "cash_pct": 100.0, "_selector_mode": True, "_sit_out": True}
-
-    wmode = str(weight_mode or "inv_vol").strip().lower()
-    if wmode not in {"inv_vol", "score", "equal"}:
-        wmode = "inv_vol"
-    raw_scores: dict[str, float] = {}
-    if wmode == "equal":
-        raw_scores = {str(x.get("symbol")): 1.0 for x in picked}
-    elif wmode == "score":
-        min_score = min(_chart_rank_score(x, scoring_mode=scoring_mode) for x in picked)
-        raw_scores = {
-            str(x.get("symbol")): max(0.1, _chart_rank_score(x, scoring_mode=scoring_mode) - min_score + 1.0)
-            for x in picked
-        }
-    else:
-        for x in picked:
-            sym = str(x.get("symbol"))
-            vol20 = _f(x.get("vol_20"), np.nan)
-            if not np.isfinite(vol20):
-                vol20 = max(0.6, _f(x.get("atr_pct"), 2.0)) / 100.0
-            raw_scores[sym] = float(1.0 / max(0.0025, vol20))
-    total = float(sum(raw_scores.values()))
-    if total <= 0:
-        w = 100.0 / float(len(picked))
-        positions = [{"symbol": str(x.get("symbol")), "weight_pct": w} for x in picked]
-    else:
-        positions = [
-            {"symbol": sym, "weight_pct": float(score / total * 100.0)}
-            for sym, score in raw_scores.items()
-            if sym
-        ]
-    return {"positions": positions, "cash_pct": 0.0, "_selector_mode": True, "_sit_out": False}
-
-
 def _stock_momentum_portfolio(
     candidates: list[dict[str, Any]],
     top_k: int,
@@ -2200,7 +2124,7 @@ def run() -> None:
     if execution_timing not in {"same_close", "next_open"}:
         execution_timing = "next_open"
     decision_engine = str(os.getenv("AI_DECISION_ENGINE", "chart")).strip().lower() or "chart"
-    if decision_engine not in {"ai", "chart", "selector", "stock_momentum", "trend", "regime"}:
+    if decision_engine not in {"ai", "chart", "stock_momentum", "trend", "regime"}:
         decision_engine = "chart"
     trend_risk_symbol = _normalize_symbol(os.getenv("AI_TREND_RISK_SYMBOL", "TQQQ")) or "TQQQ"
     trend_mid_symbol = _normalize_symbol(os.getenv("AI_TREND_MID_SYMBOL", "QQQ")) or "QQQ"
@@ -2402,16 +2326,6 @@ def run() -> None:
     chart_top_k_neutral = max(1, _i_env("AI_CHART_TOP_K_NEUTRAL", max(2, min(top_k, 5))))
     chart_top_k_risk_off = max(0, _i_env("AI_CHART_TOP_K_RISK_OFF", 0))
     chart_min_positions_for_invest = max(1, _i_env("AI_CHART_MIN_POSITIONS_FOR_INVEST", 2))
-    selector_weight_mode = str(os.getenv("AI_SELECTOR_WEIGHT_MODE", "inv_vol")).strip().lower() or "inv_vol"
-    if selector_weight_mode not in {"inv_vol", "score", "equal"}:
-        selector_weight_mode = "inv_vol"
-    selector_scoring_mode = str(os.getenv("AI_SELECTOR_SCORING_MODE", "balanced")).strip().lower() or "balanced"
-    if selector_scoring_mode not in {"balanced", "pure_momo", "low_vol_trend"}:
-        selector_scoring_mode = "balanced"
-    selector_use_universe_regime = _as_bool_env("AI_SELECTOR_USE_UNIVERSE_REGIME", False)
-    selector_top_k_neutral = max(0, _i_env("AI_SELECTOR_TOP_K_NEUTRAL", min(2, top_k)))
-    selector_top_k_risk_off = max(0, _i_env("AI_SELECTOR_TOP_K_RISK_OFF", 0))
-    selector_min_positions_for_invest = max(1, _i_env("AI_SELECTOR_MIN_POSITIONS_FOR_INVEST", 2))
     stock_momo_weight_mode = str(os.getenv("AI_STOCK_MOMO_WEIGHT_MODE", "equal")).strip().lower() or "equal"
     if stock_momo_weight_mode not in {"equal", "inv_vol", "score"}:
         stock_momo_weight_mode = "equal"
@@ -2638,8 +2552,6 @@ def run() -> None:
         )
         if decision_engine == "chart" and chart_use_universe_regime:
             algo_mkt["regime"] = _regime_from_universe_features(breadth_src, mkt.get("vix_close"))
-        elif decision_engine == "selector" and selector_use_universe_regime:
-            algo_mkt["regime"] = _regime_from_universe_features(breadth_src, mkt.get("vix_close"))
         breadth = _market_breadth(breadth_src)
         sector_scores = _sector_strength_scores(safe_feats)
 
@@ -2700,22 +2612,6 @@ def run() -> None:
                 held_syms,
                 scoring_mode=chart_scoring_mode,
             )
-        elif decision_engine == "selector":
-            if (
-                float(breadth.get("up200", 0.0)) < float(chart_min_breadth_up200)
-                or float(breadth.get("positive_63d", 0.0)) < float(chart_min_breadth_positive63)
-            ):
-                target_top_k = min(target_top_k, selector_top_k_risk_off)
-            elif str(algo_mkt.get("regime", "neutral")).lower() == "neutral":
-                target_top_k = min(target_top_k, selector_top_k_neutral)
-            elif str(algo_mkt.get("regime", "neutral")).lower() == "risk_off":
-                target_top_k = min(target_top_k, selector_top_k_risk_off)
-            candidates = _chart_candidates_with_holds(
-                safe_feats,
-                prompt_max_symbols,
-                held_syms,
-                scoring_mode=selector_scoring_mode,
-            )
         elif decision_engine == "stock_momentum":
             if str(algo_mkt.get("regime", "neutral")).lower() == "neutral":
                 target_top_k = min(target_top_k, stock_momo_top_k_neutral)
@@ -2759,14 +2655,6 @@ def run() -> None:
                     weight_mode=chart_weight_mode,
                     min_positions_for_invest=chart_min_positions_for_invest,
                     scoring_mode=chart_scoring_mode,
-                )
-            elif decision_engine == "selector":
-                out = _selector_stock_portfolio(
-                    candidates,
-                    top_k=target_top_k,
-                    weight_mode=selector_weight_mode,
-                    min_positions_for_invest=selector_min_positions_for_invest,
-                    scoring_mode=selector_scoring_mode,
                 )
             elif decision_engine == "stock_momentum":
                 out = _stock_momentum_portfolio(
@@ -3212,12 +3100,6 @@ def run() -> None:
         "chart_top_k_neutral": int(chart_top_k_neutral),
         "chart_top_k_risk_off": int(chart_top_k_risk_off),
         "chart_min_positions_for_invest": int(chart_min_positions_for_invest),
-        "selector_weight_mode": str(selector_weight_mode),
-        "selector_scoring_mode": str(selector_scoring_mode),
-        "selector_use_universe_regime": bool(selector_use_universe_regime),
-        "selector_top_k_neutral": int(selector_top_k_neutral),
-        "selector_top_k_risk_off": int(selector_top_k_risk_off),
-        "selector_min_positions_for_invest": int(selector_min_positions_for_invest),
         "stock_momo_weight_mode": str(stock_momo_weight_mode),
         "stock_momo_top_k_neutral": int(stock_momo_top_k_neutral),
         "stock_momo_top_k_risk_off": int(stock_momo_top_k_risk_off),

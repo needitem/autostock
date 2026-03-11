@@ -20,11 +20,10 @@ The current baseline is moving away from weekly AI stock picking as the primary 
 - Implementation plan: `.omx/plans/strategy-v2-regime-core.md`
 - Baseline runner: `python scripts/run_strategy_v2_baseline.py`
 - Experimental balance runner: `python scripts/run_strategy_v3_balance.py`
-- Stock-first runner: `python scripts/run_strategy_v3_stock_selector.py`
 - Stock-momentum runner: `python scripts/run_strategy_v4_stock_momentum.py`
 
 The checked-in V2 baseline currently uses a mixed `risk_on` sleeve of `TQQQ 80% + QQQ 20%`, plus a `QLD MA50` filter that downshifts leveraged states into `QQQ` before they stay too hot for too long.
-The stock-first redesign keeps `QQQ` as a market filter but buys individual Nasdaq-100 names instead of ETFs.
+The stock-momentum redesign keeps `QQQ` as a market filter but buys individual Nasdaq-100 names instead of ETFs.
 
 ## Requirements
 

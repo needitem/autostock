@@ -12,7 +12,7 @@ Usage:
   python src/main.py --all-us         # US-only full run (engines + rendered report)
   python src/main.py --rebalance-us   # US-only rebalance using report + charts
   python src/main.py --backtest       # Strategy V2 baseline + verification
-  python src/main.py --stock-backtest # Strategy V3 stock-first baseline + verification
+  python src/main.py --stock-backtest # Strategy V4 stock-momentum baseline + verification
   python src/main.py --legacy-backtest  # legacy ticker-level backtest
   python src/main.py --inventory-report  # inventory ledger/replenishment report (beta)
 """
@@ -186,7 +186,7 @@ def run_strategy_v2_once(verify: bool = True) -> None:
     print("=" * 70)
 
 
-def run_strategy_v3_stock_once(verify: bool = True) -> None:
+def run_strategy_v4_stock_once(verify: bool = True) -> None:
     from pipelines.strategy_v4_stock_pipeline import run_strategy_v4_stock_pipeline
 
     print(f"[{datetime.now()}] strategy v4 stock-momentum baseline started...")
@@ -368,7 +368,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Run Strategy V2 baseline + verification",
     )
-    mode.add_argument("--stock-backtest", action="store_true", help="Run Strategy V3 stock-first baseline + verification")
+    mode.add_argument("--stock-backtest", action="store_true", help="Run Strategy V4 stock-momentum baseline + verification")
     mode.add_argument("--legacy-backtest", action="store_true", help="Run legacy ticker-level backtest")
     mode.add_argument("--inventory-report", action="store_true", help="Run inventory report (beta)")
     parser.add_argument("--no-schedule", action="store_true", help="Run bot without scheduler")
@@ -405,7 +405,7 @@ def main(argv: list[str] | None = None) -> None:
         run_strategy_v2_once(verify=True)
         return
     if args.stock_backtest:
-        run_strategy_v3_stock_once(verify=True)
+        run_strategy_v4_stock_once(verify=True)
         return
     if args.legacy_backtest:
         run_legacy_backtest_once(limit=args.limit)
