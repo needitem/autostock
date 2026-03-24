@@ -4,6 +4,7 @@ Signal generation and bulk scanning.
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -20,6 +21,99 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    raw = str(os.getenv(key, "1" if default else "0")).strip().lower()
+    return raw in {"1", "true", "yes", "on", "y"}
+
+
+def _env_float(key: str, default: float) -> float:
+    return _safe_float(os.getenv(key, default), default)
+
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        return int(float(str(os.getenv(key, str(default))).strip()))
+    except Exception:
+        return int(default)
+
+
+_LIQUIDITY_TIER_RANK = {
+    "unknown": 0,
+    "illiquid": 1,
+    "thin": 2,
+    "medium": 3,
+    "high": 4,
+    "institutional": 5,
+}
+
+
+def _tier_rank(tier: str) -> int:
+    return _LIQUIDITY_TIER_RANK.get(str(tier or "unknown").strip().lower(), 0)
+
+
+def _safe_mode_config() -> dict[str, Any]:
+    enabled = _env_bool("AI_SAFE_MODE", True)
+    return {
+        "enabled": enabled,
+        "use_trend_template_gate": _env_bool("AI_SAFE_USE_TREND_TEMPLATE_GATE", True),
+        "require_bullish": _env_bool("AI_SAFE_REQUIRE_BULLISH", True),
+        "earnings_skip_days": max(0, _env_int("AI_SAFE_EARNINGS_SKIP_DAYS", 7)),
+        "min_liquidity_tier": str(os.getenv("AI_SAFE_MIN_LIQUIDITY_TIER", "medium")).strip().lower() or "medium",
+        "trend_rs63_min": _env_float("AI_SAFE_TREND_RS63_MIN", 0.0),
+        "risk_budget_mult": max(0.3, min(1.0, _env_float("AI_SAFE_RISK_BUDGET_MULT", 0.75))),
+        "max_position_pct": max(2.0, min(20.0, _env_float("AI_SAFE_MAX_POSITION_PCT", 10.0))),
+        "max_risk_pct": max(2.0, min(12.0, _env_float("AI_SAFE_MAX_RISK_PCT", 8.8))),
+        "min_rr2": max(1.0, min(3.0, _env_float("AI_SAFE_MIN_RR2", 1.35))),
+    }
+
+
+def _apply_safe_mode_market_profile(base_profile: dict[str, float], safe_mode: dict[str, Any]) -> dict[str, float]:
+    profile = dict(base_profile)
+    if not safe_mode.get("enabled", False):
+        return profile
+
+    profile["risk_budget_pct"] = max(0.05, profile["risk_budget_pct"] * float(safe_mode.get("risk_budget_mult", 0.75)))
+    profile["max_position_pct"] = min(profile["max_position_pct"], float(safe_mode.get("max_position_pct", 10.0)))
+    profile["max_risk_pct"] = min(profile["max_risk_pct"], float(safe_mode.get("max_risk_pct", 8.8)))
+    profile["min_rr2"] = max(profile["min_rr2"], float(safe_mode.get("min_rr2", 1.35)))
+    return profile
+
+
+def _trend_template_profile(ind: dict[str, Any], rs_63d: float, safe_mode: dict[str, Any]) -> dict[str, Any]:
+    price = _safe_float(ind.get("price"), 0.0)
+    ma50 = _safe_float(ind.get("ma50"), 0.0)
+    ma150 = _safe_float(ind.get("ma150"), 0.0)
+    ma200 = _safe_float(ind.get("ma200"), 0.0)
+    ma200_30d_ago = _safe_float(ind.get("ma200_30d_ago"), ma200)
+    low_52w = _safe_float(ind.get("low_52w"), 0.0)
+    high_52w = _safe_float(ind.get("high_52w"), 0.0)
+    rs63_min = _safe_float(safe_mode.get("trend_rs63_min"), 0.0)
+
+    checks = {
+        "price_above_ma50_150_200": price > ma50 and price > ma150 and price > ma200,
+        "ma_stack_50_150_200": ma50 > ma150 > ma200,
+        "ma200_trend_up_30d": ma200 >= ma200_30d_ago,
+        "above_52w_low_plus_30pct": low_52w > 0 and price >= low_52w * 1.30,
+        "within_25pct_of_52w_high": high_52w > 0 and price >= high_52w * 0.75,
+        "relative_strength_63d": rs_63d >= rs63_min,
+    }
+    return {
+        "pass": all(checks.values()),
+        "rs63_min": round(rs63_min, 2),
+        "checks": checks,
+        "anchors": {
+            "price": round(price, 2),
+            "ma50": round(ma50, 2),
+            "ma150": round(ma150, 2),
+            "ma200": round(ma200, 2),
+            "ma200_30d_ago": round(ma200_30d_ago, 2),
+            "low_52w": round(low_52w, 2),
+            "high_52w": round(high_52w, 2),
+            "relative_strength_63d": round(rs_63d, 2),
+        },
+    }
 
 
 _SCORING_FINANCIAL_KEYS = (
@@ -358,12 +452,14 @@ def _build_trade_plan(
     rs_21d = _safe_float(ind.get("relative_strength_21d"), 0.0)
     rs_63d = _safe_float(ind.get("relative_strength_63d"), 0.0)
     rs_combo = rs_21d * 0.4 + rs_63d * 0.6
-    market_profile = _market_profile(market_status)
+    safe_mode = _safe_mode_config()
+    market_profile = _apply_safe_mode_market_profile(_market_profile(market_status), safe_mode)
     fundamental = fundamental or {}
     fundamental_score = _safe_float(fundamental.get("score"), 50.0)
     fundamental_coverage = _safe_float(fundamental.get("coverage"), 0.0)
     fundamental_has_data = bool(fundamental.get("has_data", False))
     fundamental_hard_block = bool(fundamental.get("hard_block", False))
+    trend_template = _trend_template_profile(ind, rs_63d, safe_mode)
 
     supports = [float(x) for x in (ind.get("support") or [])[:3] if _safe_float(x, -1) > 0]
     resistances = [float(x) for x in (ind.get("resistance") or [])[:3] if _safe_float(x, -1) > 0]
@@ -447,16 +543,37 @@ def _build_trade_plan(
     if not fundamental_has_data:
         fundamental_min_score = 0.0
     fundamental_gate = fundamental_score >= fundamental_min_score and not fundamental_hard_block
+    earnings_days = event_risk.get("days_to_earnings")
+    earnings_days = int(_safe_float(earnings_days, 9999)) if earnings_days not in {None, ""} else None
+
+    min_liq_tier_rank = _tier_rank(str(safe_mode.get("min_liquidity_tier", "medium")))
+    liquidity_gate = bool(liquidity.get("is_tradeable", False))
+    if safe_mode.get("enabled", False):
+        liquidity_gate = liquidity_gate and _tier_rank(str(liquidity.get("tier", "unknown"))) >= min_liq_tier_rank
+
+    event_gate = event_penalty < 12
+    if safe_mode.get("enabled", False) and earnings_days is not None and earnings_days >= 0:
+        event_gate = event_gate and earnings_days > int(safe_mode.get("earnings_skip_days", 7))
+
+    trend_template_gate = True
+    if safe_mode.get("enabled", False) and safe_mode.get("use_trend_template_gate", True):
+        trend_template_gate = bool(trend_template.get("pass"))
+
+    market_regime_gate = True
+    if safe_mode.get("enabled", False) and safe_mode.get("require_bullish", True):
+        market_regime_gate = str(market_status).lower() == "bullish"
 
     gates = {
-        "liquidity": bool(liquidity.get("is_tradeable", False)),
+        "liquidity": liquidity_gate,
+        "trend_template": trend_template_gate,
+        "market_regime": market_regime_gate,
         "rr2": rr2 >= min_rr_gate,
         "risk_pct": risk_pct <= max_risk_gate,
         "setup": setup_score >= (60 if market_status == "bearish" else 55),
         "stage": stage != "right_shoulder",
         "relative_strength": rs_63d >= rs_gate,
         "risk_model": _safe_float(score.get("risk", {}).get("score"), 50) < risk_ceiling,
-        "event": event_penalty < 12,
+        "event": event_gate,
         "fundamental": fundamental_gate,
     }
     tradeable = all(gates.values())
@@ -488,6 +605,7 @@ def _build_trade_plan(
             "avg_dollar_volume_m": _safe_float(liquidity.get("avg_dollar_volume_m"), 0.0),
         },
         "event_risk": event_risk,
+        "trend_template": trend_template,
         "fundamental": {
             "score": round(fundamental_score, 1),
             "coverage": round(fundamental_coverage, 2),
@@ -502,6 +620,13 @@ def _build_trade_plan(
             "risk_ceiling": risk_ceiling,
             "relative_strength_63d_min": rs_gate,
             "fundamental_min_score": round(fundamental_min_score, 1),
+            "safe_mode": {
+                "enabled": bool(safe_mode.get("enabled", False)),
+                "require_bullish": bool(safe_mode.get("require_bullish", True)),
+                "trend_template_gate": bool(safe_mode.get("use_trend_template_gate", True)),
+                "earnings_skip_days": int(safe_mode.get("earnings_skip_days", 7)),
+                "min_liquidity_tier": str(safe_mode.get("min_liquidity_tier", "medium")),
+            },
         },
         "gates": gates,
         "blockers": blockers[:5],

@@ -1,0 +1,61 @@
+{
+  "active": true,
+  "current_phase": "staged-validation-gate-failed-at-1y",
+  "task_description": "Stage validation gpt-5.4 strategy across 1y/10y/20y only when each prior horizon beats QQQ on CAGR and MDD",
+  "best_current_strategy_run": "ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_20260306",
+  "model_defaults": {
+    "AI_MODEL": "gpt-5.4",
+    "AI_REASONING_EFFORT_supported": [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]
+  },
+  "verification": {
+    "pytest": "tests/test_openai_provider.py passed (6/6)",
+    "real_call": "AIAnalyzer with gpt-5.4 + xhigh returned OK"
+  },
+  "iteration": 70,
+  "last_turn_at": "2026-03-06T01:36:55.667Z",
+  "run_tag": "ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_gpt54_low_20260306",
+  "reasoning_effort": "low",
+  "why_not_xhigh": "xhigh validated but projected multi-hour/very long 20y cycle per tuning round; impractical for iterative optimization",
+  "cache_progress": {
+    "gpt54_entries": 17,
+    "last_snapshot": "2006-06-23"
+  },
+  "log_file": "data/runs/ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_gpt54_low_20260306.log",
+  "session_id": 75782,
+  "staged_validation": {
+    "criterion": "strategy CAGR > QQQ CAGR AND strategy MDD <= QQQ MDD",
+    "next_horizon": "1y",
+    "stopped_run": "ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_gpt54_low_20260306",
+    "stopped_cache_progress": {
+      "gpt54_entries": 29,
+      "last_snapshot": "2006-09-29"
+    }
+  },
+  "last_completed_run": "ai1y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_gpt54_low_20260306",
+  "gate_rule": "advance only if strategy CAGR > QQQ CAGR and strategy MDD <= QQQ MDD",
+  "last_result": {
+    "period": [
+      "2025-03-01",
+      "2026-03-01"
+    ],
+    "strategy_cagr_pct": 20.61018973265163,
+    "qqq_cagr_pct": 24.393226864750297,
+    "strategy_mdd_pct": -19.16034490279013,
+    "qqq_mdd_pct": -16.21355397458083,
+    "strategy_sharpe": 0.838237661884143,
+    "qqq_sharpe": 1.0038422970043075,
+    "ai_calls": 33,
+    "sit_out_count": 18,
+    "avg_exposure_pct": 98.23686274509804,
+    "alpha_mean_pct": -0.04961461275517618,
+    "alpha_nw_p_gt0": 0.4657243377018498,
+    "bootstrap_p_cagr_diff_gt0": 0.4572
+  },
+  "advance_to_10y": false
+}

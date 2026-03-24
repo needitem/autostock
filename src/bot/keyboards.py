@@ -32,13 +32,22 @@ def trading_enabled() -> bool:
     )
 
 
+def inventory_enabled() -> bool:
+    raw = str(os.getenv("INVENTORY_MODE_ENABLED", "1")).strip().lower()
+    return raw in {"1", "true", "yes", "on", "y"}
+
+
 def main_menu() -> InlineKeyboardMarkup:
     rows = [
+        [btn("Run Strategy V2", "run_strategy_v2")],
+        [btn("Latest Strategy V2", "latest_strategy_v2")],
         [btn("Run US Report", "run_us_report")],
         [btn("Run US Rebalance", "run_us_rebalance")],
         [btn("Latest Rebalance", "latest_rebalance")],
-        [btn("Display Settings", "display_settings")],
     ]
+    if inventory_enabled():
+        rows.append([btn("Inventory Report (Beta)", "run_inventory_report")])
+    rows.append([btn("Display Settings", "display_settings")])
     if trading_enabled():
         rows.append([btn("Trading", "trading_menu")])
     return InlineKeyboardMarkup(rows)
@@ -53,6 +62,8 @@ def back(to: str = "main", label: str = "Back") -> InlineKeyboardMarkup:
 def stock_detail(symbol: str) -> InlineKeyboardMarkup:  # noqa: ARG001 - kept for call-site compatibility
     return InlineKeyboardMarkup(
         [
+            [btn("Run Strategy V2", "run_strategy_v2")],
+            [btn("Latest Strategy V2", "latest_strategy_v2")],
             [btn("Run US Rebalance", "run_us_rebalance")],
             [btn("Latest Rebalance", "latest_rebalance")],
             [btn("Main", "main")],

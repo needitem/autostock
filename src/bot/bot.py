@@ -25,6 +25,10 @@ from bot import formatters as fmt
 from bot import keyboards as kb
 from bot.handlers import button_callback
 from bot.scheduler_config import (
+    format_inventory_report_message,
+    format_rebalance_snapshot,
+    format_strategy_v2_message,
+    format_strategy_v2_snapshot,
     format_us_rebalance_message,
     format_us_report_message,
     schedule_settings,
@@ -103,9 +107,13 @@ async def _send_main_menu(update: Update) -> None:
 
     text = "<b>AutoStock Rebalance Hub</b>\n" + ("-" * 26) + "\n\n"
     text += "Quick start:\n"
-    text += "1) Run US report (daily data refresh)\n"
-    text += "2) Run US rebalance (portfolio recommendation)\n"
-    text += "3) Check latest rebalance snapshot\n\n"
+    text += "1) Run Strategy V2 baseline (regime ETF validation)\n"
+    text += "2) Check latest Strategy V2 verification\n"
+    text += "3) Run US rebalance (portfolio recommendation)\n"
+    text += "4) Check latest rebalance snapshot\n"
+    if kb.inventory_enabled():
+        text += "5) Run inventory report (beta)\n"
+    text += "\n"
     text += f"Display mode: <b>{style_label(style)}</b>\n"
     text += "You can also type a ticker directly for chart analysis.\n"
     text += "Example: <code>AAPL</code>, <code>TSLA</code>"
@@ -211,10 +219,31 @@ async def _run_us_report_pipeline() -> dict:
     return await asyncio.to_thread(run_all_us_engines)
 
 
+async def _run_strategy_v2_pipeline() -> dict:
+    from pipelines.strategy_v2_pipeline import run_strategy_v2_pipeline
+
+    return await asyncio.to_thread(run_strategy_v2_pipeline, True)
+
+
+async def _load_latest_strategy_v2_snapshot() -> dict:
+    from pipelines.strategy_v2_pipeline import latest_strategy_v2_snapshot
+
+    return await asyncio.to_thread(latest_strategy_v2_snapshot)
+
+
 async def _run_us_rebalance_pipeline() -> dict:
+    from pipelines.us_orchestrator import run_all_us_engines
     from pipelines.us_rebalance import run_us_rebalance
 
-    return await asyncio.to_thread(run_us_rebalance)
+    report_result = await asyncio.to_thread(run_all_us_engines)
+    report_path = str(report_result.get("report_path", "") or "")
+    return await asyncio.to_thread(run_us_rebalance, report_path if report_path else None)
+
+
+async def _run_inventory_report_pipeline() -> dict:
+    from pipelines.inventory_report import run_inventory_report
+
+    return await asyncio.to_thread(run_inventory_report)
 
 
 async def us_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -231,18 +260,76 @@ async def us_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(f"US report failed: {e}")
 
 
+async def strategy_v2_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = str(update.effective_chat.id)
+    save_chat_id(chat_id)
+    await update.message.reply_text("Strategy V2 baseline + verification started. This can take a few minutes.")
+
+    try:
+        result = await _run_strategy_v2_pipeline()
+        await update.message.reply_text(format_strategy_v2_message(result), parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"Strategy V2 run failed: {e}")
+
+
+async def latest_strategy_v2_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = str(update.effective_chat.id)
+    save_chat_id(chat_id)
+
+    try:
+        result = await _load_latest_strategy_v2_snapshot()
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        if not summary:
+            await update.message.reply_text("No Strategy V2 baseline output found yet.\nRun /strategy_v2 first.")
+            return
+        verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
+        text = format_strategy_v2_snapshot(
+            summary,
+            verification,
+            summary_path=str(result.get("summary_path", "") or ""),
+            verification_path=str(result.get("verification_json_path", "") or ""),
+        )
+        await update.message.reply_text(text, parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"Latest Strategy V2 load failed: {e}")
+
+
 async def us_rebalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.effective_chat is None:
         return
     chat_id = str(update.effective_chat.id)
     save_chat_id(chat_id)
-    await update.message.reply_text("US rebalance started. This can take a few minutes.")
+    await update.message.reply_text("US report + rebalance started. This can take a few minutes.")
 
     try:
         result = await _run_us_rebalance_pipeline()
-        await update.message.reply_text(format_us_rebalance_message(result))
+        payload = result.get("result") if isinstance(result, dict) else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        base_msg = format_us_rebalance_message(result if isinstance(result, dict) else {})
+        snapshot = format_rebalance_snapshot(payload)
+        text = f"{base_msg}\n\n{snapshot}" if base_msg else snapshot
+        await update.message.reply_text(text, parse_mode="HTML")
     except Exception as e:
         await update.message.reply_text(f"US rebalance failed: {e}")
+
+
+async def inventory_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = str(update.effective_chat.id)
+    save_chat_id(chat_id)
+    await update.message.reply_text("Inventory report started (beta).")
+
+    try:
+        result = await _run_inventory_report_pipeline()
+        await update.message.reply_text(format_inventory_report_message(result if isinstance(result, dict) else {}))
+    except Exception as e:
+        await update.message.reply_text(f"Inventory report failed: {e}")
 
 
 async def scheduled_us_report(context) -> None:
@@ -268,10 +355,30 @@ async def scheduled_us_rebalance(context) -> None:
 
         chat_id = get_saved_chat_id()
         if chat_id:
-            msg = format_us_rebalance_message(result)
-            await context.bot.send_message(chat_id=chat_id, text=msg)
+            payload = result.get("result") if isinstance(result, dict) else {}
+            if not isinstance(payload, dict):
+                payload = {}
+            base_msg = format_us_rebalance_message(result if isinstance(result, dict) else {})
+            snapshot = format_rebalance_snapshot(payload)
+            text = f"{base_msg}\n\n{snapshot}" if base_msg else snapshot
+            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
     except Exception as e:
         print(f"[scheduler] weekly us rebalance failed: {e}")
+
+
+async def scheduled_inventory_report(context) -> None:
+    print("[scheduler] daily inventory report started")
+    try:
+        result = await _run_inventory_report_pipeline()
+        report_path = result.get("report_path", "") if isinstance(result, dict) else ""
+        print(f"[scheduler] daily inventory report saved: {report_path}")
+
+        chat_id = get_saved_chat_id()
+        if chat_id:
+            msg = format_inventory_report_message(result if isinstance(result, dict) else {})
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as e:
+        print(f"[scheduler] daily inventory report failed: {e}")
 
 
 def run_bot(with_scheduler: bool = True) -> None:
@@ -289,8 +396,11 @@ def run_bot(with_scheduler: bool = True) -> None:
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("style", style_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("strategy_v2", strategy_v2_command))
+    app.add_handler(CommandHandler("strategy_v2_latest", latest_strategy_v2_command))
     app.add_handler(CommandHandler("us_report", us_report_command))
     app.add_handler(CommandHandler("us_rebalance", us_rebalance_command))
+    app.add_handler(CommandHandler("inventory_report", inventory_report_command))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     app.add_error_handler(app_error_handler)
@@ -319,17 +429,33 @@ def run_bot(with_scheduler: bool = True) -> None:
             days=(int(settings["rebalance_weekday"]),),
             name="weekly_us_rebalance",
         )
+        if bool(settings.get("inventory_enabled", True)):
+            app.job_queue.run_daily(
+                scheduled_inventory_report,
+                time=dt_time(
+                    hour=int(settings["inventory_report_hour"]),
+                    minute=int(settings["inventory_report_minute"]),
+                    tzinfo=bot_tz,
+                ),
+                name="daily_inventory_report",
+            )
 
         print("=" * 52)
         print("Scheduler enabled")
         print("=" * 52)
-        print("Daily 00:00 - US report")
-        print("Weekly 00:10 - US rebalance")
+        print(f"Daily {int(settings['report_hour']):02d}:{int(settings['report_minute']):02d} - US report")
+        print(
+            f"Weekly {int(settings['rebalance_hour']):02d}:{int(settings['rebalance_minute']):02d} - US rebalance"
+        )
+        if bool(settings.get("inventory_enabled", True)):
+            print(
+                f"Daily {int(settings['inventory_report_hour']):02d}:{int(settings['inventory_report_minute']):02d} - Inventory report"
+            )
         print("=" * 52)
     else:
         print("Bot started without scheduler")
 
-    print("Use /start or /menu")
+    print("Use /start or /menu or /strategy_v2")
     app.run_polling()
 
 

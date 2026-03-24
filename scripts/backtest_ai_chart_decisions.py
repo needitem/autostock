@@ -34,7 +34,7 @@ RUN_SUMMARY_JSON = RUNS_DIR / f"ai_chart_backtest_summary_{RUN_TAG}.json"
 DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "NFLX", "COST", "CSCO"]
 BENCH = os.getenv("AI_BENCHMARK_SYMBOL", "QQQ").strip().upper() or "QQQ"
 VIX = os.getenv("AI_VIX_SYMBOL", "^VIX").strip() or "^VIX"
-MODEL = os.getenv("AI_MODEL", "gpt-5.2")
+MODEL = os.getenv("AI_MODEL", "gpt-5.4")
 try:
     HORIZON_DAYS = int(str(os.getenv("AI_HORIZON_DAYS", "63")).strip() or "63")
 except Exception:
@@ -416,19 +416,6 @@ def _last_day(frame: pd.DataFrame, dt: pd.Timestamp) -> pd.Timestamp | None:
     return None if len(idx) == 0 else idx[-1]
 
 
-def _ret_forward(frame: pd.DataFrame, dt: pd.Timestamp, days: int = HORIZON_DAYS) -> float | None:
-    sd = _last_day(frame, dt)
-    if sd is None:
-        return None
-    i = int(frame.index.get_indexer([sd])[0])
-    if i < 0 or i + days >= len(frame):
-        return None
-    p0, p1 = _f(frame.iloc[i]["Close"], -1), _f(frame.iloc[i + days]["Close"], -1)
-    if p0 <= 0 or p1 <= 0:
-        return None
-    return (p1 / p0 - 1.0) * 100.0
-
-
 def _ret_lookback(frame: pd.DataFrame, dt: pd.Timestamp, days: int) -> float:
     sd = _last_day(frame, dt)
     if sd is None:
@@ -439,19 +426,6 @@ def _ret_lookback(frame: pd.DataFrame, dt: pd.Timestamp, days: int) -> float:
     p0, p1 = _f(frame.iloc[i - days]["Close"], -1), _f(frame.iloc[i]["Close"], -1)
     if p0 <= 0 or p1 <= 0:
         return 0.0
-    return (p1 / p0 - 1.0) * 100.0
-
-
-def _ret_between(frame: pd.DataFrame, dt0: pd.Timestamp, dt1: pd.Timestamp) -> float | None:
-    """Return % change from last trade day <= dt0 to last trade day <= dt1."""
-    sd0 = _last_day(frame, dt0)
-    sd1 = _last_day(frame, dt1)
-    if sd0 is None or sd1 is None or sd1 <= sd0:
-        return None
-    p0 = _f(frame.loc[sd0]["Close"], -1)
-    p1 = _f(frame.loc[sd1]["Close"], -1)
-    if p0 <= 0 or p1 <= 0:
-        return None
     return (p1 / p0 - 1.0) * 100.0
 
 

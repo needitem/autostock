@@ -1,13 +1,17 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import numpy as np
+import pandas as pd
+
+from core.indicators import calculate_indicators
 from core.scoring import (
     calculate_annual_edge_score,
     calculate_financial_score,
     calculate_risk_score,
     calculate_score,
 )
-from core.signals import _apply_relative_strength, _fundamental_conviction_profile, check_entry_signal
+from core.signals import _apply_relative_strength, _build_trade_plan, _fundamental_conviction_profile, check_entry_signal
 
 
 def test_financial_coverage_excludes_missing_data_from_weighting():
@@ -340,3 +344,109 @@ def test_buy_plan_applies_event_sector_and_rs_filters(mock_scan):
     assert "CCC" not in symbols
     assert "DDD" not in symbols
     assert sum(1 for s in symbols if s in {"AAA", "BBB"}) <= 1
+
+
+def _build_indicator_inputs_for_trade_plan() -> dict:
+    return {
+        "price": 130.0,
+        "atr": 2.2,
+        "ma50_gap": 4.0,
+        "rsi": 54.0,
+        "position_52w": 72.0,
+        "atr_pct": 2.0,
+        "change_5d": 1.4,
+        "relative_strength_21d": 4.0,
+        "relative_strength_63d": 6.0,
+        "support": [128.0, 126.0],
+        "resistance": [136.0, 142.0],
+        "ma50": 122.0,
+        "ma150": 112.0,
+        "ma200": 100.0,
+        "ma200_30d_ago": 98.0,
+        "high_52w": 138.0,
+        "low_52w": 90.0,
+    }
+
+
+def test_calculate_indicators_adds_minervini_fields():
+    days = 280
+    idx = pd.date_range(end=datetime.now(), periods=days, freq="B")
+    close = np.linspace(100, 180, days)
+    frame = pd.DataFrame(
+        {
+            "Open": close * 0.997,
+            "High": close * 1.01,
+            "Low": close * 0.99,
+            "Close": close,
+            "Volume": np.full(days, 3_500_000),
+        },
+        index=idx,
+    )
+
+    out = calculate_indicators(frame)
+    assert out is not None
+    assert "ma150" in out
+    assert "ma200_30d_ago" in out
+    assert "ma200_trend_up_30d" in out
+    assert out["ma50"] > out["ma150"] > out["ma200"]
+    assert out["ma200"] >= out["ma200_30d_ago"]
+
+
+def test_safe_mode_applies_trend_template_and_position_caps(monkeypatch):
+    monkeypatch.setenv("AI_SAFE_MODE", "1")
+    monkeypatch.setenv("AI_SAFE_REQUIRE_BULLISH", "1")
+    monkeypatch.setenv("AI_SAFE_MAX_POSITION_PCT", "10")
+    monkeypatch.setenv("AI_SAFE_MIN_LIQUIDITY_TIER", "medium")
+    monkeypatch.setenv("AI_SAFE_EARNINGS_SKIP_DAYS", "7")
+    monkeypatch.setenv("AI_SAFE_TREND_RS63_MIN", "0")
+
+    plan = _build_trade_plan(
+        _build_indicator_inputs_for_trade_plan(),
+        {"risk": {"score": 44}, "confidence": {"score": 66}},
+        "bullish",
+        {"is_tradeable": True, "score": 82, "tier": "high", "avg_dollar_volume_m": 55.0},
+        {"days_to_earnings": 14, "level": "distant", "penalty": 0.0},
+        {"score": 60, "coverage": 0.8, "has_data": True, "hard_block": False, "reasons": []},
+    )
+
+    assert plan["gates"]["trend_template"] is True
+    assert plan["tradeable"] is True
+    assert plan["execution"]["max_position_pct"] <= 10.0
+    assert plan["constraints"]["safe_mode"]["enabled"] is True
+
+
+def test_safe_mode_sit_out_when_market_not_bullish(monkeypatch):
+    monkeypatch.setenv("AI_SAFE_MODE", "1")
+    monkeypatch.setenv("AI_SAFE_REQUIRE_BULLISH", "1")
+
+    plan = _build_trade_plan(
+        _build_indicator_inputs_for_trade_plan(),
+        {"risk": {"score": 42}, "confidence": {"score": 64}},
+        "neutral",
+        {"is_tradeable": True, "score": 82, "tier": "high", "avg_dollar_volume_m": 55.0},
+        {"days_to_earnings": 14, "level": "distant", "penalty": 0.0},
+        {"score": 60, "coverage": 0.8, "has_data": True, "hard_block": False, "reasons": []},
+    )
+
+    assert plan["tradeable"] is False
+    assert "market_regime" in plan["blockers"]
+
+
+def test_safe_mode_blocks_near_earnings_and_thin_liquidity(monkeypatch):
+    monkeypatch.setenv("AI_SAFE_MODE", "1")
+    monkeypatch.setenv("AI_SAFE_REQUIRE_BULLISH", "0")
+    monkeypatch.setenv("AI_SAFE_MIN_LIQUIDITY_TIER", "medium")
+    monkeypatch.setenv("AI_SAFE_EARNINGS_SKIP_DAYS", "7")
+
+    plan = _build_trade_plan(
+        _build_indicator_inputs_for_trade_plan(),
+        {"risk": {"score": 40}, "confidence": {"score": 68}},
+        "bullish",
+        {"is_tradeable": True, "score": 62, "tier": "thin", "avg_dollar_volume_m": 7.2},
+        {"days_to_earnings": 3, "level": "near", "penalty": 8.0},
+        {"score": 60, "coverage": 0.8, "has_data": True, "hard_block": False, "reasons": []},
+    )
+
+    assert plan["tradeable"] is False
+    assert plan["gates"]["liquidity"] is False
+    assert plan["gates"]["event"] is False

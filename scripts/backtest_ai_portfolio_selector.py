@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+from bisect import bisect_right
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import re
 import sys
@@ -217,6 +218,46 @@ def _load_universe_by_date(path: Path) -> dict[str, list[str]]:
         if syms:
             out[k.strip()] = syms
     return out
+
+
+def _build_universe_asof_lookup(universe_by_date: dict[str, list[str]]) -> tuple[list[pd.Timestamp], list[list[str]]]:
+    dates: list[pd.Timestamp] = []
+    values: list[list[str]] = []
+    for raw_date, symbols in universe_by_date.items():
+        if not isinstance(raw_date, str) or not isinstance(symbols, list):
+            continue
+        try:
+            snap = pd.Timestamp(raw_date).normalize()
+        except Exception:
+            continue
+        if not symbols:
+            continue
+        dates.append(snap)
+        values.append(list(symbols))
+    ordered = sorted(zip(dates, values), key=lambda item: item[0])
+    if not ordered:
+        return ([], [])
+    return ([item[0] for item in ordered], [item[1] for item in ordered])
+
+
+def _resolve_universe_asof(
+    lookup: tuple[list[pd.Timestamp], list[list[str]]] | None,
+    snap: Any,
+    fallback: list[str],
+) -> list[str]:
+    if not lookup:
+        return list(fallback)
+    dates, values = lookup
+    if not dates:
+        return list(fallback)
+    try:
+        snap_ts = pd.Timestamp(snap).normalize()
+    except Exception:
+        return list(fallback)
+    pos = bisect_right(dates, snap_ts) - 1
+    if pos < 0 or pos >= len(values):
+        return list(fallback)
+    return list(values[pos])
 
 
 def _load_sector_lookup(path: Path | None = None) -> dict[str, dict[str, str]]:
@@ -451,9 +492,11 @@ def _indicator_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
     ret21 = (close / close.shift(21) - 1.0) * 100.0
     ret63 = (close / close.shift(63) - 1.0) * 100.0
+    ret126 = (close / close.shift(126) - 1.0) * 100.0
     vol20 = close.pct_change().rolling(20).std()
     dd_63 = (close / close.rolling(63).max()) - 1.0
     dd_252 = (close / close.rolling(252).max()) - 1.0
+    ma200_trend_pct = (ma200 / ma200_30d_ago - 1.0) * 100.0
 
     out = pd.DataFrame(
         {
@@ -478,12 +521,14 @@ def _indicator_frame(frame: pd.DataFrame) -> pd.DataFrame:
             "rsi": rsi,
             "return_21d": ret21,
             "return_63d": ret63,
+            "return_126d": ret126,
             "vol_20": vol20,
             "dd_63": dd_63,
             "dd_252": dd_252,
             "bb_position": bb_pos,
             "atr_pct": atr_pct,
             "adx": adx,
+            "ma200_trend_pct": ma200_trend_pct,
         }
     )
     return out
@@ -620,6 +665,21 @@ def _select_candidates_with_includes(
     if len(locked_feats) >= nmax:
         return locked_feats[:nmax]
     return locked_feats + others_sorted[: max(0, nmax - len(locked_feats))]
+
+
+def _expand_regime_allowed_symbols(
+    allowed: set[str],
+    regime_symbols: list[str],
+    by_symbol: dict[str, dict[str, Any]],
+) -> set[str]:
+    out = {str(sym) for sym in allowed if isinstance(sym, str) and sym}
+    for sym in regime_symbols:
+        name = _normalize_symbol(sym)
+        if not name:
+            continue
+        if name in by_symbol:
+            out.add(name)
+    return out
 
 
 def _trend_template_checks(ind_row: pd.Series, rs63: float, rs63_min: float = 0.0) -> dict[str, Any]:
@@ -824,6 +884,7 @@ def _stock_momentum_portfolio(
     max_per_sector: int = 0,
     sector_bonus_mult: float = 0.0,
     sector_scores: dict[str, float] | None = None,
+    symbol_bonus: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     if not candidates or top_k <= 0:
         return {"positions": [], "cash_pct": 100.0, "_stock_momo_mode": True, "_sit_out": True}
@@ -834,14 +895,17 @@ def _stock_momentum_portfolio(
 
     sector_scores = dict(sector_scores or {})
     sector_bonus_mult = float(max(0.0, sector_bonus_mult))
+    symbol_bonus = dict(symbol_bonus or {})
 
     def _rank_key(x: dict[str, Any]) -> tuple[float, float, float, float]:
         sector = str(x.get("sector") or "Unknown")
         sector_score = float(sector_scores.get(sector, 0.0))
+        sym_bonus = float(symbol_bonus.get(str(x.get("symbol") or ""), 0.0))
         composite = (
             _f(x.get("relative_strength_63d"), -999.0)
             + 0.35 * _f(x.get("relative_strength_21d"), -999.0)
             + sector_bonus_mult * sector_score
+            + sym_bonus
         )
         return (
             composite,
@@ -909,6 +973,212 @@ def _stock_momentum_portfolio(
     return {"positions": positions, "cash_pct": 0.0, "_stock_momo_mode": True, "_sit_out": False}
 
 
+def _stock_event_portfolio(
+    candidates: list[dict[str, Any]],
+    top_k: int,
+    weight_mode: str = "equal",
+    min_positions_for_invest: int = 2,
+    max_per_sector: int = 0,
+    max_filing_age_days: int = 45,
+    min_rev_yoy: float = 5.0,
+    min_eps_yoy: float = 5.0,
+    min_ni_yoy: float = 0.0,
+) -> dict[str, Any]:
+    if not candidates or top_k <= 0:
+        return {"positions": [], "cash_pct": 100.0, "_stock_event_mode": True, "_sit_out": True}
+
+    eligible: list[dict[str, Any]] = []
+    for row in candidates:
+        if not isinstance(row, dict):
+            continue
+        if not bool(row.get("pit_has_data", False)):
+            continue
+        filing_age = _f(row.get("pit_filing_age_days"), np.nan)
+        if not np.isfinite(filing_age) or filing_age < 0 or filing_age > float(max_filing_age_days):
+            continue
+        if _f(row.get("pit_rev_yoy_pct"), -999.0) < float(min_rev_yoy):
+            continue
+        if _f(row.get("pit_eps_yoy_pct"), -999.0) < float(min_eps_yoy):
+            continue
+        if _f(row.get("pit_ni_yoy_pct"), -999.0) < float(min_ni_yoy):
+            continue
+        if _f(row.get("relative_strength_63d"), -999.0) <= 0:
+            continue
+        if _f(row.get("ma200_gap"), -999.0) <= 0:
+            continue
+        eligible.append(row)
+
+    min_required = max(1, int(min_positions_for_invest))
+    if len(eligible) < min_required:
+        return {"positions": [], "cash_pct": 100.0, "_stock_event_mode": True, "_sit_out": True}
+
+    def _event_score(x: dict[str, Any]) -> tuple[float, float, float]:
+        filing_age = _f(x.get("pit_filing_age_days"), 999.0)
+        rs63 = _f(x.get("relative_strength_63d"), -999.0)
+        rs21 = _f(x.get("relative_strength_21d"), -999.0)
+        rev_yoy = max(-20.0, min(60.0, _f(x.get("pit_rev_yoy_pct"), 0.0)))
+        eps_yoy = max(-20.0, min(80.0, _f(x.get("pit_eps_yoy_pct"), 0.0)))
+        ni_yoy = max(-20.0, min(80.0, _f(x.get("pit_ni_yoy_pct"), 0.0)))
+        recency = max(0.0, float(max_filing_age_days) - filing_age)
+        composite = (
+            rs63
+            + 0.40 * rs21
+            + 0.12 * rev_yoy
+            + 0.16 * eps_yoy
+            + 0.10 * ni_yoy
+            + 0.10 * recency
+        )
+        return (composite, rs63, -filing_age)
+
+    ranked = sorted(eligible, key=_event_score, reverse=True)
+
+    picked: list[dict[str, Any]] = []
+    sector_counts: dict[str, int] = {}
+    sector_cap = max(0, int(max_per_sector))
+    target = max(1, min(int(top_k), len(ranked)))
+    for row in ranked:
+        sector = str(row.get("sector") or "Unknown")
+        if sector_cap > 0 and sector_counts.get(sector, 0) >= sector_cap:
+            continue
+        picked.append(row)
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if len(picked) >= target:
+            break
+    if len(picked) < target:
+        seen_syms = {str(x.get("symbol")) for x in picked}
+        for row in ranked:
+            sym = str(row.get("symbol"))
+            if sym in seen_syms:
+                continue
+            picked.append(row)
+            seen_syms.add(sym)
+            if len(picked) >= target:
+                break
+    if len(picked) < min_required:
+        return {"positions": [], "cash_pct": 100.0, "_stock_event_mode": True, "_sit_out": True}
+
+    wmode = str(weight_mode or "equal").strip().lower()
+    if wmode not in {"equal", "inv_vol", "score"}:
+        wmode = "equal"
+    raw_scores: dict[str, float] = {}
+    if wmode == "equal":
+        raw_scores = {str(x.get("symbol")): 1.0 for x in picked}
+    elif wmode == "score":
+        min_score = min(_event_score(x)[0] for x in picked)
+        raw_scores = {
+            str(x.get("symbol")): max(0.1, _event_score(x)[0] - min_score + 1.0)
+            for x in picked
+        }
+    else:
+        for x in picked:
+            sym = str(x.get("symbol"))
+            vol20 = _f(x.get("vol_20"), np.nan)
+            if not np.isfinite(vol20):
+                vol20 = max(0.6, _f(x.get("atr_pct"), 2.0)) / 100.0
+            raw_scores[sym] = float(1.0 / max(0.0025, vol20))
+    total = float(sum(raw_scores.values()))
+    if total <= 0:
+        w = 100.0 / float(len(picked))
+        positions = [{"symbol": str(x.get("symbol")), "weight_pct": w} for x in picked]
+    else:
+        positions = [
+            {"symbol": sym, "weight_pct": float(score / total * 100.0)}
+            for sym, score in raw_scores.items()
+            if sym
+        ]
+    return {"positions": positions, "cash_pct": 0.0, "_stock_event_mode": True, "_sit_out": False}
+
+
+def _earnings_drift_portfolio(
+    candidates: list[dict[str, Any]],
+    top_k: int,
+    weight_mode: str = "equal",
+    min_positions_for_invest: int = 2,
+    max_per_sector: int = 2,
+    max_days_since: int = 35,
+    min_surprise_pct: float = 3.0,
+) -> dict[str, Any]:
+    if not candidates or top_k <= 0:
+        return {"positions": [], "cash_pct": 100.0, "_earnings_drift_mode": True, "_sit_out": True}
+
+    eligible: list[dict[str, Any]] = []
+    for row in candidates:
+        if not isinstance(row, dict):
+            continue
+        if not bool(row.get("earnings_has_data", False)):
+            continue
+        days_since = _f(row.get("earnings_days_since"), np.nan)
+        surprise_pct = _f(row.get("earnings_surprise_pct"), np.nan)
+        if not np.isfinite(days_since) or days_since < 0 or days_since > float(max_days_since):
+            continue
+        if not np.isfinite(surprise_pct) or surprise_pct < float(min_surprise_pct):
+            continue
+        if _f(row.get("relative_strength_21d"), -999.0) <= 0:
+            continue
+        if _f(row.get("ma50_gap"), -999.0) <= 0 or _f(row.get("ma200_gap"), -999.0) <= 0:
+            continue
+        eligible.append(row)
+
+    if len(eligible) < max(1, int(min_positions_for_invest)):
+        return {"positions": [], "cash_pct": 100.0, "_earnings_drift_mode": True, "_sit_out": True}
+
+    def _rank_key(x: dict[str, Any]) -> tuple[float, float, float]:
+        surprise_pct = _f(x.get("earnings_surprise_pct"), 0.0)
+        days_since = _f(x.get("earnings_days_since"), 999.0)
+        rs21 = _f(x.get("relative_strength_21d"), -999.0)
+        rs63 = _f(x.get("relative_strength_63d"), -999.0)
+        score = surprise_pct * 1.2 + rs21 * 0.8 + rs63 * 0.3 - days_since * 0.25
+        return (score, surprise_pct, -days_since)
+
+    ranked = sorted(eligible, key=_rank_key, reverse=True)
+    picked: list[dict[str, Any]] = []
+    sector_counts: dict[str, int] = {}
+    sector_cap = max(0, int(max_per_sector))
+    target = max(1, min(int(top_k), len(ranked)))
+    for row in ranked:
+        sector = str(row.get("sector") or "Unknown")
+        if sector_cap > 0 and sector_counts.get(sector, 0) >= sector_cap:
+            continue
+        picked.append(row)
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if len(picked) >= target:
+            break
+    if len(picked) < target:
+        seen = {str(x.get("symbol")) for x in picked}
+        for row in ranked:
+            sym = str(row.get("symbol"))
+            if sym in seen:
+                continue
+            picked.append(row)
+            seen.add(sym)
+            if len(picked) >= target:
+                break
+
+    wmode = str(weight_mode or "equal").strip().lower()
+    if wmode not in {"equal", "inv_vol", "score"}:
+        wmode = "equal"
+    raw_scores: dict[str, float] = {}
+    if wmode == "equal":
+        raw_scores = {str(x.get("symbol")): 1.0 for x in picked}
+    elif wmode == "score":
+        min_score = min(_rank_key(x)[0] for x in picked)
+        raw_scores = {str(x.get("symbol")): max(0.1, _rank_key(x)[0] - min_score + 1.0) for x in picked}
+    else:
+        for x in picked:
+            sym = str(x.get("symbol"))
+            vol20 = _f(x.get("vol_20"), np.nan)
+            if not np.isfinite(vol20):
+                vol20 = max(0.6, _f(x.get("atr_pct"), 2.0)) / 100.0
+            raw_scores[sym] = float(1.0 / max(0.0025, vol20))
+    total = float(sum(raw_scores.values()))
+    if total <= 0:
+        w = 100.0 / float(len(picked))
+        positions = [{"symbol": str(x.get("symbol")), "weight_pct": w} for x in picked]
+    else:
+        positions = [{"symbol": sym, "weight_pct": float(score / total * 100.0)} for sym, score in raw_scores.items() if sym]
+    return {"positions": positions, "cash_pct": 0.0, "_earnings_drift_mode": True, "_sit_out": False}
+
+
 def _sector_strength_scores(features: list[dict[str, Any]]) -> dict[str, float]:
     rows = [x for x in features if isinstance(x, dict) and x.get("sector")]
     if not rows:
@@ -933,6 +1203,342 @@ def _sector_strength_scores(features: list[dict[str, Any]]) -> dict[str, float]:
         score = med_rs63 + 0.35 * med_rs21 + 6.0 * (up200 - 0.5) + 3.0 * (up50 - 0.5)
         out[str(sector)] = float(score)
     return out
+
+
+def _pit_symbol_bonus(features: list[dict[str, Any]], max_filing_age_days: int) -> dict[str, float]:
+    rows = [x for x in features if isinstance(x, dict) and x.get("symbol")]
+    if not rows:
+        return {}
+
+    df = pd.DataFrame(rows).copy()
+    metrics = {
+        "pit_rev_yoy_pct": True,
+        "pit_ni_yoy_pct": True,
+        "pit_eps_yoy_pct": True,
+        "pit_op_margin_pct": True,
+        "pit_gross_margin_pct": True,
+        "pit_equity_ratio": True,
+        "pit_debt_to_assets": False,
+        "pit_filing_age_days": False,
+    }
+    for col in metrics:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        else:
+            df[col] = np.nan
+    if "pit_has_data" not in df.columns:
+        df["pit_has_data"] = False
+    df["pit_has_data"] = df["pit_has_data"].fillna(False).astype(bool)
+    df["symbol"] = df["symbol"].astype(str)
+
+    valid = df["pit_has_data"]
+    if int(max_filing_age_days) > 0:
+        valid = valid & (df["pit_filing_age_days"].fillna(10_000) <= int(max_filing_age_days))
+
+    out: dict[str, float] = {}
+    valid_df = df.loc[valid].copy()
+    if valid_df.empty:
+        return out
+
+    score_accum = pd.Series(0.0, index=valid_df.index)
+    score_count = pd.Series(0.0, index=valid_df.index)
+    for col, higher_is_better in metrics.items():
+        col_series = valid_df[col]
+        col_valid = col_series.replace([np.inf, -np.inf], np.nan).dropna()
+        if len(col_valid) < 3:
+            continue
+        rank = col_valid.rank(pct=True, method="average")
+        centered = rank if higher_is_better else (1.0 - rank)
+        centered = (centered - 0.5) * 20.0
+        score_accum.loc[col_valid.index] += centered
+        score_count.loc[col_valid.index] += 1.0
+
+    final = score_accum.divide(score_count.replace(0.0, np.nan)).fillna(0.0)
+    for idx, val in final.items():
+        sym = str(valid_df.loc[idx, "symbol"])
+        out[sym] = float(val)
+    return out
+
+
+def _pit_veto_enabled_for_regime(regimes: tuple[str, ...], market_regime: str) -> bool:
+    active = tuple(str(x).strip().lower() for x in regimes if str(x).strip())
+    if not active:
+        return True
+    return str(market_regime).strip().lower() in set(active)
+
+
+def _apply_pit_quality_veto(
+    features: list[dict[str, Any]],
+    threshold: float,
+    max_filing_age_days: int,
+    min_positions_for_invest: int,
+    exempt_symbols: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    if float(threshold) <= -100.0 or not features:
+        return features
+
+    bonus_by_symbol = _pit_symbol_bonus(features, max_filing_age_days=max_filing_age_days)
+    if not bonus_by_symbol:
+        return features
+
+    exempt = {str(sym) for sym in (exempt_symbols or set()) if isinstance(sym, str) and sym}
+    filtered = [
+        row
+        for row in features
+        if str(row.get("symbol")) in exempt or float(bonus_by_symbol.get(str(row.get("symbol")), 999.0)) >= float(threshold)
+    ]
+    min_required = max(1, int(min_positions_for_invest))
+    return filtered if len(filtered) >= min_required else features
+
+
+def _apply_breadth_new_entry_gate(
+    candidates: list[dict[str, Any]],
+    held_syms: list[str],
+    market_regime: str,
+    breadth: dict[str, float],
+    neutral_min_up200: float,
+    neutral_min_pos63: float,
+    neutral_max_new_when_weak: int,
+) -> list[dict[str, Any]]:
+    if str(market_regime).strip().lower() != "neutral":
+        return candidates
+    max_new = int(neutral_max_new_when_weak)
+    if max_new < 0:
+        return candidates
+
+    up200_now = float(_f((breadth or {}).get("up200"), 0.0))
+    pos63_now = float(_f((breadth or {}).get("positive_63d"), 0.0))
+    weak = False
+    if float(neutral_min_up200) >= 0:
+        weak = weak or up200_now < float(neutral_min_up200)
+    if float(neutral_min_pos63) >= 0:
+        weak = weak or pos63_now < float(neutral_min_pos63)
+    if not weak:
+        return candidates
+
+    held_set = {str(sym) for sym in held_syms if isinstance(sym, str) and sym}
+    held_rows = [row for row in candidates if str(row.get("symbol")) in held_set]
+    new_rows = [row for row in candidates if str(row.get("symbol")) not in held_set]
+    return held_rows + new_rows[: max(0, max_new)]
+
+
+def _cross_section_rank_scores(
+    df: pd.DataFrame,
+    metrics: dict[str, bool],
+    valid_mask: pd.Series | None = None,
+) -> pd.Series:
+    if df.empty:
+        return pd.Series(dtype=float)
+
+    work = df.copy()
+    for col in metrics:
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+        else:
+            work[col] = np.nan
+
+    if valid_mask is None:
+        valid = pd.Series(True, index=work.index, dtype=bool)
+    else:
+        valid = pd.Series(valid_mask, index=work.index).fillna(False).astype(bool)
+
+    score_accum = pd.Series(0.0, index=work.index, dtype=float)
+    score_count = pd.Series(0.0, index=work.index, dtype=float)
+    for col, higher_is_better in metrics.items():
+        col_valid = work.loc[valid, col].replace([np.inf, -np.inf], np.nan).dropna()
+        if len(col_valid) < 3:
+            continue
+        rank = col_valid.rank(pct=True, method="average")
+        centered = rank if higher_is_better else (1.0 - rank)
+        centered = (centered - 0.5) * 20.0
+        score_accum.loc[col_valid.index] += centered
+        score_count.loc[col_valid.index] += 1.0
+
+    return score_accum.divide(score_count.replace(0.0, np.nan))
+
+
+def _quality_momentum_portfolio(
+    candidates: list[dict[str, Any]],
+    top_k: int,
+    weight_mode: str = "inv_vol",
+    min_positions_for_invest: int = 3,
+    max_per_sector: int = 2,
+    sector_bonus_mult: float = 0.0,
+    sector_scores: dict[str, float] | None = None,
+    max_filing_age_days: int = 200,
+    quality_weight: float = 0.60,
+    momentum_weight: float = 0.40,
+    min_quality_score: float = -1.5,
+    min_momentum_score: float = 0.0,
+    require_trend_template: bool = False,
+) -> dict[str, Any]:
+    if not candidates or top_k <= 0:
+        return {"positions": [], "cash_pct": 100.0, "_quality_momo_mode": True, "_sit_out": True}
+
+    rows = [x for x in candidates if isinstance(x, dict) and x.get("symbol")]
+    if not rows:
+        return {"positions": [], "cash_pct": 100.0, "_quality_momo_mode": True, "_sit_out": True}
+
+    df = pd.DataFrame(rows).copy()
+    df["symbol"] = df["symbol"].astype(str)
+    df["sector"] = df.get("sector", pd.Series(dtype=str)).fillna("Unknown").astype(str)
+    numeric_cols = (
+        "relative_strength_63d",
+        "relative_strength_21d",
+        "return_126d",
+        "ma200_gap",
+        "ma50_gap",
+        "vol_20",
+        "atr_pct",
+        "dd_252",
+        "pit_filing_age_days",
+        "pit_rev_yoy_pct",
+        "pit_ni_yoy_pct",
+        "pit_eps_yoy_pct",
+        "pit_op_margin_pct",
+        "pit_gross_margin_pct",
+        "pit_equity_ratio",
+        "pit_debt_to_assets",
+    )
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        else:
+            df[col] = np.nan
+    if "pit_has_data" not in df.columns:
+        df["pit_has_data"] = False
+    df["pit_has_data"] = df["pit_has_data"].fillna(False).astype(bool)
+
+    sector_scores = dict(sector_scores or {})
+    sector_bonus_mult = float(max(0.0, sector_bonus_mult))
+    pit_valid = df["pit_has_data"]
+    if int(max_filing_age_days) > 0:
+        pit_valid = pit_valid & (df["pit_filing_age_days"].fillna(10_000) <= int(max_filing_age_days))
+
+    momentum_metrics = {
+        "relative_strength_63d": True,
+        "relative_strength_21d": True,
+        "return_126d": True,
+        "ma200_gap": True,
+        "ma50_gap": True,
+        "dd_252": True,
+        "vol_20": False,
+        "atr_pct": False,
+    }
+    quality_metrics = {
+        "pit_rev_yoy_pct": True,
+        "pit_ni_yoy_pct": True,
+        "pit_eps_yoy_pct": True,
+        "pit_op_margin_pct": True,
+        "pit_gross_margin_pct": True,
+        "pit_equity_ratio": True,
+        "pit_debt_to_assets": False,
+        "pit_filing_age_days": False,
+    }
+
+    momentum_scores = _cross_section_rank_scores(df, momentum_metrics).fillna(0.0)
+    quality_scores = _cross_section_rank_scores(df, quality_metrics, valid_mask=pit_valid)
+
+    trend_mask = (
+        (df["relative_strength_63d"].fillna(-999.0) > 0.0)
+        & (df["return_126d"].fillna(-999.0) > 0.0)
+        & (df["ma200_gap"].fillna(-999.0) > 0.0)
+        & (df["ma50_gap"].fillna(-999.0) > -3.0)
+    )
+    if bool(require_trend_template) and "trend_template_pass" in df.columns:
+        trend_mask = trend_mask & df["trend_template_pass"].fillna(False).astype(bool)
+
+    min_required = max(1, int(min_positions_for_invest))
+    pit_trend_mask = trend_mask & pit_valid
+    if int(pit_trend_mask.sum()) >= min_required:
+        eligible_mask = pit_trend_mask
+        quality_fill = -6.0
+    else:
+        eligible_mask = trend_mask
+        quality_fill = 0.0
+
+    df["qm_quality_score"] = quality_scores.fillna(quality_fill)
+    df["qm_momentum_score"] = momentum_scores
+    df["qm_sector_score"] = df["sector"].map(lambda s: float(sector_scores.get(str(s), 0.0)))
+    df["qm_total_score"] = (
+        float(quality_weight) * df["qm_quality_score"]
+        + float(momentum_weight) * df["qm_momentum_score"]
+        + float(sector_bonus_mult) * df["qm_sector_score"]
+    )
+
+    eligible = df.loc[eligible_mask].copy()
+    if eligible.empty:
+        return {"positions": [], "cash_pct": 100.0, "_quality_momo_mode": True, "_sit_out": True}
+
+    filtered = eligible[
+        (eligible["qm_quality_score"] >= float(min_quality_score))
+        & (eligible["qm_momentum_score"] >= float(min_momentum_score))
+    ].copy()
+    if len(filtered) >= min_required:
+        eligible = filtered
+    elif len(eligible) < min_required:
+        return {"positions": [], "cash_pct": 100.0, "_quality_momo_mode": True, "_sit_out": True}
+
+    ranked = eligible.sort_values(
+        by=["qm_total_score", "qm_quality_score", "qm_momentum_score", "relative_strength_63d"],
+        ascending=False,
+    )
+
+    picked: list[dict[str, Any]] = []
+    sector_counts: dict[str, int] = {}
+    sector_cap = max(0, int(max_per_sector))
+    target = max(1, min(int(top_k), len(ranked)))
+    for _, row in ranked.iterrows():
+        sector = str(row.get("sector") or "Unknown")
+        if sector_cap > 0 and sector_counts.get(sector, 0) >= sector_cap:
+            continue
+        picked.append(row.to_dict())
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if len(picked) >= target:
+            break
+    if len(picked) < target:
+        seen = {str(x.get("symbol")) for x in picked}
+        for _, row in ranked.iterrows():
+            sym = str(row.get("symbol"))
+            if sym in seen:
+                continue
+            picked.append(row.to_dict())
+            seen.add(sym)
+            if len(picked) >= target:
+                break
+    if len(picked) < min_required:
+        return {"positions": [], "cash_pct": 100.0, "_quality_momo_mode": True, "_sit_out": True}
+
+    wmode = str(weight_mode or "inv_vol").strip().lower()
+    if wmode not in {"equal", "inv_vol", "score"}:
+        wmode = "inv_vol"
+    raw_scores: dict[str, float] = {}
+    if wmode == "equal":
+        raw_scores = {str(x.get("symbol")): 1.0 for x in picked}
+    elif wmode == "score":
+        min_score = min(_f(x.get("qm_total_score"), 0.0) for x in picked)
+        raw_scores = {
+            str(x.get("symbol")): max(0.1, _f(x.get("qm_total_score"), 0.0) - min_score + 1.0)
+            for x in picked
+        }
+    else:
+        for x in picked:
+            sym = str(x.get("symbol"))
+            vol20 = _f(x.get("vol_20"), np.nan)
+            if not np.isfinite(vol20):
+                vol20 = max(0.6, _f(x.get("atr_pct"), 2.0)) / 100.0
+            raw_scores[sym] = float(1.0 / max(0.0025, vol20))
+    total = float(sum(raw_scores.values()))
+    if total <= 0:
+        w = 100.0 / float(len(picked))
+        positions = [{"symbol": str(x.get("symbol")), "weight_pct": w} for x in picked]
+    else:
+        positions = [
+            {"symbol": sym, "weight_pct": float(score / total * 100.0)}
+            for sym, score in raw_scores.items()
+            if sym
+        ]
+    return {"positions": positions, "cash_pct": 0.0, "_quality_momo_mode": True, "_sit_out": False}
 
 
 def _ma_gap_for_window(row: dict[str, Any], ma_window: int) -> float:
@@ -2019,6 +2625,7 @@ def run() -> None:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     cache = _load_json(AI_CACHE)
     sector_lookup = _load_sector_lookup()
+    pit_store = None
 
     snaps = _snapshot_dates()
     if HORIZON_MODE == "next_snapshot" and len(snaps) < 2:
@@ -2039,10 +2646,9 @@ def run() -> None:
             up = ROOT / up
         if up.exists():
             universe_by_date = _load_universe_by_date(up)
+    universe_lookup = _build_universe_asof_lookup(universe_by_date) if universe_by_date else ([], [])
 
     if universe_by_date:
-        want = {str(d.date()) for d in snaps}
-        universe_by_date = {k: v for k, v in universe_by_date.items() if k in want and v}
         union_syms = sorted({s for arr in universe_by_date.values() for s in (arr or [])})
         if union_syms:
             symbols = union_syms
@@ -2053,6 +2659,24 @@ def run() -> None:
 
     requested_symbols = list(symbols)
     prefetch_decision_engine = str(os.getenv("AI_DECISION_ENGINE", "chart")).strip().lower() or "chart"
+    if (
+        prefetch_decision_engine in {"quality_momentum", "stock_event", "earnings_drift"}
+        or _f_env("AI_STOCK_MOMO_PIT_BONUS", 0.0) > 0
+    ):
+        try:
+            from core.sec_pit import SecPointInTimeStore
+
+            pit_store = SecPointInTimeStore(requested_symbols)
+        except Exception:
+            pit_store = None
+    earnings_store = None
+    if prefetch_decision_engine == "earnings_drift":
+        try:
+            from core.earnings_pit import EarningsEventStore
+
+            earnings_store = EarningsEventStore(requested_symbols)
+        except Exception:
+            earnings_store = None
     prefetch_symbols: list[str] = []
     if prefetch_decision_engine == "trend":
         for env_key, default_symbol in (
@@ -2124,7 +2748,16 @@ def run() -> None:
     if execution_timing not in {"same_close", "next_open"}:
         execution_timing = "next_open"
     decision_engine = str(os.getenv("AI_DECISION_ENGINE", "chart")).strip().lower() or "chart"
-    if decision_engine not in {"ai", "chart", "stock_momentum", "trend", "regime"}:
+    if decision_engine not in {
+        "ai",
+        "chart",
+        "stock_momentum",
+        "quality_momentum",
+        "stock_event",
+        "earnings_drift",
+        "trend",
+        "regime",
+    }:
         decision_engine = "chart"
     trend_risk_symbol = _normalize_symbol(os.getenv("AI_TREND_RISK_SYMBOL", "TQQQ")) or "TQQQ"
     trend_mid_symbol = _normalize_symbol(os.getenv("AI_TREND_MID_SYMBOL", "QQQ")) or "QQQ"
@@ -2334,6 +2967,59 @@ def run() -> None:
     stock_momo_min_positions_for_invest = max(1, _i_env("AI_STOCK_MOMO_MIN_POSITIONS_FOR_INVEST", 2))
     stock_momo_max_per_sector = max(0, _i_env("AI_STOCK_MOMO_MAX_PER_SECTOR", 0))
     stock_momo_sector_bonus = max(0.0, _f_env("AI_STOCK_MOMO_SECTOR_BONUS", 0.0))
+    stock_momo_pit_bonus = max(0.0, _f_env("AI_STOCK_MOMO_PIT_BONUS", 0.0))
+    stock_momo_pit_max_filing_age = max(0, _i_env("AI_STOCK_MOMO_PIT_MAX_FILING_AGE", 180))
+    stock_momo_pit_veto_threshold = _f_env("AI_STOCK_MOMO_PIT_VETO_THRESHOLD", -999.0)
+    stock_momo_pit_veto_max_filing_age = max(
+        0,
+        _i_env("AI_STOCK_MOMO_PIT_VETO_MAX_FILING_AGE", stock_momo_pit_max_filing_age),
+    )
+    stock_momo_pit_veto_new_only = _as_bool_env("AI_STOCK_MOMO_PIT_VETO_NEW_ONLY", False)
+    stock_momo_pit_veto_regimes = tuple(
+        x.strip().lower()
+        for x in str(os.getenv("AI_STOCK_MOMO_PIT_VETO_REGIMES", "")).split(",")
+        if x.strip()
+    )
+    stock_momo_neutral_entry_min_breadth_up200 = _f_env("AI_STOCK_MOMO_NEUTRAL_ENTRY_MIN_BREADTH_UP200", -1.0)
+    stock_momo_neutral_entry_min_breadth_pos63 = _f_env("AI_STOCK_MOMO_NEUTRAL_ENTRY_MIN_BREADTH_POS63", -1.0)
+    stock_momo_neutral_max_new_when_weak = _i_env("AI_STOCK_MOMO_NEUTRAL_MAX_NEW_WHEN_WEAK", -1)
+    quality_momo_weight_mode = str(os.getenv("AI_QM_WEIGHT_MODE", "inv_vol")).strip().lower() or "inv_vol"
+    if quality_momo_weight_mode not in {"equal", "inv_vol", "score"}:
+        quality_momo_weight_mode = "inv_vol"
+    quality_momo_top_k_neutral = max(0, _i_env("AI_QM_TOP_K_NEUTRAL", max(2, min(top_k, 6))))
+    quality_momo_top_k_risk_off = max(0, _i_env("AI_QM_TOP_K_RISK_OFF", 0))
+    quality_momo_min_positions_for_invest = max(1, _i_env("AI_QM_MIN_POSITIONS_FOR_INVEST", 3))
+    quality_momo_max_per_sector = max(0, _i_env("AI_QM_MAX_PER_SECTOR", 2))
+    quality_momo_sector_bonus = max(0.0, _f_env("AI_QM_SECTOR_BONUS", 0.15))
+    quality_momo_pit_max_filing_age = max(1, _i_env("AI_QM_MAX_FILING_AGE", 200))
+    quality_momo_quality_weight = max(0.0, _f_env("AI_QM_QUALITY_WEIGHT", 0.60))
+    quality_momo_momentum_weight = max(0.0, _f_env("AI_QM_MOMENTUM_WEIGHT", 0.40))
+    if quality_momo_quality_weight <= 0.0 and quality_momo_momentum_weight <= 0.0:
+        quality_momo_quality_weight = 0.60
+        quality_momo_momentum_weight = 0.40
+    quality_momo_min_quality_score = _f_env("AI_QM_MIN_QUALITY_SCORE", -1.5)
+    quality_momo_min_momentum_score = _f_env("AI_QM_MIN_MOMENTUM_SCORE", 0.0)
+    quality_momo_require_trend_template = _as_bool_env("AI_QM_REQUIRE_TREND_TEMPLATE", False)
+    stock_event_weight_mode = str(os.getenv("AI_STOCK_EVENT_WEIGHT_MODE", "equal")).strip().lower() or "equal"
+    if stock_event_weight_mode not in {"equal", "inv_vol", "score"}:
+        stock_event_weight_mode = "equal"
+    stock_event_top_k_neutral = max(0, _i_env("AI_STOCK_EVENT_TOP_K_NEUTRAL", min(2, top_k)))
+    stock_event_top_k_risk_off = max(0, _i_env("AI_STOCK_EVENT_TOP_K_RISK_OFF", 0))
+    stock_event_min_positions_for_invest = max(1, _i_env("AI_STOCK_EVENT_MIN_POSITIONS_FOR_INVEST", 2))
+    stock_event_max_per_sector = max(0, _i_env("AI_STOCK_EVENT_MAX_PER_SECTOR", 2))
+    stock_event_max_filing_age = max(1, _i_env("AI_STOCK_EVENT_MAX_FILING_AGE", 45))
+    stock_event_min_rev_yoy = _f_env("AI_STOCK_EVENT_MIN_REV_YOY", 5.0)
+    stock_event_min_eps_yoy = _f_env("AI_STOCK_EVENT_MIN_EPS_YOY", 5.0)
+    stock_event_min_ni_yoy = _f_env("AI_STOCK_EVENT_MIN_NI_YOY", 0.0)
+    earnings_drift_weight_mode = str(os.getenv("AI_EARNINGS_DRIFT_WEIGHT_MODE", "equal")).strip().lower() or "equal"
+    if earnings_drift_weight_mode not in {"equal", "inv_vol", "score"}:
+        earnings_drift_weight_mode = "equal"
+    earnings_drift_top_k_neutral = max(0, _i_env("AI_EARNINGS_DRIFT_TOP_K_NEUTRAL", min(2, top_k)))
+    earnings_drift_top_k_risk_off = max(0, _i_env("AI_EARNINGS_DRIFT_TOP_K_RISK_OFF", 0))
+    earnings_drift_min_positions = max(1, _i_env("AI_EARNINGS_DRIFT_MIN_POSITIONS", 2))
+    earnings_drift_max_per_sector = max(0, _i_env("AI_EARNINGS_DRIFT_MAX_PER_SECTOR", 2))
+    earnings_drift_max_days_since = max(1, _i_env("AI_EARNINGS_DRIFT_MAX_DAYS_SINCE", 35))
+    earnings_drift_min_surprise = _f_env("AI_EARNINGS_DRIFT_MIN_SURPRISE_PCT", 3.0)
     ai_top_k_neutral = max(0, _i_env("AI_AI_TOP_K_NEUTRAL", 0))
     ai_top_k_risk_off = max(0, _i_env("AI_AI_TOP_K_RISK_OFF", 0))
     ai_neutral_min_breadth_up200 = _f_env("AI_AI_NEUTRAL_MIN_BREADTH_UP200", chart_min_breadth_up200)
@@ -2437,7 +3123,7 @@ def run() -> None:
 
         bench_ret = (bench_exit_px / bench_entry_px - 1.0) * 100.0
         snap = str(qdt.date())
-        raw_universe = universe_by_date.get(snap, requested_symbols) if universe_by_date else symbols
+        raw_universe = _resolve_universe_asof(universe_lookup, snap, requested_symbols) if universe_by_date else symbols
         raw_universe = [s for s in raw_universe if isinstance(s, str) and s.strip()]
         engine_extra_symbols: list[str] = []
         if decision_engine == "trend":
@@ -2492,6 +3178,16 @@ def run() -> None:
                 rs21 = _f(ind_row.get("return_21d"))
             tt = _trend_template_checks(ind_row, rs63, rs63_min=safe_trend_rs63_min)
             sector_meta = sector_lookup.get(s, {})
+            pit_meta = (
+                pit_store.features_asof(s, pd.Timestamp(signal_day).date())  # type: ignore[union-attr]
+                if pit_store is not None
+                else {"pit_has_data": False}
+            )
+            earnings_meta = (
+                earnings_store.latest_event_asof(s, pd.Timestamp(signal_day))  # type: ignore[union-attr]
+                if earnings_store is not None
+                else {"earnings_has_data": False}
+            )
 
             feats.append(
                 {
@@ -2508,6 +3204,7 @@ def run() -> None:
                     "ma175": _f(ind_row.get("ma175")),
                     "ma200": _f(ind_row.get("ma200")),
                     "return_63d": _f(ind_row.get("return_63d")),
+                    "return_126d": _f(ind_row.get("return_126d")),
                     "vol_20": _f(ind_row.get("vol_20")),
                     "dd_63": _f(ind_row.get("dd_63")),
                     "dd_252": _f(ind_row.get("dd_252")),
@@ -2521,10 +3218,13 @@ def run() -> None:
                     "ma150_gap": _f(ind_row.get("ma150_gap")),
                     "ma175_gap": _f(ind_row.get("ma175_gap")),
                     "ma200_gap": _f(ind_row.get("ma200_gap")),
+                    "ma200_trend_pct": _f(ind_row.get("ma200_trend_pct")),
                     "bb_position": _f(ind_row.get("bb_position"), 50.0),
                     "volume_ratio": _f(ind_row.get("volume_ratio"), 1.0),
                     "trend_template_pass": bool(tt.get("pass", False)),
                     "trend_template_checks": tt.get("checks", {}),
+                    **pit_meta,
+                    **earnings_meta,
                 }
             )
             fwd_ret_by_symbol[s] = float(fr)
@@ -2554,6 +3254,7 @@ def run() -> None:
             algo_mkt["regime"] = _regime_from_universe_features(breadth_src, mkt.get("vix_close"))
         breadth = _market_breadth(breadth_src)
         sector_scores = _sector_strength_scores(safe_feats)
+        pit_symbol_bonus = _pit_symbol_bonus(safe_feats, max_filing_age_days=stock_momo_pit_max_filing_age)
 
         candidate_symbol_set = {x.get("symbol") for x in safe_feats if isinstance(x, dict)}
         held_syms = [
@@ -2613,10 +3314,77 @@ def run() -> None:
                 scoring_mode=chart_scoring_mode,
             )
         elif decision_engine == "stock_momentum":
-            if str(algo_mkt.get("regime", "neutral")).lower() == "neutral":
+            stock_momo_regime = str(algo_mkt.get("regime", "neutral")).strip().lower()
+            stock_momo_veto_active = _pit_veto_enabled_for_regime(stock_momo_pit_veto_regimes, stock_momo_regime)
+            stock_momo_feats = list(safe_feats)
+            if stock_momo_veto_active and not stock_momo_pit_veto_new_only:
+                stock_momo_feats = _apply_pit_quality_veto(
+                    stock_momo_feats,
+                    threshold=stock_momo_pit_veto_threshold,
+                    max_filing_age_days=stock_momo_pit_veto_max_filing_age,
+                    min_positions_for_invest=stock_momo_min_positions_for_invest,
+                )
+            stock_momo_candidate_symbols = {x.get("symbol") for x in stock_momo_feats if isinstance(x, dict)}
+            stock_momo_held_syms = [
+                s
+                for s, w in prev_port.items()
+                if isinstance(s, str) and s != "__CASH__" and float(w) > 0 and s in stock_momo_candidate_symbols
+            ]
+            stock_momo_held_syms.sort(key=lambda s: -float(prev_port.get(s, 0.0)))
+            if stock_momo_regime == "neutral":
                 target_top_k = min(target_top_k, stock_momo_top_k_neutral)
-            elif str(algo_mkt.get("regime", "neutral")).lower() == "risk_off":
+            elif stock_momo_regime == "risk_off":
                 target_top_k = min(target_top_k, stock_momo_top_k_risk_off)
+            candidates = _select_candidates_with_includes(
+                stock_momo_feats,
+                prompt_max_symbols,
+                "top_rs63",
+                stock_momo_held_syms,
+            )
+            if stock_momo_veto_active and stock_momo_pit_veto_new_only:
+                candidates = _apply_pit_quality_veto(
+                    candidates,
+                    threshold=stock_momo_pit_veto_threshold,
+                    max_filing_age_days=stock_momo_pit_veto_max_filing_age,
+                    min_positions_for_invest=stock_momo_min_positions_for_invest,
+                    exempt_symbols=set(stock_momo_held_syms),
+                )
+            candidates = _apply_breadth_new_entry_gate(
+                candidates=candidates,
+                held_syms=stock_momo_held_syms,
+                market_regime=stock_momo_regime,
+                breadth=breadth,
+                neutral_min_up200=stock_momo_neutral_entry_min_breadth_up200,
+                neutral_min_pos63=stock_momo_neutral_entry_min_breadth_pos63,
+                neutral_max_new_when_weak=stock_momo_neutral_max_new_when_weak,
+            )
+        elif decision_engine == "quality_momentum":
+            if str(algo_mkt.get("regime", "neutral")).lower() == "neutral":
+                target_top_k = min(target_top_k, quality_momo_top_k_neutral)
+            elif str(algo_mkt.get("regime", "neutral")).lower() == "risk_off":
+                target_top_k = min(target_top_k, quality_momo_top_k_risk_off)
+            candidates = _select_candidates_with_includes(
+                safe_feats,
+                prompt_max_symbols,
+                "top_rs63",
+                held_syms,
+            )
+        elif decision_engine == "stock_event":
+            if str(algo_mkt.get("regime", "neutral")).lower() == "neutral":
+                target_top_k = min(target_top_k, stock_event_top_k_neutral)
+            elif str(algo_mkt.get("regime", "neutral")).lower() == "risk_off":
+                target_top_k = min(target_top_k, stock_event_top_k_risk_off)
+            candidates = _select_candidates_with_includes(
+                safe_feats,
+                prompt_max_symbols,
+                "top_rs63",
+                held_syms,
+            )
+        elif decision_engine == "earnings_drift":
+            if str(algo_mkt.get("regime", "neutral")).lower() == "neutral":
+                target_top_k = min(target_top_k, earnings_drift_top_k_neutral)
+            elif str(algo_mkt.get("regime", "neutral")).lower() == "risk_off":
+                target_top_k = min(target_top_k, earnings_drift_top_k_risk_off)
             candidates = _select_candidates_with_includes(
                 safe_feats,
                 prompt_max_symbols,
@@ -2643,6 +3411,8 @@ def run() -> None:
                 held_syms,
             )
         allowed = {x["symbol"] for x in candidates if isinstance(x, dict) and x.get("symbol")}
+        if decision_engine == "regime":
+            allowed = _expand_regime_allowed_symbols(allowed, regime_portfolio_symbols, by)
 
         out: dict[str, Any] = {"_fallback": False}
         weights_pct: dict[str, float] = {}
@@ -2657,6 +3427,11 @@ def run() -> None:
                     scoring_mode=chart_scoring_mode,
                 )
             elif decision_engine == "stock_momentum":
+                stock_momo_sector_scores = _sector_strength_scores(stock_momo_feats)
+                stock_momo_symbol_bonus = _pit_symbol_bonus(
+                    stock_momo_feats,
+                    max_filing_age_days=stock_momo_pit_max_filing_age,
+                )
                 out = _stock_momentum_portfolio(
                     candidates,
                     top_k=target_top_k,
@@ -2664,7 +3439,49 @@ def run() -> None:
                     min_positions_for_invest=stock_momo_min_positions_for_invest,
                     max_per_sector=stock_momo_max_per_sector,
                     sector_bonus_mult=stock_momo_sector_bonus,
+                    sector_scores=stock_momo_sector_scores,
+                    symbol_bonus={
+                        sym: float(stock_momo_pit_bonus * stock_momo_symbol_bonus.get(sym, 0.0))
+                        for sym in stock_momo_symbol_bonus
+                    },
+                )
+            elif decision_engine == "quality_momentum":
+                out = _quality_momentum_portfolio(
+                    candidates,
+                    top_k=target_top_k,
+                    weight_mode=quality_momo_weight_mode,
+                    min_positions_for_invest=quality_momo_min_positions_for_invest,
+                    max_per_sector=quality_momo_max_per_sector,
+                    sector_bonus_mult=quality_momo_sector_bonus,
                     sector_scores=sector_scores,
+                    max_filing_age_days=quality_momo_pit_max_filing_age,
+                    quality_weight=quality_momo_quality_weight,
+                    momentum_weight=quality_momo_momentum_weight,
+                    min_quality_score=quality_momo_min_quality_score,
+                    min_momentum_score=quality_momo_min_momentum_score,
+                    require_trend_template=quality_momo_require_trend_template,
+                )
+            elif decision_engine == "stock_event":
+                out = _stock_event_portfolio(
+                    candidates,
+                    top_k=target_top_k,
+                    weight_mode=stock_event_weight_mode,
+                    min_positions_for_invest=stock_event_min_positions_for_invest,
+                    max_per_sector=stock_event_max_per_sector,
+                    max_filing_age_days=stock_event_max_filing_age,
+                    min_rev_yoy=stock_event_min_rev_yoy,
+                    min_eps_yoy=stock_event_min_eps_yoy,
+                    min_ni_yoy=stock_event_min_ni_yoy,
+                )
+            elif decision_engine == "earnings_drift":
+                out = _earnings_drift_portfolio(
+                    candidates,
+                    top_k=target_top_k,
+                    weight_mode=earnings_drift_weight_mode,
+                    min_positions_for_invest=earnings_drift_min_positions,
+                    max_per_sector=earnings_drift_max_per_sector,
+                    max_days_since=earnings_drift_max_days_since,
+                    min_surprise_pct=earnings_drift_min_surprise,
                 )
             elif decision_engine == "trend":
                 by = {str(x.get("symbol")): x for x in feats if isinstance(x, dict) and x.get("symbol")}
@@ -3106,6 +3923,43 @@ def run() -> None:
         "stock_momo_min_positions_for_invest": int(stock_momo_min_positions_for_invest),
         "stock_momo_max_per_sector": int(stock_momo_max_per_sector),
         "stock_momo_sector_bonus": float(stock_momo_sector_bonus),
+        "stock_momo_pit_bonus": float(stock_momo_pit_bonus),
+        "stock_momo_pit_max_filing_age": int(stock_momo_pit_max_filing_age),
+        "stock_momo_pit_veto_threshold": float(stock_momo_pit_veto_threshold),
+        "stock_momo_pit_veto_max_filing_age": int(stock_momo_pit_veto_max_filing_age),
+        "stock_momo_pit_veto_new_only": bool(stock_momo_pit_veto_new_only),
+        "stock_momo_pit_veto_regimes": list(stock_momo_pit_veto_regimes),
+        "stock_momo_neutral_entry_min_breadth_up200": float(stock_momo_neutral_entry_min_breadth_up200),
+        "stock_momo_neutral_entry_min_breadth_pos63": float(stock_momo_neutral_entry_min_breadth_pos63),
+        "stock_momo_neutral_max_new_when_weak": int(stock_momo_neutral_max_new_when_weak),
+        "quality_momo_weight_mode": str(quality_momo_weight_mode),
+        "quality_momo_top_k_neutral": int(quality_momo_top_k_neutral),
+        "quality_momo_top_k_risk_off": int(quality_momo_top_k_risk_off),
+        "quality_momo_min_positions_for_invest": int(quality_momo_min_positions_for_invest),
+        "quality_momo_max_per_sector": int(quality_momo_max_per_sector),
+        "quality_momo_sector_bonus": float(quality_momo_sector_bonus),
+        "quality_momo_pit_max_filing_age": int(quality_momo_pit_max_filing_age),
+        "quality_momo_quality_weight": float(quality_momo_quality_weight),
+        "quality_momo_momentum_weight": float(quality_momo_momentum_weight),
+        "quality_momo_min_quality_score": float(quality_momo_min_quality_score),
+        "quality_momo_min_momentum_score": float(quality_momo_min_momentum_score),
+        "quality_momo_require_trend_template": bool(quality_momo_require_trend_template),
+        "stock_event_weight_mode": str(stock_event_weight_mode),
+        "stock_event_top_k_neutral": int(stock_event_top_k_neutral),
+        "stock_event_top_k_risk_off": int(stock_event_top_k_risk_off),
+        "stock_event_min_positions_for_invest": int(stock_event_min_positions_for_invest),
+        "stock_event_max_per_sector": int(stock_event_max_per_sector),
+        "stock_event_max_filing_age": int(stock_event_max_filing_age),
+        "stock_event_min_rev_yoy": float(stock_event_min_rev_yoy),
+        "stock_event_min_eps_yoy": float(stock_event_min_eps_yoy),
+        "stock_event_min_ni_yoy": float(stock_event_min_ni_yoy),
+        "earnings_drift_weight_mode": str(earnings_drift_weight_mode),
+        "earnings_drift_top_k_neutral": int(earnings_drift_top_k_neutral),
+        "earnings_drift_top_k_risk_off": int(earnings_drift_top_k_risk_off),
+        "earnings_drift_min_positions": int(earnings_drift_min_positions),
+        "earnings_drift_max_per_sector": int(earnings_drift_max_per_sector),
+        "earnings_drift_max_days_since": int(earnings_drift_max_days_since),
+        "earnings_drift_min_surprise": float(earnings_drift_min_surprise),
         "ai_top_k_neutral": int(ai_top_k_neutral),
         "ai_top_k_risk_off": int(ai_top_k_risk_off),
         "ai_neutral_min_breadth_up200": float(ai_neutral_min_breadth_up200),

@@ -1,0 +1,32 @@
+{
+  "active": true,
+  "current_phase": "iterative_tuning_dynamic_blend",
+  "task_description": "Tune weekly AI rebalancing for higher CAGR and lower MDD vs QQQ",
+  "latest_best_run": "ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_20260306",
+  "latest_best_metrics": {
+    "cagr_pct": 18.642917843274255,
+    "qqq_cagr_pct": 14.22897435342514,
+    "cagr_diff_pctp": 4.413943489849116,
+    "mdd_pct": -51.839722565366216,
+    "qqq_mdd_pct": -51.85458421523427,
+    "mdd_diff_pctp": 0.0148616498680596,
+    "sharpe": 0.7695170360759019,
+    "qqq_sharpe": 0.7437973069016038
+  },
+  "latest_best_params": {
+    "safe_require_risk_on": true,
+    "dynamic_blend": true,
+    "blend_high_pct": 100,
+    "blend_low_pct": 88.76,
+    "breadth_up200_min": 0.45,
+    "breadth_up50_min": 0.55,
+    "breadth_pos63_min": 0.4,
+    "vix_max": 22
+  },
+  "artifacts": [
+    "data/runs/verify_ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_20260306.md",
+    "docs/reports/trade_journal_ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_20260306.md"
+  ],
+  "iteration": 73,
+  "last_turn_at": "2026-03-06T01:36:55.675Z"
+}

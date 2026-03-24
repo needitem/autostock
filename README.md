@@ -14,16 +14,18 @@ The AI path uses **Codex CLI login only** (ChatGPT session), with no manual API 
 
 ## Current Direction
 
-The current baseline is moving away from weekly AI stock picking as the primary production thesis.
+The current production research is centered on deterministic regime/trend systems, with stock-first selection remaining research-only.
 
 - Strategy reference: `docs/strategy-v2.md`
 - Implementation plan: `.omx/plans/strategy-v2-regime-core.md`
 - Baseline runner: `python scripts/run_strategy_v2_baseline.py`
-- Experimental balance runner: `python scripts/run_strategy_v3_balance.py`
-- Stock-momentum runner: `python scripts/run_strategy_v4_stock_momentum.py`
+- Passing dynamic-defense challenger: `python scripts/run_strategy_v14_regime_gld_dynamic_defense.py`
+- Best raw trend runner: `python scripts/run_strategy_v8_levered_trend_best.py`
+- Stock-first research loop: `python scripts/run_stock_hypothesis_promotion_loop.py`
 
-The checked-in V2 baseline currently uses a mixed `risk_on` sleeve of `TQQQ 80% + QQQ 20%`, plus a `QLD MA50` filter that downshifts leveraged states into `QQQ` before they stay too hot for too long.
-The stock-momentum redesign keeps `QQQ` as a market filter but buys individual Nasdaq-100 names instead of ETFs.
+The checked-in V2 baseline uses a mixed `risk_on` sleeve of `TQQQ 80% + QQQ 20%`, plus a `QLD MA50` filter that downshifts leveraged states into `QQQ`.
+The new V14 line keeps the same regime family but simplifies the defensive sleeve so `risk_off` collapses to `GLD`, which materially improved promotion-rule robustness.
+Stock-first remains useful as a research branch, but it is no longer the leading production thesis.
 
 ## Requirements
 

@@ -8,8 +8,17 @@ from ai.analyzer import AIAnalyzer
 def test_ai_analyzer_defaults_to_codex_cli():
     analyzer = AIAnalyzer()
     assert analyzer.provider == "codex-cli"
-    assert analyzer.model == "gpt-5.2"
+    assert analyzer.model == "gpt-5.4"
     assert analyzer.base_url is None
+
+
+def test_ai_analyzer_allows_xhigh_and_prioritizes_primary_model(monkeypatch):
+    monkeypatch.setenv("AI_MODEL", "gpt-5.4")
+    monkeypatch.setenv("AI_MODEL_FALLBACKS", "gpt-5.4-pro,gpt-5.3")
+    monkeypatch.setenv("AI_REASONING_EFFORT", "xhigh")
+    analyzer = AIAnalyzer()
+    assert analyzer.reasoning_effort == "xhigh"
+    assert analyzer.fallback_models == ["gpt-5.4", "gpt-5.4-pro", "gpt-5.3"]
 
 
 @patch.object(AIAnalyzer, "has_api_access", new_callable=PropertyMock, return_value=False)

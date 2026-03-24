@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Telegram callback handlers (rebalance-first UI)."""
+"""Telegram callback handlers (strategy-first UI)."""
 
 from __future__ import annotations
 
 import asyncio
-import html
 import json
 import os
 import sys
@@ -17,7 +16,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import formatters as fmt
 from bot import keyboards as kb
-from bot.scheduler_config import format_us_rebalance_message, format_us_report_message
+from bot.scheduler_config import (
+    format_inventory_report_message,
+    format_rebalance_snapshot,
+    format_strategy_v2_message,
+    format_strategy_v2_snapshot,
+    format_us_rebalance_message,
+    format_us_report_message,
+)
 from bot.user_prefs import get_chat_style, normalize_style, set_chat_style, style_label
 from trading.kis_api import kis
 from trading.portfolio import portfolio
@@ -56,62 +62,18 @@ def _latest_rebalance_json_path() -> Path | None:
     return files[0] if files else None
 
 
-def _format_rebalance_snapshot(payload: dict, src_path: Path | None = None) -> str:
-    generated_at = str(payload.get("generated_at", "-") or "-")
-    risk = payload.get("risk_on_off", {}) if isinstance(payload.get("risk_on_off"), dict) else {}
-    label = str(risk.get("label", "neutral") or "neutral")
-    score = risk.get("score")
-    score_txt = "-"
-    try:
-        score_txt = f"{float(score):.2f}"
-    except Exception:
-        pass
-
-    desired_exposure = float(payload.get("desired_exposure_pct", 0.0) or 0.0)
-    achieved_exposure = float(payload.get("achieved_exposure_after_execution_pct", payload.get("achieved_exposure_pct", 0.0)) or 0.0)
-    cash_pct = float(payload.get("executed_cash_pct", payload.get("cash_pct", 0.0)) or 0.0)
-
-    weights = payload.get("executed_weights_pct")
-    if not isinstance(weights, dict):
-        weights = payload.get("weights_pct", {})
-    if not isinstance(weights, dict):
-        weights = {}
-
-    top_rows = sorted(
-        ((str(sym), float(w)) for sym, w in weights.items() if str(sym) and float(w) > 0),
-        key=lambda x: x[1],
-        reverse=True,
-    )[:5]
-
-    lines = [
-        "<b>Latest Rebalance Snapshot</b>",
-        "--------------------------",
-        f"Generated: <code>{html.escape(generated_at)}</code>",
-        f"Risk regime: <b>{html.escape(label)}</b> (score {html.escape(score_txt)})",
-        f"Exposure target: <b>{desired_exposure:.2f}%</b>",
-        f"Exposure achieved: <b>{achieved_exposure:.2f}%</b>",
-        f"Cash: <b>{cash_pct:.2f}%</b>",
-    ]
-
-    if top_rows:
-        lines.append("\nTop positions:")
-        for sym, w in top_rows:
-            lines.append(f"- <b>{html.escape(sym)}</b>: {w:.2f}%")
-
-    if src_path is not None:
-        lines.append(f"\nJSON: <code>{html.escape(str(src_path))}</code>")
-
-    return "\n".join(lines)
-
-
 async def handle_main(query) -> None:
     style = _style_from_query(query)
 
     text = "<b>AutoStock Rebalance Hub</b>\n" + ("-" * 26) + "\n\n"
     text += "Quick start:\n"
-    text += "1) Run US report (daily data refresh)\n"
-    text += "2) Run US rebalance (portfolio recommendation)\n"
-    text += "3) Check latest rebalance snapshot\n\n"
+    text += "1) Run Strategy V2 baseline (regime ETF validation)\n"
+    text += "2) Check latest Strategy V2 verification\n"
+    text += "3) Run US rebalance (portfolio recommendation)\n"
+    text += "4) Check latest rebalance snapshot\n"
+    if kb.inventory_enabled():
+        text += "5) Run inventory report (beta)\n"
+    text += "\n"
     text += f"Display mode: <b>{style_label(style)}</b>\n"
     text += f"Trading: {'ON' if kb.trading_enabled() else 'OFF'}\n\n"
     text += "You can still type a ticker directly for chart analysis."
@@ -155,23 +117,79 @@ async def handle_run_us_report(query) -> None:
         await query.edit_message_text(f"US report failed: {exc}", reply_markup=kb.back())
 
 
-async def handle_run_us_rebalance(query) -> None:
-    await query.edit_message_text("US rebalance started. This can take a few minutes.")
+async def handle_run_strategy_v2(query) -> None:
+    await query.edit_message_text("Strategy V2 baseline + verification started. This can take a few minutes.")
 
     try:
+        from pipelines.strategy_v2_pipeline import run_strategy_v2_pipeline
+
+        result = await asyncio.to_thread(run_strategy_v2_pipeline, True)
+        text = format_strategy_v2_message(result if isinstance(result, dict) else {})
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
+    except Exception as exc:
+        await query.edit_message_text(f"Strategy V2 run failed: {exc}", reply_markup=kb.back())
+
+
+async def handle_latest_strategy_v2(query) -> None:
+    try:
+        from pipelines.strategy_v2_pipeline import latest_strategy_v2_snapshot
+
+        result = await asyncio.to_thread(latest_strategy_v2_snapshot)
+    except Exception as exc:
+        await query.edit_message_text(f"Latest Strategy V2 load failed: {exc}", reply_markup=kb.back())
+        return
+
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    if not summary:
+        await query.edit_message_text(
+            "No Strategy V2 baseline output found yet.\nRun 'Run Strategy V2' first.",
+            reply_markup=kb.back(),
+        )
+        return
+
+    verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
+    text = format_strategy_v2_snapshot(
+        summary,
+        verification,
+        summary_path=str(result.get("summary_path", "") or ""),
+        verification_path=str(result.get("verification_json_path", "") or ""),
+    )
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
+
+
+async def handle_run_us_rebalance(query) -> None:
+    await query.edit_message_text("US report + rebalance started. This can take a few minutes.")
+
+    try:
+        from pipelines.us_orchestrator import run_all_us_engines
         from pipelines.us_rebalance import run_us_rebalance
 
-        result = await asyncio.to_thread(run_us_rebalance)
+        report_result = await asyncio.to_thread(run_all_us_engines)
+        report_path = str(report_result.get("report_path", "") or "")
+        result = await asyncio.to_thread(run_us_rebalance, report_path if report_path else None)
         payload = result.get("result") if isinstance(result, dict) else {}
         if not isinstance(payload, dict):
             payload = {}
 
         base_msg = format_us_rebalance_message(result if isinstance(result, dict) else {})
-        snapshot = _format_rebalance_snapshot(payload)
+        snapshot = format_rebalance_snapshot(payload)
         text = f"{base_msg}\n\n{snapshot}" if base_msg else snapshot
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
     except Exception as exc:
         await query.edit_message_text(f"US rebalance failed: {exc}", reply_markup=kb.back())
+
+
+async def handle_run_inventory_report(query) -> None:
+    await query.edit_message_text("Inventory report started (beta).")
+
+    try:
+        from pipelines.inventory_report import run_inventory_report
+
+        result = await asyncio.to_thread(run_inventory_report)
+        text = format_inventory_report_message(result if isinstance(result, dict) else {})
+        await query.edit_message_text(text, reply_markup=kb.back())
+    except Exception as exc:
+        await query.edit_message_text(f"Inventory report failed: {exc}", reply_markup=kb.back())
 
 
 async def handle_latest_rebalance(query) -> None:
@@ -193,7 +211,7 @@ async def handle_latest_rebalance(query) -> None:
         await query.edit_message_text("Latest rebalance JSON format is invalid.", reply_markup=kb.back())
         return
 
-    text = _format_rebalance_snapshot(payload, src_path=path)
+    text = format_rebalance_snapshot(payload, src_path=str(path))
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
 
 
@@ -259,8 +277,11 @@ async def handle_api_status(query) -> None:
 EXACT_HANDLERS = {
     "main": handle_main,
     "display_settings": handle_display_settings,
+    "run_strategy_v2": handle_run_strategy_v2,
+    "latest_strategy_v2": handle_latest_strategy_v2,
     "run_us_report": handle_run_us_report,
     "run_us_rebalance": handle_run_us_rebalance,
+    "run_inventory_report": handle_run_inventory_report,
     "latest_rebalance": handle_latest_rebalance,
     "trading_menu": handle_trading_menu,
     "balance": handle_balance,
