@@ -25,6 +25,9 @@ import os
 import sys
 from datetime import datetime
 
+from strategy_catalog import get_strategy_definition
+from strategy_runtime import run_strategy_by_key
+
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -217,36 +220,15 @@ def _print_strategy_snapshot(
     print("=" * 70)
 
 
-def run_strategy_v2_once(verify: bool = True) -> None:
-    from pipelines.strategy_v2_pipeline import run_strategy_v2_pipeline
-
-    print(f"[{datetime.now()}] strategy v2 baseline started...")
-    result = run_strategy_v2_pipeline(run_verify=verify)
-    _print_strategy_snapshot(heading="strategy v2 baseline", result=result, verify=verify)
-
-
-def run_strategy_v4_stock_once(verify: bool = True) -> None:
-    from pipelines.strategy_v4_stock_pipeline import run_strategy_v4_stock_pipeline
-
-    print(f"[{datetime.now()}] strategy v4 stock-momentum baseline started...")
-    result = run_strategy_v4_stock_pipeline(run_verify=verify)
+def run_strategy_once(strategy_key: str, verify: bool = True) -> None:
+    definition = get_strategy_definition(strategy_key)
+    print(f"[{datetime.now()}] {definition.summary_title} started...")
+    result = run_strategy_by_key(strategy_key, verify)
     _print_strategy_snapshot(
-        heading="strategy v4 stock-momentum baseline",
+        heading=definition.summary_title,
         result=result,
         verify=verify,
-        show_universe=True,
-    )
-
-
-def run_strategy_v14_once(verify: bool = True) -> None:
-    from pipelines.strategy_v14_pipeline import run_strategy_v14_pipeline
-
-    print(f"[{datetime.now()}] strategy v14 dynamic defense started...")
-    result = run_strategy_v14_pipeline(run_verify=verify)
-    _print_strategy_snapshot(
-        heading="strategy v14 regime GLD dynamic defense",
-        result=result,
-        verify=verify,
+        show_universe=strategy_key == "v4",
     )
 
 
@@ -416,13 +398,13 @@ def main(argv: list[str] | None = None) -> None:
         run_rebalance_us_once()
         return
     if args.backtest:
-        run_strategy_v2_once(verify=True)
+        run_strategy_once("v2", verify=True)
         return
     if args.v14_backtest:
-        run_strategy_v14_once(verify=True)
+        run_strategy_once("v14", verify=True)
         return
     if args.stock_backtest:
-        run_strategy_v4_stock_once(verify=True)
+        run_strategy_once("v4", verify=True)
         return
     if args.legacy_backtest:
         run_legacy_backtest_once(limit=args.limit)

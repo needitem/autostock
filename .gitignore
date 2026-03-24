@@ -5,3 +5,7 @@ __pycache__/
 venv/
 data/
 logs/
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*

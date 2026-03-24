@@ -29,7 +29,6 @@ from bot.strategy_support import (
     iter_strategy_specs,
     latest_action_key,
     latest_strategy_missing_text,
-    latest_strategy_snapshot_text,
     load_latest_strategy,
     run_action_key,
     run_strategy,
@@ -142,7 +141,7 @@ async def _handle_latest_strategy(query, strategy_key: str) -> None:
         )
         return
 
-    text = latest_strategy_snapshot_text(strategy_key, result)
+    text = format_strategy_snapshot_from_result(strategy_key, result)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb.back())
 
 

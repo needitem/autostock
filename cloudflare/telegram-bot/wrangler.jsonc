@@ -1,0 +1,10 @@
+{
+  "name": "autostock-telegram-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-24",
+  "workers_dev": true,
+  "minify": true,
+  "observability": {
+    "enabled": true
+  }
+}

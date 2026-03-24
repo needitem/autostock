@@ -39,7 +39,6 @@ from bot.strategy_support import (
     iter_strategy_specs,
     latest_command_name,
     latest_strategy_missing_text,
-    latest_strategy_snapshot_text,
     load_latest_strategy,
     run_strategy,
 )
@@ -295,7 +294,7 @@ def _make_latest_strategy_command(strategy_key: str):
                     latest_strategy_missing_text(strategy_key) + f"\nRun /strategy_{strategy_key} first."
                 )
                 return
-            text = latest_strategy_snapshot_text(strategy_key, result)
+            text = format_strategy_snapshot_from_result(strategy_key, result)
             await update.message.reply_text(text, parse_mode="HTML")
         except Exception as e:
             await update.message.reply_text(f"Latest {spec.label} load failed: {e}")
