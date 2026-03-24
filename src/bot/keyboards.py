@@ -10,6 +10,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from bot.strategy_support import iter_strategy_specs, latest_action_key, run_action_key
+
 
 def btn(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data)
@@ -37,14 +39,28 @@ def inventory_enabled() -> bool:
     return raw in {"1", "true", "yes", "on", "y"}
 
 
+def _strategy_action_rows() -> list[list[InlineKeyboardButton]]:
+    rows: list[list[InlineKeyboardButton]] = []
+    for spec in iter_strategy_specs():
+        rows.append(
+            [
+                btn(f"Run {spec.label}", run_action_key(spec.key)),
+                btn(f"Latest {spec.label}", latest_action_key(spec.key)),
+            ]
+        )
+    rows.extend(
+        [
+            [btn("Run US Rebalance", "run_us_rebalance")],
+            [btn("Latest Rebalance", "latest_rebalance")],
+        ]
+    )
+    return rows
+
+
 def main_menu() -> InlineKeyboardMarkup:
-    rows = [
-        [btn("Run Strategy V2", "run_strategy_v2")],
-        [btn("Latest Strategy V2", "latest_strategy_v2")],
-        [btn("Run US Report", "run_us_report")],
-        [btn("Run US Rebalance", "run_us_rebalance")],
-        [btn("Latest Rebalance", "latest_rebalance")],
-    ]
+    strategy_rows = _strategy_action_rows()
+    rows = strategy_rows[:]
+    rows.insert(len(list(iter_strategy_specs())), [btn("Run US Report", "run_us_report")])
     if inventory_enabled():
         rows.append([btn("Inventory Report (Beta)", "run_inventory_report")])
     rows.append([btn("Display Settings", "display_settings")])
@@ -60,15 +76,7 @@ def back(to: str = "main", label: str = "Back") -> InlineKeyboardMarkup:
 
 
 def stock_detail(symbol: str) -> InlineKeyboardMarkup:  # noqa: ARG001 - kept for call-site compatibility
-    return InlineKeyboardMarkup(
-        [
-            [btn("Run Strategy V2", "run_strategy_v2")],
-            [btn("Latest Strategy V2", "latest_strategy_v2")],
-            [btn("Run US Rebalance", "run_us_rebalance")],
-            [btn("Latest Rebalance", "latest_rebalance")],
-            [btn("Main", "main")],
-        ]
-    )
+    return InlineKeyboardMarkup(_strategy_action_rows() + [[btn("Main", "main")]])
 
 
 def trading_menu() -> InlineKeyboardMarkup:

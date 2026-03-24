@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,12 +11,19 @@ from typing import Any
 
 import pandas as pd
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-ROOT = Path(__file__).resolve().parents[1]
-RUNS_DIR = ROOT / "data" / "runs"
+from strategy_sweep_utils import (
+    ROOT,
+    RUNS_DIR,
+    load_module,
+    metric as _promotion_metric,
+    run_backtest_verify_promotion,
+    slug as _slug,
+)
 V10_RUNNER = ROOT / "scripts" / "run_strategy_v10_regime_dynamic_defense.py"
-VERIFY_SCRIPT = ROOT / "scripts" / "verify_ai_portfolio_backtest.py"
-PROMOTION_SCRIPT = ROOT / "scripts" / "run_strategy_promotion_check.py"
 
 
 @dataclass(frozen=True)
@@ -27,22 +32,6 @@ class SweepVariant:
     filter_safe: str
     hysteresis: float
     crash_dynamic: bool
-
-
-def _load_module(path: Path, name: str) -> Any:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load module from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _slug(text: str) -> str:
-    out = "".join(ch if ch.isalnum() else "_" for ch in str(text).strip().lower()).strip("_")
-    return out or "run"
-
 
 def _variant_id(variant: SweepVariant) -> str:
     hysteresis = str(float(variant.hysteresis)).replace(".", "p")
@@ -70,52 +59,6 @@ def _variants() -> list[SweepVariant]:
         )
     ]
     return out
-
-
-def _run_python_script(script_path: Path, env_updates: dict[str, str]) -> dict[str, Any]:
-    env = os.environ.copy()
-    env.update({k: str(v) for k, v in env_updates.items()})
-    proc = subprocess.run(
-        [sys.executable, str(script_path)],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    out = {
-        "script": str(script_path),
-        "returncode": int(proc.returncode),
-        "stdout": str(proc.stdout or "").strip(),
-        "stderr": str(proc.stderr or "").strip(),
-    }
-    if proc.returncode != 0:
-        detail = out["stderr"] or out["stdout"] or f"exit={proc.returncode}"
-        raise RuntimeError(f"{script_path.name} failed: {detail}")
-    return out
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return obj if isinstance(obj, dict) else {}
-
-
-def _promotion_metric(report: dict[str, Any], *keys: str, default: float = 0.0) -> float:
-    cur: Any = report
-    for key in keys:
-        if not isinstance(cur, dict):
-            return float(default)
-        cur = cur.get(key)
-    try:
-        return float(cur)
-    except Exception:
-        return float(default)
-
 
 def _ranking_key(row: dict[str, Any]) -> tuple[Any, ...]:
     return (
@@ -184,27 +127,13 @@ def main() -> None:
             env_updates["AI_REGIME_CRASH"] = "BIL"
             env_updates["AI_REGIME_CRASH_FALLBACK"] = "BIL"
 
-        _run_python_script(V10_RUNNER, env_updates)
-        _run_python_script(
-            VERIFY_SCRIPT,
-            {
-                "AI_PORTFOLIO_RESULTS_CSV": str(results_csv),
-                "AI_PORTFOLIO_SUMMARY_JSON": str(summary_json),
-                "AI_PORTFOLIO_VERIFY_JSON": str(verify_json),
-                "AI_PORTFOLIO_VERIFY_MD": str(verify_md),
-            },
+        _, report = run_backtest_verify_promotion(
+            runner_script=V10_RUNNER,
+            env_updates=env_updates,
+            ai_run_tag=ai_run_tag,
+            promotion_tag=promotion_tag,
         )
-        _run_python_script(
-            PROMOTION_SCRIPT,
-            {
-                "PROMOTION_VERIFY_JSON": str(verify_json),
-                "PROMOTION_RESULTS_CSV": str(results_csv),
-                "PROMOTION_RUN_TAG": promotion_tag,
-            },
-        )
-
         promotion_json = RUNS_DIR / f"{promotion_tag}.json"
-        report = _load_json(promotion_json)
         criteria = {str(item.get("name")): bool(item.get("passes", False)) for item in report.get("criteria") or []}
         detail_by_name = {
             str(item.get("name")): str(item.get("detail", "")) for item in report.get("criteria") or []

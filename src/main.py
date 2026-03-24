@@ -12,6 +12,7 @@ Usage:
   python src/main.py --all-us         # US-only full run (engines + rendered report)
   python src/main.py --rebalance-us   # US-only rebalance using report + charts
   python src/main.py --backtest       # Strategy V2 baseline + verification
+  python src/main.py --v14-backtest   # Strategy V14 dynamic defense + verification
   python src/main.py --stock-backtest # Strategy V4 stock-momentum baseline + verification
   python src/main.py --legacy-backtest  # legacy ticker-level backtest
   python src/main.py --inventory-report  # inventory ledger/replenishment report (beta)
@@ -136,36 +137,66 @@ def run_ai_once() -> None:
         )
 
 
-def run_strategy_v2_once(verify: bool = True) -> None:
-    from pipelines.strategy_v2_pipeline import run_strategy_v2_pipeline
-
-    print(f"[{datetime.now()}] strategy v2 baseline started...")
-    result = run_strategy_v2_pipeline(run_verify=verify)
+def _strategy_snapshot_context(result: dict) -> dict[str, object]:
     summary = result.get("summary", {}) if isinstance(result, dict) else {}
     verification = result.get("verification", {}) if isinstance(result, dict) else {}
-
     metrics = verification.get("metrics", {}) if isinstance(verification, dict) else {}
     portfolio_metrics = summary.get("portfolio_metrics", {}) if isinstance(summary, dict) else {}
-    ai = metrics.get("ai_portfolio") if isinstance(metrics.get("ai_portfolio"), dict) else portfolio_metrics.get("ai_portfolio", {})
-    qqq = metrics.get("benchmark") if isinstance(metrics.get("benchmark"), dict) else portfolio_metrics.get("benchmark", {})
+    ai = (
+        metrics.get("ai_portfolio")
+        if isinstance(metrics.get("ai_portfolio"), dict)
+        else portfolio_metrics.get("ai_portfolio", {})
+    )
+    qqq = (
+        metrics.get("benchmark")
+        if isinstance(metrics.get("benchmark"), dict)
+        else portfolio_metrics.get("benchmark", {})
+    )
     alpha = verification.get("alpha", {}) if isinstance(verification, dict) else {}
     turnover = verification.get("turnover", {}) if isinstance(verification, dict) else {}
     turnover_ai = turnover.get("ai", {}) if isinstance(turnover.get("ai"), dict) else {}
+    return {
+        "summary": summary,
+        "ai": ai,
+        "qqq": qqq,
+        "alpha": alpha,
+        "turnover_ai": turnover_ai,
+    }
+
+
+def _print_strategy_snapshot(
+    *,
+    heading: str,
+    result: dict,
+    verify: bool,
+    show_universe: bool = False,
+) -> None:
+    ctx = _strategy_snapshot_context(result)
+    summary = ctx["summary"] if isinstance(ctx["summary"], dict) else {}
+    ai = ctx["ai"] if isinstance(ctx["ai"], dict) else {}
+    qqq = ctx["qqq"] if isinstance(ctx["qqq"], dict) else {}
+    alpha = ctx["alpha"] if isinstance(ctx["alpha"], dict) else {}
+    turnover_ai = ctx["turnover_ai"] if isinstance(ctx["turnover_ai"], dict) else {}
 
     ai_cagr = float(ai.get("cagr_pct", 0.0) or 0.0)
     qqq_cagr = float(qqq.get("cagr_pct", 0.0) or 0.0)
     ai_mdd = float(ai.get("max_drawdown_pct", 0.0) or 0.0)
     qqq_mdd = float(qqq.get("max_drawdown_pct", 0.0) or 0.0)
 
-    print("\nstrategy v2 baseline")
+    print(f"\n{heading}")
     print("=" * 70)
-    print(f"run_tag: {summary.get('run_tag', '-')}")
+    print(f"run_tag: {summary.get('run_tag', result.get('run_tag', '-'))}")
     print(
         f"window: {summary.get('start_date', '-')} -> {summary.get('end_date', '-')} "
         f"({summary.get('snapshot_freq', '-')})"
     )
     print(f"engine: {summary.get('decision_engine', '-')}")
-    print(f"strategy CAGR: {ai_cagr:.2f}% | Sharpe: {float(ai.get('sharpe', 0.0) or 0.0):.2f} | MDD: {ai_mdd:.2f}%")
+    if show_universe:
+        print(f"universe: {summary.get('universe', '-')}")
+    print(
+        f"strategy CAGR: {ai_cagr:.2f}% | Sharpe: {float(ai.get('sharpe', 0.0) or 0.0):.2f} | "
+        f"MDD: {ai_mdd:.2f}%"
+    )
     print(
         f"benchmark CAGR: {qqq_cagr:.2f}% | Sharpe: {float(qqq.get('sharpe', 0.0) or 0.0):.2f} | "
         f"MDD: {qqq_mdd:.2f}%"
@@ -184,6 +215,14 @@ def run_strategy_v2_once(verify: bool = True) -> None:
         print(f"verification_json: {result.get('verification_json_path')}")
         print(f"verification_md: {result.get('verification_md_path')}")
     print("=" * 70)
+
+
+def run_strategy_v2_once(verify: bool = True) -> None:
+    from pipelines.strategy_v2_pipeline import run_strategy_v2_pipeline
+
+    print(f"[{datetime.now()}] strategy v2 baseline started...")
+    result = run_strategy_v2_pipeline(run_verify=verify)
+    _print_strategy_snapshot(heading="strategy v2 baseline", result=result, verify=verify)
 
 
 def run_strategy_v4_stock_once(verify: bool = True) -> None:
@@ -191,50 +230,24 @@ def run_strategy_v4_stock_once(verify: bool = True) -> None:
 
     print(f"[{datetime.now()}] strategy v4 stock-momentum baseline started...")
     result = run_strategy_v4_stock_pipeline(run_verify=verify)
-    summary = result.get("summary", {}) if isinstance(result, dict) else {}
-    verification = result.get("verification", {}) if isinstance(result, dict) else {}
-
-    metrics = verification.get("metrics", {}) if isinstance(verification, dict) else {}
-    portfolio_metrics = summary.get("portfolio_metrics", {}) if isinstance(summary, dict) else {}
-    ai = metrics.get("ai_portfolio") if isinstance(metrics.get("ai_portfolio"), dict) else portfolio_metrics.get("ai_portfolio", {})
-    qqq = metrics.get("benchmark") if isinstance(metrics.get("benchmark"), dict) else portfolio_metrics.get("benchmark", {})
-    alpha = verification.get("alpha", {}) if isinstance(verification, dict) else {}
-    turnover = verification.get("turnover", {}) if isinstance(verification, dict) else {}
-    turnover_ai = turnover.get("ai", {}) if isinstance(turnover.get("ai"), dict) else {}
-
-    ai_cagr = float(ai.get("cagr_pct", 0.0) or 0.0)
-    qqq_cagr = float(qqq.get("cagr_pct", 0.0) or 0.0)
-    ai_mdd = float(ai.get("max_drawdown_pct", 0.0) or 0.0)
-    qqq_mdd = float(qqq.get("max_drawdown_pct", 0.0) or 0.0)
-
-    print("\nstrategy v4 stock-momentum baseline")
-    print("=" * 70)
-    print(f"run_tag: {summary.get('run_tag', '-')}")
-    print(
-        f"window: {summary.get('start_date', '-')} -> {summary.get('end_date', '-')} "
-        f"({summary.get('snapshot_freq', '-')})"
+    _print_strategy_snapshot(
+        heading="strategy v4 stock-momentum baseline",
+        result=result,
+        verify=verify,
+        show_universe=True,
     )
-    print(f"engine: {summary.get('decision_engine', '-')}")
-    print(f"universe: {summary.get('universe', '-')}")
-    print(f"strategy CAGR: {ai_cagr:.2f}% | Sharpe: {float(ai.get('sharpe', 0.0) or 0.0):.2f} | MDD: {ai_mdd:.2f}%")
-    print(
-        f"benchmark CAGR: {qqq_cagr:.2f}% | Sharpe: {float(qqq.get('sharpe', 0.0) or 0.0):.2f} | "
-        f"MDD: {qqq_mdd:.2f}%"
+
+
+def run_strategy_v14_once(verify: bool = True) -> None:
+    from pipelines.strategy_v14_pipeline import run_strategy_v14_pipeline
+
+    print(f"[{datetime.now()}] strategy v14 dynamic defense started...")
+    result = run_strategy_v14_pipeline(run_verify=verify)
+    _print_strategy_snapshot(
+        heading="strategy v14 regime GLD dynamic defense",
+        result=result,
+        verify=verify,
     )
-    print(f"CAGR diff: {ai_cagr - qqq_cagr:.2f}%p | MDD diff: {ai_mdd - qqq_mdd:.2f}%p")
-    if alpha:
-        print(
-            "alpha stats: "
-            f"NW p(two-sided)={float(alpha.get('nw_p_two_sided', 1.0) or 1.0):.3f} | "
-            f"P(alpha>0)={float(alpha.get('nw_p_gt0', 0.5) or 0.5):.3f}"
-        )
-    if turnover_ai:
-        print(f"avg turnover: {float(turnover_ai.get('mean', 0.0) or 0.0):.3f}")
-    print(f"summary_json: {result.get('summary_path')}")
-    if verify:
-        print(f"verification_json: {result.get('verification_json_path')}")
-        print(f"verification_md: {result.get('verification_md_path')}")
-    print("=" * 70)
 
 
 def run_legacy_backtest_once(limit: int = 40) -> None:
@@ -368,6 +381,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Run Strategy V2 baseline + verification",
     )
+    mode.add_argument("--v14-backtest", action="store_true", help="Run Strategy V14 dynamic defense + verification")
     mode.add_argument("--stock-backtest", action="store_true", help="Run Strategy V4 stock-momentum baseline + verification")
     mode.add_argument("--legacy-backtest", action="store_true", help="Run legacy ticker-level backtest")
     mode.add_argument("--inventory-report", action="store_true", help="Run inventory report (beta)")
@@ -403,6 +417,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.backtest:
         run_strategy_v2_once(verify=True)
+        return
+    if args.v14_backtest:
+        run_strategy_v14_once(verify=True)
         return
     if args.stock_backtest:
         run_strategy_v4_stock_once(verify=True)

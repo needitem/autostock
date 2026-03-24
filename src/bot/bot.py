@@ -24,14 +24,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bot import formatters as fmt
 from bot import keyboards as kb
 from bot.handlers import button_callback
+from bot.menu_content import build_display_settings_text, build_main_menu_text
 from bot.scheduler_config import (
     format_inventory_report_message,
     format_rebalance_snapshot,
-    format_strategy_v2_message,
-    format_strategy_v2_snapshot,
     format_us_rebalance_message,
     format_us_report_message,
     schedule_settings,
+)
+from bot.strategy_support import (
+    format_strategy_snapshot_from_result,
+    command_name,
+    get_strategy_spec,
+    iter_strategy_specs,
+    latest_command_name,
+    latest_strategy_missing_text,
+    latest_strategy_snapshot_text,
+    load_latest_strategy,
+    run_strategy,
 )
 from bot.user_prefs import get_chat_style, normalize_style, set_chat_style, style_label
 
@@ -105,18 +115,11 @@ async def _send_main_menu(update: Update) -> None:
     save_chat_id(chat_id)
     style = get_chat_style(chat_id)
 
-    text = "<b>AutoStock Rebalance Hub</b>\n" + ("-" * 26) + "\n\n"
-    text += "Quick start:\n"
-    text += "1) Run Strategy V2 baseline (regime ETF validation)\n"
-    text += "2) Check latest Strategy V2 verification\n"
-    text += "3) Run US rebalance (portfolio recommendation)\n"
-    text += "4) Check latest rebalance snapshot\n"
-    if kb.inventory_enabled():
-        text += "5) Run inventory report (beta)\n"
-    text += "\n"
-    text += f"Display mode: <b>{style_label(style)}</b>\n"
-    text += "You can also type a ticker directly for chart analysis.\n"
-    text += "Example: <code>AAPL</code>, <code>TSLA</code>"
+    text = build_main_menu_text(
+        style=style,
+        trading_enabled=kb.trading_enabled(),
+        inventory_enabled=kb.inventory_enabled(),
+    )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.main_menu())
 
 
@@ -143,9 +146,8 @@ async def style_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     current = get_chat_style(chat_id)
-    text = "<b>Display Mode</b>\n" + ("-" * 26) + "\n\n"
-    text += f"Current: <b>{style_label(current)}</b>\n\n"
-    text += "Recommended: beginner\n"
+    text = build_display_settings_text(current)
+    text += "\n\nRecommended: beginner\n"
     text += "Command: <code>/style beginner</code> | <code>/style standard</code> | <code>/style detail</code>"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.display_settings_menu(current))
 
@@ -219,16 +221,12 @@ async def _run_us_report_pipeline() -> dict:
     return await asyncio.to_thread(run_all_us_engines)
 
 
-async def _run_strategy_v2_pipeline() -> dict:
-    from pipelines.strategy_v2_pipeline import run_strategy_v2_pipeline
-
-    return await asyncio.to_thread(run_strategy_v2_pipeline, True)
+async def _run_strategy_pipeline(strategy_key: str) -> dict:
+    return await run_strategy(strategy_key, True)
 
 
-async def _load_latest_strategy_v2_snapshot() -> dict:
-    from pipelines.strategy_v2_pipeline import latest_strategy_v2_snapshot
-
-    return await asyncio.to_thread(latest_strategy_v2_snapshot)
+async def _load_latest_strategy_snapshot(strategy_key: str) -> dict:
+    return await load_latest_strategy(strategy_key)
 
 
 async def _run_us_rebalance_pipeline() -> dict:
@@ -260,42 +258,49 @@ async def us_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(f"US report failed: {e}")
 
 
-async def strategy_v2_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message is None or update.effective_chat is None:
-        return
-    chat_id = str(update.effective_chat.id)
-    save_chat_id(chat_id)
-    await update.message.reply_text("Strategy V2 baseline + verification started. This can take a few minutes.")
-
-    try:
-        result = await _run_strategy_v2_pipeline()
-        await update.message.reply_text(format_strategy_v2_message(result), parse_mode="HTML")
-    except Exception as e:
-        await update.message.reply_text(f"Strategy V2 run failed: {e}")
-
-
-async def latest_strategy_v2_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message is None or update.effective_chat is None:
-        return
-    chat_id = str(update.effective_chat.id)
-    save_chat_id(chat_id)
-
-    try:
-        result = await _load_latest_strategy_v2_snapshot()
-        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
-        if not summary:
-            await update.message.reply_text("No Strategy V2 baseline output found yet.\nRun /strategy_v2 first.")
+def _make_strategy_command(strategy_key: str):
+    async def _command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or update.effective_chat is None:
             return
-        verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
-        text = format_strategy_v2_snapshot(
-            summary,
-            verification,
-            summary_path=str(result.get("summary_path", "") or ""),
-            verification_path=str(result.get("verification_json_path", "") or ""),
-        )
-        await update.message.reply_text(text, parse_mode="HTML")
-    except Exception as e:
-        await update.message.reply_text(f"Latest Strategy V2 load failed: {e}")
+        chat_id = str(update.effective_chat.id)
+        save_chat_id(chat_id)
+        spec = get_strategy_spec(strategy_key)
+        await update.message.reply_text(f"{spec.label} baseline + verification started. This can take a few minutes.")
+
+        try:
+            result = await _run_strategy_pipeline(strategy_key)
+            await update.message.reply_text(
+                format_strategy_snapshot_from_result(strategy_key, result),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await update.message.reply_text(f"{spec.label} run failed: {e}")
+
+    return _command
+
+
+def _make_latest_strategy_command(strategy_key: str):
+    async def _command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or update.effective_chat is None:
+            return
+        chat_id = str(update.effective_chat.id)
+        save_chat_id(chat_id)
+        spec = get_strategy_spec(strategy_key)
+
+        try:
+            result = await _load_latest_strategy_snapshot(strategy_key)
+            summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+            if not summary:
+                await update.message.reply_text(
+                    latest_strategy_missing_text(strategy_key) + f"\nRun /strategy_{strategy_key} first."
+                )
+                return
+            text = latest_strategy_snapshot_text(strategy_key, result)
+            await update.message.reply_text(text, parse_mode="HTML")
+        except Exception as e:
+            await update.message.reply_text(f"Latest {spec.label} load failed: {e}")
+
+    return _command
 
 
 async def us_rebalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -391,13 +396,19 @@ def run_bot(with_scheduler: bool = True) -> None:
         return
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    strategy_command_handlers = {
+        spec.key: (_make_strategy_command(spec.key), _make_latest_strategy_command(spec.key))
+        for spec in iter_strategy_specs()
+    }
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("style", style_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
-    app.add_handler(CommandHandler("strategy_v2", strategy_v2_command))
-    app.add_handler(CommandHandler("strategy_v2_latest", latest_strategy_v2_command))
+    for spec in iter_strategy_specs():
+        run_handler, latest_handler = strategy_command_handlers[spec.key]
+        app.add_handler(CommandHandler(command_name(spec.key), run_handler))
+        app.add_handler(CommandHandler(latest_command_name(spec.key), latest_handler))
     app.add_handler(CommandHandler("us_report", us_report_command))
     app.add_handler(CommandHandler("us_rebalance", us_rebalance_command))
     app.add_handler(CommandHandler("inventory_report", inventory_report_command))
@@ -455,7 +466,7 @@ def run_bot(with_scheduler: bool = True) -> None:
     else:
         print("Bot started without scheduler")
 
-    print("Use /start or /menu or /strategy_v2")
+    print("Use /start or /menu or /strategy_v2 or /strategy_v14")
     app.run_polling()
 
 

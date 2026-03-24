@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-import sys
-from datetime import datetime, timezone
 from pathlib import Path
+
+from strategy_runner_utils import apply_default_env, run_backtest_selector
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -70,36 +70,31 @@ DEFAULT_ENV: dict[str, str] = {
 
 
 def _apply_defaults() -> None:
-    for key, value in DEFAULT_ENV.items():
-        os.environ.setdefault(key, value)
-    os.environ.setdefault(
-        "AI_RUN_TAG",
-        f"strategy_v14_regime_gld_dynamic_defense_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+    apply_default_env(
+        DEFAULT_ENV,
+        run_tag_prefix="strategy_v14_regime_gld_dynamic_defense",
+        overwrite_existing=False,
     )
 
 
 def main() -> None:
     _apply_defaults()
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-    import backtest_ai_portfolio_selector as selector
-
-    print("Running Strategy V14 regime GLD dynamic defense...")
-    for key in (
-        "AI_RUN_TAG",
-        "AI_DECISION_ENGINE",
-        "AI_START_DATE",
-        "AI_END_DATE",
-        "AI_REGIME_NEUTRAL",
-        "AI_REGIME_RISK_OFF_DYNAMIC",
-        "AI_REGIME_RISK_OFF_POOL",
-        "AI_REGIME_RISK_OFF_FALLBACK",
-        "AI_REGIME_CRASH_DYNAMIC",
-        "AI_REGIME_FILTER_SAFE",
-    ):
-        print(f"  {key}={os.environ.get(key, '')}")
-
-    selector.run()
+    run_backtest_selector(
+        script_dir=SCRIPT_DIR,
+        heading="Running Strategy V14 regime GLD dynamic defense...",
+        echo_keys=(
+            "AI_RUN_TAG",
+            "AI_DECISION_ENGINE",
+            "AI_START_DATE",
+            "AI_END_DATE",
+            "AI_REGIME_NEUTRAL",
+            "AI_REGIME_RISK_OFF_DYNAMIC",
+            "AI_REGIME_RISK_OFF_POOL",
+            "AI_REGIME_RISK_OFF_FALLBACK",
+            "AI_REGIME_CRASH_DYNAMIC",
+            "AI_REGIME_FILTER_SAFE",
+        ),
+    )
 
 
 if __name__ == "__main__":

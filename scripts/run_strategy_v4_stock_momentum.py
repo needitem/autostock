@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-import sys
-from datetime import datetime, timezone
 from pathlib import Path
+
+from strategy_runner_utils import apply_default_env, run_backtest_selector
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -42,36 +42,31 @@ DEFAULT_ENV: dict[str, str] = {
 
 
 def _apply_defaults() -> None:
-    for key, value in DEFAULT_ENV.items():
-        os.environ[key] = value
-    os.environ.setdefault(
-        "AI_RUN_TAG",
-        f"strategy_v4_stock_momentum_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+    apply_default_env(
+        DEFAULT_ENV,
+        run_tag_prefix="strategy_v4_stock_momentum",
+        overwrite_existing=True,
     )
 
 
 def main() -> None:
     _apply_defaults()
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-    import backtest_ai_portfolio_selector as selector
-
-    print("Running Strategy V4 stock momentum baseline...")
-    for key in (
-        "AI_RUN_TAG",
-        "AI_DECISION_ENGINE",
-        "AI_UNIVERSE",
-        "AI_UNIVERSE_MODE",
-        "AI_UNIVERSE_BY_DATE_FILE",
-        "AI_SNAPSHOT_FREQ",
-        "AI_EXECUTION_TIMING",
-        "AI_START_DATE",
-        "AI_END_DATE",
-        "AI_TRADE_COST_BPS",
-    ):
-        print(f"  {key}={os.environ.get(key, '')}")
-
-    selector.run()
+    run_backtest_selector(
+        script_dir=SCRIPT_DIR,
+        heading="Running Strategy V4 stock momentum baseline...",
+        echo_keys=(
+            "AI_RUN_TAG",
+            "AI_DECISION_ENGINE",
+            "AI_UNIVERSE",
+            "AI_UNIVERSE_MODE",
+            "AI_UNIVERSE_BY_DATE_FILE",
+            "AI_SNAPSHOT_FREQ",
+            "AI_EXECUTION_TIMING",
+            "AI_START_DATE",
+            "AI_END_DATE",
+            "AI_TRADE_COST_BPS",
+        ),
+    )
 
 
 if __name__ == "__main__":

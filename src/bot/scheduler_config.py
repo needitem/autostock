@@ -114,7 +114,9 @@ def _metric_from_summary_or_verify(summary: dict[str, Any], verification: dict[s
     return {}
 
 
-def format_strategy_v2_snapshot(
+def _format_strategy_snapshot(
+    *,
+    title: str,
     summary: dict[str, Any],
     verification: dict[str, Any] | None = None,
     summary_path: str | None = None,
@@ -134,7 +136,7 @@ def format_strategy_v2_snapshot(
     qqq_mdd = float(qqq.get("max_drawdown_pct", 0.0) or 0.0)
 
     lines = [
-        "<b>Strategy V2 Baseline</b>",
+        f"<b>{html.escape(title)}</b>",
         "--------------------------",
         f"Run: <code>{html.escape(str(summary.get('run_tag', '-') or '-'))}</code>",
         (
@@ -169,10 +171,51 @@ def format_strategy_v2_snapshot(
     return "\n".join(lines)
 
 
+def format_strategy_v2_snapshot(
+    summary: dict[str, Any],
+    verification: dict[str, Any] | None = None,
+    summary_path: str | None = None,
+    verification_path: str | None = None,
+) -> str:
+    return _format_strategy_snapshot(
+        title="Strategy V2 Baseline",
+        summary=summary,
+        verification=verification,
+        summary_path=summary_path,
+        verification_path=verification_path,
+    )
+
+
 def format_strategy_v2_message(result: dict[str, Any]) -> str:
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
     verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
     return format_strategy_v2_snapshot(
+        summary,
+        verification,
+        summary_path=str(result.get("summary_path", "") or ""),
+        verification_path=str(result.get("verification_json_path", "") or ""),
+    )
+
+
+def format_strategy_v14_snapshot(
+    summary: dict[str, Any],
+    verification: dict[str, Any] | None = None,
+    summary_path: str | None = None,
+    verification_path: str | None = None,
+) -> str:
+    return _format_strategy_snapshot(
+        title="Strategy V14 Dynamic Defense",
+        summary=summary,
+        verification=verification,
+        summary_path=summary_path,
+        verification_path=verification_path,
+    )
+
+
+def format_strategy_v14_message(result: dict[str, Any]) -> str:
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
+    return format_strategy_v14_snapshot(
         summary,
         verification,
         summary_path=str(result.get("summary_path", "") or ""),
