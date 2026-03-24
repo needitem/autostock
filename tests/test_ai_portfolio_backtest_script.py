@@ -60,6 +60,35 @@ def test_resolve_momentum_blend_scope_respects_explicit_env(monkeypatch):
     assert out == "portfolio"
 
 
+def test_resolve_universe_asof_uses_latest_available_snapshot():
+    lookup = bt._build_universe_asof_lookup(
+        {
+            "2024-01-05": ["AAA", "BBB"],
+            "2024-01-12": ["BBB", "CCC"],
+            "2024-01-26": ["DDD"],
+        }
+    )
+
+    out = bt._resolve_universe_asof(lookup, "2024-01-31", ["ZZZ"])
+
+    assert out == ["DDD"]
+
+
+def test_expand_regime_allowed_symbols_keeps_loaded_regime_assets():
+    out = bt._expand_regime_allowed_symbols(
+        allowed={"AAPL", "MSFT"},
+        regime_symbols=["TQQQ", "QQQ", "GLD"],
+        by_symbol={
+            "AAPL": {"symbol": "AAPL"},
+            "MSFT": {"symbol": "MSFT"},
+            "QQQ": {"symbol": "QQQ"},
+            "GLD": {"symbol": "GLD"},
+        },
+    )
+
+    assert out == {"AAPL", "MSFT", "QQQ", "GLD"}
+
+
 def test_ai_regime_target_cap_allows_constructive_neutral_entries():
     out = bt._ai_regime_target_cap(
         target_top_k=0,
@@ -401,6 +430,334 @@ def test_stock_momentum_portfolio_can_limit_sector_concentration():
 
     picked = {row["symbol"] for row in out["positions"]}
     assert picked == {"NVDA", "META", "LLY"}
+
+
+def test_stock_event_portfolio_requires_recent_positive_filing():
+    out = bt._stock_event_portfolio(
+        candidates=[
+            {
+                "symbol": "NVDA",
+                "sector": "Technology",
+                "relative_strength_63d": 18.0,
+                "relative_strength_21d": 8.0,
+                "ma200_gap": 12.0,
+                "pit_has_data": True,
+                "pit_filing_age_days": 20,
+                "pit_rev_yoy_pct": 25.0,
+                "pit_eps_yoy_pct": 30.0,
+                "pit_ni_yoy_pct": 28.0,
+            },
+            {
+                "symbol": "META",
+                "sector": "Communication",
+                "relative_strength_63d": 14.0,
+                "relative_strength_21d": 5.0,
+                "ma200_gap": 10.0,
+                "pit_has_data": True,
+                "pit_filing_age_days": 26,
+                "pit_rev_yoy_pct": 12.0,
+                "pit_eps_yoy_pct": 11.0,
+                "pit_ni_yoy_pct": 8.0,
+            },
+            {
+                "symbol": "OLD",
+                "sector": "Technology",
+                "relative_strength_63d": 20.0,
+                "relative_strength_21d": 9.0,
+                "ma200_gap": 14.0,
+                "pit_has_data": True,
+                "pit_filing_age_days": 120,
+                "pit_rev_yoy_pct": 30.0,
+                "pit_eps_yoy_pct": 35.0,
+                "pit_ni_yoy_pct": 33.0,
+            },
+        ],
+        top_k=2,
+        weight_mode="equal",
+        min_positions_for_invest=2,
+        max_per_sector=2,
+        max_filing_age_days=45,
+        min_rev_yoy=5.0,
+        min_eps_yoy=5.0,
+        min_ni_yoy=0.0,
+    )
+
+    assert out["_stock_event_mode"] is True
+    assert out["_sit_out"] is False
+    assert out["positions"] == [
+        {"symbol": "NVDA", "weight_pct": 50.0},
+        {"symbol": "META", "weight_pct": 50.0},
+    ]
+
+
+def test_earnings_drift_portfolio_prefers_recent_positive_surprises():
+    out = bt._earnings_drift_portfolio(
+        candidates=[
+            {
+                "symbol": "NVDA",
+                "sector": "Technology",
+                "earnings_has_data": True,
+                "earnings_days_since": 12,
+                "earnings_surprise_pct": 8.0,
+                "relative_strength_21d": 6.0,
+                "relative_strength_63d": 10.0,
+                "ma50_gap": 8.0,
+                "ma200_gap": 15.0,
+            },
+            {
+                "symbol": "META",
+                "sector": "Communication",
+                "earnings_has_data": True,
+                "earnings_days_since": 18,
+                "earnings_surprise_pct": 6.0,
+                "relative_strength_21d": 5.0,
+                "relative_strength_63d": 9.0,
+                "ma50_gap": 7.0,
+                "ma200_gap": 12.0,
+            },
+            {
+                "symbol": "OLD",
+                "sector": "Technology",
+                "earnings_has_data": True,
+                "earnings_days_since": 80,
+                "earnings_surprise_pct": 20.0,
+                "relative_strength_21d": 8.0,
+                "relative_strength_63d": 12.0,
+                "ma50_gap": 9.0,
+                "ma200_gap": 16.0,
+            },
+        ],
+        top_k=2,
+        weight_mode="equal",
+        min_positions_for_invest=2,
+        max_per_sector=2,
+        max_days_since=35,
+        min_surprise_pct=3.0,
+    )
+
+    assert out["_earnings_drift_mode"] is True
+    assert out["positions"] == [
+        {"symbol": "NVDA", "weight_pct": 50.0},
+        {"symbol": "META", "weight_pct": 50.0},
+    ]
+
+
+def test_pit_symbol_bonus_prefers_better_fundamentals_with_recent_filing():
+    bonus = bt._pit_symbol_bonus(
+        [
+            {
+                "symbol": "AAPL",
+                "pit_has_data": True,
+                "pit_filing_age_days": 30,
+                "pit_rev_yoy_pct": 18.0,
+                "pit_ni_yoy_pct": 20.0,
+                "pit_eps_yoy_pct": 21.0,
+                "pit_op_margin_pct": 31.0,
+                "pit_gross_margin_pct": 46.0,
+                "pit_equity_ratio": 0.42,
+                "pit_debt_to_assets": 0.35,
+            },
+            {
+                "symbol": "CSCO",
+                "pit_has_data": True,
+                "pit_filing_age_days": 40,
+                "pit_rev_yoy_pct": 4.0,
+                "pit_ni_yoy_pct": 3.0,
+                "pit_eps_yoy_pct": 2.0,
+                "pit_op_margin_pct": 21.0,
+                "pit_gross_margin_pct": 32.0,
+                "pit_equity_ratio": 0.25,
+                "pit_debt_to_assets": 0.58,
+            },
+            {
+                "symbol": "OLD",
+                "pit_has_data": True,
+                "pit_filing_age_days": 260,
+                "pit_rev_yoy_pct": 30.0,
+                "pit_ni_yoy_pct": 30.0,
+                "pit_eps_yoy_pct": 30.0,
+                "pit_op_margin_pct": 40.0,
+                "pit_gross_margin_pct": 60.0,
+                "pit_equity_ratio": 0.60,
+                "pit_debt_to_assets": 0.10,
+            },
+            {
+                "symbol": "NONE",
+                "pit_has_data": False,
+            },
+            {
+                "symbol": "MID",
+                "pit_has_data": True,
+                "pit_filing_age_days": 35,
+                "pit_rev_yoy_pct": 9.0,
+                "pit_ni_yoy_pct": 8.0,
+                "pit_eps_yoy_pct": 10.0,
+                "pit_op_margin_pct": 25.0,
+                "pit_gross_margin_pct": 37.0,
+                "pit_equity_ratio": 0.34,
+                "pit_debt_to_assets": 0.47,
+            },
+        ],
+        max_filing_age_days=180,
+    )
+
+    assert "OLD" not in bonus
+    assert "NONE" not in bonus
+    assert bonus["AAPL"] > bonus["MID"] > bonus["CSCO"]
+
+
+def test_apply_pit_quality_veto_filters_low_scoring_new_candidates(monkeypatch):
+    def fake_bonus(features, max_filing_age_days):
+        assert max_filing_age_days == 180
+        return {"AAA": -5.0, "BBB": -1.0}
+
+    monkeypatch.setattr(bt, "_pit_symbol_bonus", fake_bonus)
+
+    out = bt._apply_pit_quality_veto(
+        [{"symbol": "AAA"}, {"symbol": "BBB"}, {"symbol": "CCC"}],
+        threshold=-2.5,
+        max_filing_age_days=180,
+        min_positions_for_invest=2,
+    )
+
+    assert [row["symbol"] for row in out] == ["BBB", "CCC"]
+
+
+def test_apply_pit_quality_veto_keeps_exempt_existing_holdings(monkeypatch):
+    monkeypatch.setattr(bt, "_pit_symbol_bonus", lambda features, max_filing_age_days: {"AAA": -5.0, "BBB": -1.0})
+
+    out = bt._apply_pit_quality_veto(
+        [{"symbol": "AAA"}, {"symbol": "BBB"}, {"symbol": "CCC"}],
+        threshold=-2.5,
+        max_filing_age_days=180,
+        min_positions_for_invest=2,
+        exempt_symbols={"AAA"},
+    )
+
+    assert [row["symbol"] for row in out] == ["AAA", "BBB", "CCC"]
+
+
+def test_pit_veto_enabled_for_regime_respects_explicit_gate():
+    assert bt._pit_veto_enabled_for_regime(("neutral", "risk_off"), "neutral") is True
+    assert bt._pit_veto_enabled_for_regime(("neutral", "risk_off"), "risk_off") is True
+    assert bt._pit_veto_enabled_for_regime(("neutral", "risk_off"), "risk_on") is False
+
+
+def test_breadth_new_entry_gate_freezes_new_names_when_neutral_breadth_is_weak():
+    out = bt._apply_breadth_new_entry_gate(
+        candidates=[{"symbol": "AAA"}, {"symbol": "BBB"}, {"symbol": "CCC"}],
+        held_syms=["AAA"],
+        market_regime="neutral",
+        breadth={"up200": 0.40, "positive_63d": 0.40},
+        neutral_min_up200=0.50,
+        neutral_min_pos63=0.45,
+        neutral_max_new_when_weak=0,
+    )
+
+    assert [row["symbol"] for row in out] == ["AAA"]
+
+
+def test_breadth_new_entry_gate_is_noop_when_neutral_breadth_is_strong():
+    out = bt._apply_breadth_new_entry_gate(
+        candidates=[{"symbol": "AAA"}, {"symbol": "BBB"}],
+        held_syms=["AAA"],
+        market_regime="neutral",
+        breadth={"up200": 0.60, "positive_63d": 0.55},
+        neutral_min_up200=0.50,
+        neutral_min_pos63=0.45,
+        neutral_max_new_when_weak=0,
+    )
+
+    assert [row["symbol"] for row in out] == ["AAA", "BBB"]
+
+
+def test_quality_momentum_portfolio_prefers_recent_quality_leaders():
+    out = bt._quality_momentum_portfolio(
+        candidates=[
+            {
+                "symbol": "NVDA",
+                "sector": "Technology",
+                "relative_strength_63d": 18.0,
+                "relative_strength_21d": 7.0,
+                "return_126d": 42.0,
+                "ma200_gap": 15.0,
+                "ma50_gap": 6.0,
+                "vol_20": 0.020,
+                "atr_pct": 2.1,
+                "dd_252": -0.08,
+                "pit_has_data": True,
+                "pit_filing_age_days": 35,
+                "pit_rev_yoy_pct": 26.0,
+                "pit_ni_yoy_pct": 32.0,
+                "pit_eps_yoy_pct": 34.0,
+                "pit_op_margin_pct": 37.0,
+                "pit_gross_margin_pct": 58.0,
+                "pit_equity_ratio": 0.52,
+                "pit_debt_to_assets": 0.25,
+            },
+            {
+                "symbol": "META",
+                "sector": "Communication",
+                "relative_strength_63d": 15.0,
+                "relative_strength_21d": 6.0,
+                "return_126d": 30.0,
+                "ma200_gap": 11.0,
+                "ma50_gap": 5.0,
+                "vol_20": 0.018,
+                "atr_pct": 1.8,
+                "dd_252": -0.09,
+                "pit_has_data": True,
+                "pit_filing_age_days": 48,
+                "pit_rev_yoy_pct": 18.0,
+                "pit_ni_yoy_pct": 20.0,
+                "pit_eps_yoy_pct": 19.0,
+                "pit_op_margin_pct": 31.0,
+                "pit_gross_margin_pct": 42.0,
+                "pit_equity_ratio": 0.41,
+                "pit_debt_to_assets": 0.31,
+            },
+            {
+                "symbol": "CSCO",
+                "sector": "Technology",
+                "relative_strength_63d": 8.0,
+                "relative_strength_21d": 2.0,
+                "return_126d": 12.0,
+                "ma200_gap": 4.0,
+                "ma50_gap": 1.0,
+                "vol_20": 0.012,
+                "atr_pct": 1.1,
+                "dd_252": -0.12,
+                "pit_has_data": True,
+                "pit_filing_age_days": 44,
+                "pit_rev_yoy_pct": 3.0,
+                "pit_ni_yoy_pct": 2.0,
+                "pit_eps_yoy_pct": 1.0,
+                "pit_op_margin_pct": 20.0,
+                "pit_gross_margin_pct": 29.0,
+                "pit_equity_ratio": 0.23,
+                "pit_debt_to_assets": 0.58,
+            },
+        ],
+        top_k=2,
+        weight_mode="equal",
+        min_positions_for_invest=2,
+        max_per_sector=2,
+        sector_bonus_mult=0.0,
+        sector_scores={},
+        max_filing_age_days=240,
+        quality_weight=0.65,
+        momentum_weight=0.35,
+        min_quality_score=-1.5,
+        min_momentum_score=0.0,
+        require_trend_template=False,
+    )
+
+    assert out["_quality_momo_mode"] is True
+    assert out["_sit_out"] is False
+    assert out["positions"] == [
+        {"symbol": "NVDA", "weight_pct": 50.0},
+        {"symbol": "META", "weight_pct": 50.0},
+    ]
 
 
 def test_select_regime_defensive_allocation_prefers_trending_safe_asset():

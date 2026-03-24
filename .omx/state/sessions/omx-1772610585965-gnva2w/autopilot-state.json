@@ -1,0 +1,78 @@
+{
+  "active": false,
+  "current_phase": "execution",
+  "task_description": "v8 targeted tuning complete: added RS63/DD gates for trend risk entry and ran 20Y weekly validation with improved yearly robustness.",
+  "best_1y_run": "verify_ai1y_recheck_tqqq_upro_qld_safe_20260304.json",
+  "best_1y_metrics": {
+    "cagr_diff_pct": 36.38145270156525,
+    "nw_t": 1.5979807861898303,
+    "nw_p_two": 0.11004725323492144,
+    "nw_p_gt0": 0.9449763733825391,
+    "mdd_diff_pct": 1.8498186407316588
+  },
+  "best_10y_run": "verify_ai10y_best_tquq_safe_20260304.json",
+  "horizon_ladder_csv": "data/runs/ai10y_horizon_ladder_tquq_safe_20260304.csv",
+  "yearly_csv": "data/runs/ai10y_calendar_yearly_tquq_safe_20260304.csv",
+  "report": "docs/reports/regime_allocator_research_20260305.md",
+  "iteration": 1261,
+  "last_turn_at": "2026-03-06T00:41:01.766Z",
+  "new_script": "scripts/research_weekly_regime_allocator.py",
+  "grid_run_tag": "20260304T232049Z",
+  "grid_rows": 5880,
+  "best_aggressive": {
+    "config": {
+      "ma_fast": 100,
+      "ma_slow": 200,
+      "mom_lb": 21,
+      "mom_thr": 0,
+      "risk_on": "TQQQ",
+      "neutral": "QLD",
+      "risk_off": "GLD"
+    },
+    "cagr_diff_pctp": 17.666,
+    "mdd_diff_pctp": -11.031,
+    "nw_p_two": 0.047,
+    "nw_p_gt0": 0.977,
+    "loose10": 9,
+    "strict10": 8,
+    "year_win": 9
+  },
+  "best_balanced": {
+    "run_tag": "rr_balanced_qld_qld_gld_20260305",
+    "cagr_diff_pctp": 10.777,
+    "mdd_diff_pctp": -0.527,
+    "loose10": 9,
+    "strict10": 7,
+    "year_win": 9
+  },
+  "best_defensive": {
+    "run_tag": "rr_defensive_upro_tlt_gld_20260305",
+    "cagr_diff_pctp": 9.915,
+    "mdd_diff_pctp": 1.838,
+    "loose10": 6,
+    "strict10": 3,
+    "year_win": 7
+  },
+  "comparison_csv": "data/runs/regime_profiles_compare_20260305.csv",
+  "run_tag": "ai10y_codex_weekly_report_20260305",
+  "results_csv": "data/runs/ai_portfolio_backtest_results_ai10y_codex_weekly_report_20260305.csv",
+  "summary_json": "data/runs/ai_portfolio_backtest_summary_ai10y_codex_weekly_report_20260305.json",
+  "trade_report_script": "scripts/build_trade_journal_report.py",
+  "trade_journal_csv": "data/runs/trade_journal_trades_ai10y_codex_weekly_report_20260305.csv",
+  "trade_journal_md": "docs/reports/trade_journal_ai10y_codex_weekly_report_20260305.md",
+  "headline": {
+    "strategy_cagr_pct": 24.14,
+    "qqq_cagr_pct": 18.96,
+    "cagr_diff_pctp": 5.18,
+    "strategy_total_pct": 772.94,
+    "qqq_total_pct": 469.64,
+    "mdd_diff_pctp": -20.45
+  },
+  "trade_summary": {
+    "closed_trades": 143,
+    "win_rate_pct": 66.43,
+    "avg_trade_pnl_pct": 2.51,
+    "avg_alpha_vs_qqq_pctp": 1.16
+  },
+  "completed_at": "2026-03-06T00:41:11.690Z"
+}

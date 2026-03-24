@@ -1,0 +1,9 @@
+{
+  "pid": 3453455,
+  "started_at": "2026-03-06T00:41:25.469Z",
+  "cwd": "/mnt/d/my/autostock",
+  "notify_script": "/home/taeho/.nvm/versions/node/v22.22.0/lib/node_modules/oh-my-codex/scripts/notify-hook.js",
+  "poll_ms": 700,
+  "tracked_files": 1,
+  "seen_turns": 1
+}

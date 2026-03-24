@@ -62,6 +62,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any] | None:
     ma5 = SMAIndicator(close, window=5).sma_indicator()
     ma20 = SMAIndicator(close, window=20).sma_indicator()
     ma50 = SMAIndicator(close, window=50).sma_indicator()
+    ma150 = SMAIndicator(close, window=150).sma_indicator()
     ma200 = SMAIndicator(close, window=200).sma_indicator()
     ema12 = EMAIndicator(close, window=12).ema_indicator()
     ema26 = EMAIndicator(close, window=26).ema_indicator()
@@ -120,7 +121,10 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any] | None:
     ma5_now = _f(ma5.iloc[-1], price)
     ma20_now = _f(ma20.iloc[-1], price)
     ma50_now = _f(ma50.iloc[-1], price)
+    ma150_now = _f(ma150.iloc[-1], price)
     ma200_now = _f(ma200.iloc[-1], price)
+    ma200_30d_ago = _f(ma200.iloc[-31], ma200_now) if len(ma200) >= 31 else ma200_now
+    ma200_slope_30d = ma200_now - ma200_30d_ago
     vol_now = _f(volume.iloc[-1], 0)
     vol_avg_now = _f(volume_avg.iloc[-1], 0)
     obv_now = _f(obv.iloc[-1], 0)
@@ -131,7 +135,11 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any] | None:
         "ma5": _round(ma5_now),
         "ma20": _round(ma20_now),
         "ma50": _round(ma50_now),
+        "ma150": _round(ma150_now),
         "ma200": _round(ma200_now),
+        "ma200_30d_ago": _round(ma200_30d_ago),
+        "ma200_slope_30d": _round(ma200_slope_30d, 4),
+        "ma200_trend_up_30d": ma200_slope_30d >= 0,
         "ema12": _round(ema12.iloc[-1]),
         "ema26": _round(ema26.iloc[-1]),
         "rsi": _round(rsi.iloc[-1], 1, 50.0),
@@ -158,6 +166,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any] | None:
         "ma5_gap": _round(_pct_gap(price, ma5_now), 1),
         "ma20_gap": _round(_pct_gap(price, ma20_now), 1),
         "ma50_gap": _round(_pct_gap(price, ma50_now), 1),
+        "ma150_gap": _round(_pct_gap(price, ma150_now), 1),
         "ma200_gap": _round(_pct_gap(price, ma200_now), 1),
         "change_5d": _round(change_5d, 1),
         "return_21d": _round(return_21d, 2),

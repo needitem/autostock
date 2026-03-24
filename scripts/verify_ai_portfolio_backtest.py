@@ -300,14 +300,58 @@ def _load_universe_by_date(path: Path) -> dict[str, list[str]]:
 def _alpha_stats(alpha_pct: pd.Series, periods_per_year: int) -> dict[str, float]:
     a = pd.to_numeric(alpha_pct, errors="coerce").dropna().astype(float)
     if len(a) == 0:
-        return {"mean_pct": 0.0, "sd_pct": 0.0, "ir": 0.0, "t_stat": 0.0, "win_rate_pct": 0.0}
+        return {
+            "mean_pct": 0.0,
+            "sd_pct": 0.0,
+            "ir": 0.0,
+            "t_stat": 0.0,
+            "win_rate_pct": 0.0,
+            "nw_lag": 0,
+            "nw_se_pct": 0.0,
+            "nw_t_stat": 0.0,
+            "nw_p_two_sided": 1.0,
+            "nw_p_gt0": 0.5,
+        }
     mu = float(a.mean())
     sd = float(a.std(ddof=1)) if len(a) > 1 else 0.0
     ppy = max(1, int(periods_per_year))
     ir = float((mu / sd) * math.sqrt(ppy)) if sd > 1e-12 else 0.0
     t = float(mu / (sd / math.sqrt(len(a)))) if sd > 1e-12 else 0.0
     win = float((a > 0).mean() * 100.0)
-    return {"mean_pct": mu, "sd_pct": sd, "ir": ir, "t_stat": t, "win_rate_pct": win}
+    # Newey-West HAC t-stat (mean alpha vs 0) to account for autocorrelation/heteroskedasticity.
+    n = int(len(a))
+    lag = int(os.getenv("AI_VERIFY_NW_LAG", "" ) or 0)
+    if lag <= 0:
+        lag = int(round(4.0 * ((n / 100.0) ** (2.0 / 9.0))))
+    lag = max(1, min(lag, max(1, n - 1)))
+
+    x = a.to_numpy(dtype=float)
+    eps = x - float(mu)
+    gamma0 = float(np.dot(eps, eps) / n) if n > 0 else 0.0
+    lrv = gamma0
+    for l in range(1, lag + 1):
+        cov = float(np.dot(eps[l:], eps[:-l]) / n) if n - l > 0 else 0.0
+        weight = 1.0 - (l / (lag + 1.0))
+        lrv += 2.0 * weight * cov
+    if lrv < 0:
+        lrv = 0.0
+    nw_se = float(math.sqrt(lrv / n)) if n > 0 else 0.0
+    nw_t = float(mu / nw_se) if nw_se > 1e-12 else 0.0
+    # Large-sample normal approximation.
+    nw_p_two = float(math.erfc(abs(nw_t) / math.sqrt(2.0)))
+    nw_p_gt0 = float(0.5 * (1.0 + math.erf(nw_t / math.sqrt(2.0))))
+    return {
+        "mean_pct": mu,
+        "sd_pct": sd,
+        "ir": ir,
+        "t_stat": t,
+        "win_rate_pct": win,
+        "nw_lag": int(lag),
+        "nw_se_pct": float(nw_se),
+        "nw_t_stat": float(nw_t),
+        "nw_p_two_sided": nw_p_two,
+        "nw_p_gt0": nw_p_gt0,
+    }
 
 
 def _subperiod_table(df: pd.DataFrame, periods_per_year: int) -> pd.DataFrame:
@@ -589,9 +633,16 @@ def main() -> None:
 
     lines.append("## Alpha (AI - QQQ)\n")
     lines.append(
-        f"- mean monthly alpha: {_fmt_pct(alpha['mean_pct'], 3)} | win-rate: {_fmt_pct(alpha['win_rate_pct'], 2)} "
+        f"- mean period alpha: {_fmt_pct(alpha['mean_pct'], 3)} | win-rate: {_fmt_pct(alpha['win_rate_pct'], 2)} "
         f"| IR: {_fmt_num(alpha['ir'], 3)} | t-stat: {_fmt_num(alpha['t_stat'], 3)}"
     )
+    if "nw_t_stat" in alpha:
+        lines.append(
+            f"- Newey-West(lag={int(alpha.get('nw_lag', 0))}) "
+            f"t-stat: {_fmt_num(alpha.get('nw_t_stat', 0.0), 3)} | "
+            f"p(two-sided): {_fmt_num(alpha.get('nw_p_two_sided', 1.0), 3)} | "
+            f"P(alpha>0): {_fmt_num(alpha.get('nw_p_gt0', 0.5), 3)}"
+        )
     if isinstance(boot, dict) and "error" not in boot:
         ci_lo, ci_hi = boot["alpha_mean_ci95_pct"]
         cd_lo, cd_hi = boot["cagr_diff_ci95_pct"]

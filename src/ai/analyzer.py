@@ -30,17 +30,19 @@ class AIAnalyzer:
             configured = shutil.which("codex.cmd") or configured
         self.codex_bin = configured
         self.base_url = None
-        self.model = model or os.getenv("AI_MODEL", "gpt-5.2")
+        self.model = model or os.getenv("AI_MODEL", "gpt-5.4")
         self.reasoning_effort = os.getenv("AI_REASONING_EFFORT", "medium").strip().lower() or "medium"
-        if self.reasoning_effort not in {"low", "medium", "high"}:
+        if self.reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
             self.reasoning_effort = "medium"
         self.no_proxy_mode = str(os.getenv("AI_DISABLE_PROXY", "0")).strip().lower() in {"1", "true", "yes", "on"}
         self.cli_retries = self._i_env("AI_CLI_RETRIES", 1)
         self.cli_retry_delay_sec = self._f_env("AI_CLI_RETRY_DELAY_SEC", 1.5)
         fallback_models = os.getenv("AI_MODEL_FALLBACKS", "")
-        self.fallback_models = [m.strip() for m in fallback_models.split(",") if m.strip()]
-        if self.model not in self.fallback_models:
-            self.fallback_models.append(self.model)
+        configured_fallbacks = [m.strip() for m in fallback_models.split(",") if m.strip()]
+        self.fallback_models = [self.model]
+        for fallback_model in configured_fallbacks:
+            if fallback_model and fallback_model not in self.fallback_models:
+                self.fallback_models.append(fallback_model)
 
     @contextmanager
     def _temporary_proxy_env(self):
