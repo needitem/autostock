@@ -3,7 +3,7 @@ name: Update Cloudflare Telegram Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 22 * * 1-5"
+    - cron: "15 22 * * *"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -64,3 +64,12 @@ jobs:
           assert "rebalance" in payload
           print("Snapshot endpoint verified.")
           PY
+
+      - name: Send daily Telegram rebalance alert
+        run: |
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $BOT_NOTIFY_TOKEN" \
+            https://autostock-telegram-bot.th07290828.workers.dev/api/notify
+        env:
+          BOT_NOTIFY_TOKEN: ${{ secrets.BOT_NOTIFY_TOKEN }}
