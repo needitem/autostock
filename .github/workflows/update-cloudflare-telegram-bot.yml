@@ -65,7 +65,7 @@ jobs:
           print("Snapshot endpoint verified.")
           PY
 
-      - name: Send daily Telegram rebalance alert
+      - name: Send Telegram daily status or weekly rebalance alert
         run: |
           curl --fail --silent --show-error \
             -X POST \

@@ -44,13 +44,15 @@ type TelegramUpdate = {
   callback_query?: TelegramCallbackQuery;
 };
 
+type SignalSnapshot = (typeof SNAPSHOT.rebalance)[RebalanceKey];
+
 const MENU_KEYBOARD: InlineKeyboard = {
   inline_keyboard: [
     [
       { text: "V2 Summary", callback_data: "strategy:v2" },
       { text: "V14 Summary", callback_data: "strategy:v14" },
     ],
-    [{ text: "Daily Rebalance", callback_data: "rebalance" }],
+    [{ text: "Current Signal", callback_data: "rebalance" }],
     [
       { text: "Alerts On", callback_data: "subscribe" },
       { text: "Alerts Off", callback_data: "unsubscribe" },
@@ -86,6 +88,23 @@ function formatWeightRow(position: { symbol?: string; weight_pct?: number }): st
   return `- ${symbol}: ${weight.toFixed(1)}%`;
 }
 
+function formatCompactPositions(signal: SignalSnapshot): string {
+  if (!Array.isArray(signal.positions) || signal.positions.length === 0) {
+    return "no positions";
+  }
+  return signal.positions
+    .map((position) => `${String(position.symbol ?? "-")} ${Number(position.weight_pct ?? 0).toFixed(0)}%`)
+    .join(", ");
+}
+
+function isWeeklySignalDay(signal: SignalSnapshot): boolean {
+  return String(signal.latestMarketDay || "") === String(signal.signalDay || "");
+}
+
+function hasFreshWeeklySignal(): boolean {
+  return Object.values(SNAPSHOT.rebalance).some((signal) => isWeeklySignalDay(signal));
+}
+
 function renderMenuText(): string {
   return [
     "Autostock Telegram Bot",
@@ -96,8 +115,8 @@ function renderMenuText(): string {
     "/v14 - latest Strategy V14 summary",
     "/rebalance - current rebalance signal",
     "/snapshot - full snapshot",
-    "/subscribe - daily rebalance alerts on",
-    "/unsubscribe - daily rebalance alerts off",
+    "/subscribe - daily status + weekly rebalance alerts on",
+    "/unsubscribe - alerts off",
     "",
     `Snapshot generated at: ${SNAPSHOT.generatedAt}`,
   ].join("\n");
@@ -153,14 +172,51 @@ function renderRebalanceText(): string {
   ].join("\n");
 }
 
-function renderDailyAlertText(): string {
+function renderDailyStatusText(): string {
+  const v2 = SNAPSHOT.rebalance.v2;
+  const v14 = SNAPSHOT.rebalance.v14;
   return [
-    "Daily rebalance update",
+    "Daily market status",
+    "",
+    "No new weekly rebalance signal today.",
+    "Keep the current weekly posture unless your own execution rules say otherwise.",
+    "",
+    `Latest market day: ${v2.latestMarketDay}`,
+    `QQQ close: ${Number(v2.qqqClose).toFixed(2)}`,
+    `QQQ MA200 gap: ${formatPct(Number(v2.qqqMa200Gap) * 100)}`,
+    `QQQ 21d return: ${formatPct(Number(v2.qqqReturn21d) * 100)}`,
+    `QQQ 63d return: ${formatPct(Number(v2.qqqReturn63d) * 100)}`,
+    `VIX: ${Number(v2.vixClose).toFixed(2)}`,
+    "",
+    `V2 posture: ${v2.regimeState} -> ${formatCompactPositions(v2)}`,
+    `V14 posture: ${v14.regimeState} -> ${formatCompactPositions(v14)}`,
+    "",
+    `Last weekly signal day: ${v2.signalDay}`,
+    `Snapshot generated at: ${SNAPSHOT.generatedAt}`,
+  ].join("\n");
+}
+
+function renderWeeklyRebalanceAlertText(): string {
+  return [
+    "Weekly rebalance signal",
     "",
     renderRebalanceText(),
     "",
     `Snapshot generated at: ${SNAPSHOT.generatedAt}`,
   ].join("\n");
+}
+
+function buildAutomatedAlert(): { kind: "daily_status" | "weekly_rebalance"; text: string } {
+  if (hasFreshWeeklySignal()) {
+    return {
+      kind: "weekly_rebalance",
+      text: renderWeeklyRebalanceAlertText(),
+    };
+  }
+  return {
+    kind: "daily_status",
+    text: renderDailyStatusText(),
+  };
 }
 
 function renderSnapshotText(): string {
@@ -277,13 +333,13 @@ function resolveTextForCommand(command: string): string {
       return renderSnapshotText();
     case "/subscribe":
       return [
-        "Daily rebalance alerts are now ON.",
+        "Alerts are now ON.",
         "",
-        "You will receive the current rebalance update every day after the snapshot refresh runs.",
+        "You will receive daily market status updates and a weekly rebalance alert when the fresh signal day arrives.",
       ].join("\n");
     case "/unsubscribe":
       return [
-        "Daily rebalance alerts are now OFF.",
+        "Alerts are now OFF.",
         "",
         "You can turn them back on anytime with /subscribe.",
       ].join("\n");
@@ -324,7 +380,11 @@ function resolveTextForCallback(data: string | undefined): string {
 }
 
 function isSubscriptionCommand(command: string): boolean {
-  return command !== "/unsubscribe";
+  return command === "/start" || command === "/subscribe";
+}
+
+function isUnsubscribeCommand(command: string): boolean {
+  return command === "/unsubscribe";
 }
 
 function verifyWebhook(request: Request, env: Env): boolean {
@@ -344,12 +404,12 @@ function shouldDropSubscriber(result: TelegramResponse): boolean {
 
 async function broadcastDailyAlert(env: Env): Promise<Response> {
   const subscribers = await loadSubscribers(env);
-  const text = renderDailyAlertText();
+  const alert = buildAutomatedAlert();
   let delivered = 0;
   let removed = 0;
 
   for (const chatId of subscribers) {
-    const result = await sendMessage(env, chatId, text);
+    const result = await sendMessage(env, chatId, alert.text);
     if (result.ok) {
       delivered += 1;
       continue;
@@ -362,6 +422,7 @@ async function broadcastDailyAlert(env: Env): Promise<Response> {
 
   return jsonResponse({
     ok: true,
+    kind: alert.kind,
     delivered,
     removed,
     subscribers: subscribers.length,
@@ -374,7 +435,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
     const command = parseCommand(update.message.text);
     if (isSubscriptionCommand(command)) {
       await ensureSubscribed(env, update.message.chat.id);
-    } else {
+    } else if (isUnsubscribeCommand(command)) {
       await ensureUnsubscribed(env, update.message.chat.id);
     }
     const text = resolveTextForCommand(command);
@@ -384,10 +445,10 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
 
   if (update.callback_query?.message?.chat?.id && update.callback_query.message.message_id) {
     const chatId = update.callback_query.message.chat.id;
-    if (update.callback_query.data === "unsubscribe") {
-      await ensureUnsubscribed(env, chatId);
-    } else {
+    if (update.callback_query.data === "subscribe") {
       await ensureSubscribed(env, chatId);
+    } else if (update.callback_query.data === "unsubscribe") {
+      await ensureUnsubscribed(env, chatId);
     }
     const text = resolveTextForCallback(update.callback_query.data);
     await editMessage(env, chatId, update.callback_query.message.message_id, text);
@@ -410,6 +471,7 @@ export default {
         generatedAt: SNAPSHOT.generatedAt,
         commands: ["/menu", "/v2", "/v14", "/rebalance", "/snapshot", "/subscribe", "/unsubscribe"],
         subscribers: subscribers.length,
+        automatedAlertKind: buildAutomatedAlert().kind,
       });
     }
 
