@@ -1,0 +1,63 @@
+name: Update Cloudflare Telegram Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 22 * * 1-5"
+
+jobs:
+  refresh-snapshot-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Wrangler
+        run: npm install -g wrangler@4.56.0
+
+      - name: Restore Wrangler OAuth config
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.wrangler/config"
+          cat <<'EOF' > "$HOME/.wrangler/config/default.toml"
+          ${{ secrets.CLOUDFLARE_WRANGLER_CONFIG_TOML }}
+          EOF
+
+      - name: Export latest strategy snapshot
+        run: python scripts/export_cloudflare_bot_data.py
+
+      - name: Deploy Cloudflare Worker
+        run: wrangler deploy --config cloudflare/telegram-bot/wrangler.jsonc
+
+      - name: Verify deployed snapshot endpoint
+        run: |
+          curl --fail --silent --show-error \
+            https://autostock-telegram-bot.th07290828.workers.dev/api/snapshot \
+            > /tmp/snapshot.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/snapshot.json").read_text(encoding="utf-8"))
+          assert "strategies" in payload
+          assert "rebalance" in payload
+          print("Snapshot endpoint verified.")
+          PY

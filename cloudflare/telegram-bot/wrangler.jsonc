@@ -1,6 +1,7 @@
 {
   "name": "autostock-telegram-bot",
   "main": "src/index.ts",
+  "account_id": "b16a96f816ee9454e4364e9771ef1a23",
   "compatibility_date": "2026-03-24",
   "workers_dev": true,
   "minify": true,
