@@ -9,7 +9,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  refresh-snapshot-and-deploy:
+  refresh-snapshot-and-notify:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -28,27 +28,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Wrangler
-        run: npm install -g wrangler@4.56.0
-
-      - name: Restore Wrangler OAuth config
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.wrangler/config"
-          cat <<'EOF' > "$HOME/.wrangler/config/default.toml"
-          ${{ secrets.CLOUDFLARE_WRANGLER_CONFIG_TOML }}
-          EOF
-
       - name: Export latest strategy snapshot
         run: python scripts/export_cloudflare_bot_data.py
 
-      - name: Deploy Cloudflare Worker
-        run: wrangler deploy --config cloudflare/telegram-bot/wrangler.jsonc
+      - name: Sync latest snapshot to Cloudflare Worker
+        run: |
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $BOT_NOTIFY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @cloudflare/telegram-bot/live/snapshot.json \
+            https://autostock-telegram-bot.th07290828.workers.dev/api/snapshot-sync
+        env:
+          BOT_NOTIFY_TOKEN: ${{ secrets.BOT_NOTIFY_TOKEN }}
 
       - name: Verify deployed snapshot endpoint
         run: |

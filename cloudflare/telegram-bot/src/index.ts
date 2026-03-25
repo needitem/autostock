@@ -1,4 +1,4 @@
-import { SNAPSHOT } from "./snapshot-data";
+import { SNAPSHOT as FALLBACK_SNAPSHOT } from "./snapshot-data";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -7,8 +7,10 @@ interface Env {
   SUBSCRIBERS: KVNamespace;
 }
 
-type StrategyKey = keyof typeof SNAPSHOT.strategies;
-type RebalanceKey = keyof typeof SNAPSHOT.rebalance;
+type AppSnapshot = typeof FALLBACK_SNAPSHOT;
+type StrategyKey = keyof AppSnapshot["strategies"];
+type RebalanceKey = keyof AppSnapshot["rebalance"];
+type SignalSnapshot = AppSnapshot["rebalance"][RebalanceKey];
 
 type TelegramResponse = {
   ok: boolean;
@@ -44,8 +46,6 @@ type TelegramUpdate = {
   callback_query?: TelegramCallbackQuery;
 };
 
-type SignalSnapshot = (typeof SNAPSHOT.rebalance)[RebalanceKey];
-
 const MENU_KEYBOARD: InlineKeyboard = {
   inline_keyboard: [
     [
@@ -62,6 +62,7 @@ const MENU_KEYBOARD: InlineKeyboard = {
 };
 
 const SUBSCRIBERS_KEY = "telegram_subscribers";
+const SNAPSHOT_KEY = "telegram_live_snapshot_v1";
 
 function jsonResponse(payload: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload, null, 2), {
@@ -101,11 +102,36 @@ function isWeeklySignalDay(signal: SignalSnapshot): boolean {
   return String(signal.latestMarketDay || "") === String(signal.signalDay || "");
 }
 
-function hasFreshWeeklySignal(): boolean {
-  return Object.values(SNAPSHOT.rebalance).some((signal) => isWeeklySignalDay(signal));
+function hasFreshWeeklySignal(snapshot: AppSnapshot): boolean {
+  return Object.values(snapshot.rebalance).some((signal) => isWeeklySignalDay(signal));
 }
 
-function renderMenuText(): string {
+function isSnapshotLike(value: unknown): value is AppSnapshot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const payload = value as Record<string, unknown>;
+  return Boolean(payload.generatedAt) && typeof payload.strategies === "object" && typeof payload.rebalance === "object";
+}
+
+async function loadSnapshot(env: Env): Promise<AppSnapshot> {
+  const raw = await env.SUBSCRIBERS.get(SNAPSHOT_KEY);
+  if (!raw) {
+    return FALLBACK_SNAPSHOT;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return isSnapshotLike(parsed) ? parsed : FALLBACK_SNAPSHOT;
+  } catch {
+    return FALLBACK_SNAPSHOT;
+  }
+}
+
+async function saveSnapshot(env: Env, snapshot: AppSnapshot): Promise<void> {
+  await env.SUBSCRIBERS.put(SNAPSHOT_KEY, JSON.stringify(snapshot));
+}
+
+function renderMenuText(snapshot: AppSnapshot): string {
   return [
     "Autostock Telegram Bot",
     "",
@@ -118,12 +144,12 @@ function renderMenuText(): string {
     "/subscribe - daily status + weekly rebalance alerts on",
     "/unsubscribe - alerts off",
     "",
-    `Snapshot generated at: ${SNAPSHOT.generatedAt}`,
+    `Snapshot generated at: ${snapshot.generatedAt}`,
   ].join("\n");
 }
 
-function renderStrategyText(strategyKey: StrategyKey): string {
-  const strategy = SNAPSHOT.strategies[strategyKey];
+function renderStrategyText(snapshot: AppSnapshot, strategyKey: StrategyKey): string {
+  const strategy = snapshot.strategies[strategyKey];
   const diff = Number(strategy.cagr) - Number(strategy.benchmarkCagr);
   return [
     `${strategy.label}`,
@@ -135,12 +161,12 @@ function renderStrategyText(strategyKey: StrategyKey): string {
     `Avg turnover: ${Number(strategy.turnover).toFixed(3)}`,
     `P(alpha>0): ${Number(strategy.pAlphaGt0).toFixed(3)}`,
     "",
-    `Snapshot generated at: ${SNAPSHOT.generatedAt}`,
+    `Snapshot generated at: ${snapshot.generatedAt}`,
   ].join("\n");
 }
 
-function renderSignalText(strategyKey: RebalanceKey): string {
-  const signal = SNAPSHOT.rebalance[strategyKey];
+function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): string {
+  const signal = snapshot.rebalance[strategyKey];
   const positions = signal.positions.length > 0 ? signal.positions.map(formatWeightRow).join("\n") : "- no positions";
   return [
     `${String(strategyKey).toUpperCase()} rebalance`,
@@ -162,19 +188,19 @@ function renderSignalText(strategyKey: RebalanceKey): string {
   ].join("\n");
 }
 
-function renderRebalanceText(): string {
+function renderRebalanceText(snapshot: AppSnapshot): string {
   return [
-    renderSignalText("v2"),
+    renderSignalText(snapshot, "v2"),
     "",
     "--------------------",
     "",
-    renderSignalText("v14"),
+    renderSignalText(snapshot, "v14"),
   ].join("\n");
 }
 
-function renderDailyStatusText(): string {
-  const v2 = SNAPSHOT.rebalance.v2;
-  const v14 = SNAPSHOT.rebalance.v14;
+function renderDailyStatusText(snapshot: AppSnapshot): string {
+  const v2 = snapshot.rebalance.v2;
+  const v14 = snapshot.rebalance.v14;
   return [
     "Daily market status",
     "",
@@ -192,44 +218,44 @@ function renderDailyStatusText(): string {
     `V14 posture: ${v14.regimeState} -> ${formatCompactPositions(v14)}`,
     "",
     `Last weekly signal day: ${v2.signalDay}`,
-    `Snapshot generated at: ${SNAPSHOT.generatedAt}`,
+    `Snapshot generated at: ${snapshot.generatedAt}`,
   ].join("\n");
 }
 
-function renderWeeklyRebalanceAlertText(): string {
+function renderWeeklyRebalanceAlertText(snapshot: AppSnapshot): string {
   return [
     "Weekly rebalance signal",
     "",
-    renderRebalanceText(),
+    renderRebalanceText(snapshot),
     "",
-    `Snapshot generated at: ${SNAPSHOT.generatedAt}`,
+    `Snapshot generated at: ${snapshot.generatedAt}`,
   ].join("\n");
 }
 
-function buildAutomatedAlert(): { kind: "daily_status" | "weekly_rebalance"; text: string } {
-  if (hasFreshWeeklySignal()) {
+function buildAutomatedAlert(snapshot: AppSnapshot): { kind: "daily_status" | "weekly_rebalance"; text: string } {
+  if (hasFreshWeeklySignal(snapshot)) {
     return {
       kind: "weekly_rebalance",
-      text: renderWeeklyRebalanceAlertText(),
+      text: renderWeeklyRebalanceAlertText(snapshot),
     };
   }
   return {
     kind: "daily_status",
-    text: renderDailyStatusText(),
+    text: renderDailyStatusText(snapshot),
   };
 }
 
-function renderSnapshotText(): string {
+function renderSnapshotText(snapshot: AppSnapshot): string {
   return [
-    renderStrategyText("v2"),
+    renderStrategyText(snapshot, "v2"),
     "",
     "====================",
     "",
-    renderStrategyText("v14"),
+    renderStrategyText(snapshot, "v14"),
     "",
     "====================",
     "",
-    renderRebalanceText(),
+    renderRebalanceText(snapshot),
   ].join("\n");
 }
 
@@ -317,20 +343,20 @@ function parseCommand(text: string): string {
   return text.trim().split(/\s+/)[0].split("@")[0].toLowerCase();
 }
 
-function resolveTextForCommand(command: string): string {
+function resolveTextForCommand(snapshot: AppSnapshot, command: string): string {
   switch (command) {
     case "/start":
     case "/menu":
     case "/help":
-      return renderMenuText();
+      return renderMenuText(snapshot);
     case "/v2":
-      return renderStrategyText("v2");
+      return renderStrategyText(snapshot, "v2");
     case "/v14":
-      return renderStrategyText("v14");
+      return renderStrategyText(snapshot, "v14");
     case "/rebalance":
-      return renderRebalanceText();
+      return renderRebalanceText(snapshot);
     case "/snapshot":
-      return renderSnapshotText();
+      return renderSnapshotText(snapshot);
     case "/subscribe":
       return [
         "Alerts are now ON.",
@@ -347,35 +373,35 @@ function resolveTextForCommand(command: string): string {
       return [
         "Unknown command.",
         "",
-        renderMenuText(),
+        renderMenuText(snapshot),
       ].join("\n");
   }
 }
 
-function resolveTextForCallback(data: string | undefined): string {
+function resolveTextForCallback(snapshot: AppSnapshot, data: string | undefined): string {
   switch (data) {
     case "menu":
-      return renderMenuText();
+      return renderMenuText(snapshot);
     case "rebalance":
-      return renderRebalanceText();
+      return renderRebalanceText(snapshot);
     case "strategy:v2":
-      return renderStrategyText("v2");
+      return renderStrategyText(snapshot, "v2");
     case "strategy:v14":
-      return renderStrategyText("v14");
+      return renderStrategyText(snapshot, "v14");
     case "subscribe":
       return [
-        renderMenuText(),
+        renderMenuText(snapshot),
         "",
-        "Daily rebalance alerts are now ON.",
+        "Alerts are now ON.",
       ].join("\n");
     case "unsubscribe":
       return [
-        renderMenuText(),
+        renderMenuText(snapshot),
         "",
-        "Daily rebalance alerts are now OFF.",
+        "Alerts are now OFF.",
       ].join("\n");
     default:
-      return renderMenuText();
+      return renderMenuText(snapshot);
   }
 }
 
@@ -402,9 +428,22 @@ function shouldDropSubscriber(result: TelegramResponse): boolean {
   return description.includes("chat not found") || description.includes("bot was blocked");
 }
 
-async function broadcastDailyAlert(env: Env): Promise<Response> {
+async function syncSnapshot(request: Request, env: Env): Promise<Response> {
+  const payload = (await request.json()) as unknown;
+  if (!isSnapshotLike(payload)) {
+    return jsonResponse({ ok: false, error: "invalid_snapshot" }, { status: 400 });
+  }
+  await saveSnapshot(env, payload);
+  return jsonResponse({
+    ok: true,
+    generatedAt: payload.generatedAt,
+  });
+}
+
+async function broadcastAutomatedAlert(env: Env): Promise<Response> {
   const subscribers = await loadSubscribers(env);
-  const alert = buildAutomatedAlert();
+  const snapshot = await loadSnapshot(env);
+  const alert = buildAutomatedAlert(snapshot);
   let delivered = 0;
   let removed = 0;
 
@@ -426,11 +465,13 @@ async function broadcastDailyAlert(env: Env): Promise<Response> {
     delivered,
     removed,
     subscribers: subscribers.length,
-    generatedAt: SNAPSHOT.generatedAt,
+    generatedAt: snapshot.generatedAt,
   });
 }
 
 async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<Response> {
+  const snapshot = await loadSnapshot(env);
+
   if (update.message?.chat?.id && typeof update.message.text === "string") {
     const command = parseCommand(update.message.text);
     if (isSubscriptionCommand(command)) {
@@ -438,7 +479,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
     } else if (isUnsubscribeCommand(command)) {
       await ensureUnsubscribed(env, update.message.chat.id);
     }
-    const text = resolveTextForCommand(command);
+    const text = resolveTextForCommand(snapshot, command);
     await sendMessage(env, update.message.chat.id, text);
     return jsonResponse({ ok: true });
   }
@@ -450,7 +491,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
     } else if (update.callback_query.data === "unsubscribe") {
       await ensureUnsubscribed(env, chatId);
     }
-    const text = resolveTextForCallback(update.callback_query.data);
+    const text = resolveTextForCallback(snapshot, update.callback_query.data);
     await editMessage(env, chatId, update.callback_query.message.message_id, text);
     await answerCallback(env, update.callback_query.id);
     return jsonResponse({ ok: true });
@@ -465,25 +506,34 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/") {
       const subscribers = await loadSubscribers(env);
+      const snapshot = await loadSnapshot(env);
       return jsonResponse({
         ok: true,
         service: "autostock-telegram-bot",
-        generatedAt: SNAPSHOT.generatedAt,
+        generatedAt: snapshot.generatedAt,
         commands: ["/menu", "/v2", "/v14", "/rebalance", "/snapshot", "/subscribe", "/unsubscribe"],
         subscribers: subscribers.length,
-        automatedAlertKind: buildAutomatedAlert().kind,
+        automatedAlertKind: buildAutomatedAlert(snapshot).kind,
       });
     }
 
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
-      return jsonResponse(SNAPSHOT);
+      const snapshot = await loadSnapshot(env);
+      return jsonResponse(snapshot);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/snapshot-sync") {
+      if (!verifyNotifyRequest(request, env)) {
+        return jsonResponse({ ok: false, error: "unauthorized" }, { status: 401 });
+      }
+      return syncSnapshot(request, env);
     }
 
     if (request.method === "POST" && url.pathname === "/api/notify") {
       if (!verifyNotifyRequest(request, env)) {
         return jsonResponse({ ok: false, error: "unauthorized" }, { status: 401 });
       }
-      return broadcastDailyAlert(env);
+      return broadcastAutomatedAlert(env);
     }
 
     if (request.method === "POST" && url.pathname === "/telegram") {

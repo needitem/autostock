@@ -13,6 +13,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET_TS = ROOT / "cloudflare" / "telegram-bot" / "src" / "snapshot-data.ts"
+TARGET_JSON = ROOT / "cloudflare" / "telegram-bot" / "live" / "snapshot.json"
 FALLBACK_STRATEGY_METRICS: dict[str, dict[str, Any]] = {
     "v2": {
         "label": "Strategy V2",
@@ -218,11 +219,17 @@ def _build_payload() -> dict[str, Any]:
 def main() -> None:
     payload = _build_payload()
     TARGET_TS.parent.mkdir(parents=True, exist_ok=True)
+    TARGET_JSON.parent.mkdir(parents=True, exist_ok=True)
     TARGET_TS.write_text(
         "export const SNAPSHOT = " + json.dumps(payload, ensure_ascii=False, indent=2) + " as const;\n",
         encoding="utf-8",
     )
+    TARGET_JSON.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(f"Saved: {TARGET_TS.relative_to(ROOT)}")
+    print(f"Saved: {TARGET_JSON.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
