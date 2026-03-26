@@ -95,6 +95,7 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
     entry_day = pd.Timestamp(frames[selector.BENCH].index[entry_pos]).date() if entry_pos >= 0 else None
 
     by_symbol: dict[str, dict[str, Any]] = {}
+    by_symbol_latest: dict[str, dict[str, Any]] = {}
     for sym, frame in frames.items():
         if frame is None or frame.empty:
             continue
@@ -102,14 +103,21 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
         if ind.empty:
             continue
         sd = selector._last_day(ind, signal_day)
-        if sd is None:
-            continue
-        row = ind.loc[sd]
-        if isinstance(row, pd.DataFrame):
-            row = row.iloc[-1]
-        data = row.to_dict()
-        data["symbol"] = sym
-        by_symbol[sym] = data
+        if sd is not None:
+            row = ind.loc[sd]
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[-1]
+            data = row.to_dict()
+            data["symbol"] = sym
+            by_symbol[sym] = data
+        latest_ref = selector._last_day(ind, latest_market_day)
+        if latest_ref is not None:
+            latest_row = ind.loc[latest_ref]
+            if isinstance(latest_row, pd.DataFrame):
+                latest_row = latest_row.iloc[-1]
+            latest_data = latest_row.to_dict()
+            latest_data["symbol"] = sym
+            by_symbol_latest[sym] = latest_data
 
     out = selector._regime_portfolio_from_features(
         by_symbol=by_symbol,
@@ -161,7 +169,10 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
         crash_fallback_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_CRASH_FALLBACK", "")),
     )
 
-    source = by_symbol.get(selector._normalize_symbol(os.getenv("AI_REGIME_SOURCE", selector.BENCH)) or selector.BENCH, {})
+    source_symbol = selector._normalize_symbol(os.getenv("AI_REGIME_SOURCE", selector.BENCH)) or selector.BENCH
+    source = by_symbol.get(source_symbol, {})
+    latest_source = by_symbol_latest.get(source_symbol, {})
+    latest_vix = by_symbol_latest.get("^VIX") or {}
     position_price_refs: list[dict[str, Any]] = []
     entry_ts = pd.Timestamp(entry_day) if entry_day else None
     for position in out.get("positions", []):
@@ -197,11 +208,16 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
         "regimeReason": str(out.get("_regime_reason", "")),
         "positions": out.get("positions", []),
         "positionPriceRefs": position_price_refs,
-        "qqqClose": round(float(source.get("close", 0.0) or 0.0), 2),
-        "qqqMa200Gap": round(float(source.get("ma200_gap", 0.0) or 0.0), 4),
-        "qqqReturn21d": round(float(source.get("return_21d", 0.0) or 0.0), 4),
-        "qqqReturn63d": round(float(source.get("return_63d", 0.0) or 0.0), 4),
-        "vixClose": round(float((by_symbol.get("^VIX") or {}).get("close", 0.0) or 0.0), 2),
+        "signalQqqClose": round(float(source.get("close", 0.0) or 0.0), 2),
+        "signalQqqMa200Gap": round(float(source.get("ma200_gap", 0.0) or 0.0), 4),
+        "signalQqqReturn21d": round(float(source.get("return_21d", 0.0) or 0.0), 4),
+        "signalQqqReturn63d": round(float(source.get("return_63d", 0.0) or 0.0), 4),
+        "signalVixClose": round(float((by_symbol.get("^VIX") or {}).get("close", 0.0) or 0.0), 2),
+        "latestQqqClose": round(float(latest_source.get("close", 0.0) or 0.0), 2),
+        "latestQqqMa200Gap": round(float(latest_source.get("ma200_gap", 0.0) or 0.0), 4),
+        "latestQqqReturn21d": round(float(latest_source.get("return_21d", 0.0) or 0.0), 4),
+        "latestQqqReturn63d": round(float(latest_source.get("return_63d", 0.0) or 0.0), 4),
+        "latestVixClose": round(float(latest_vix.get("close", 0.0) or 0.0), 2),
     }
 
 

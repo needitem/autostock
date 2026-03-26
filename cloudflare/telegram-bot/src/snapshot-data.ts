@@ -1,5 +1,5 @@
 export const SNAPSHOT = {
-  "generatedAt": "2026-03-26 23:20:37.891677+00:00",
+  "generatedAt": "2026-03-26 23:36:17.563429+00:00",
   "strategies": {
     "v2": {
       "label": "Strategy V2",
@@ -41,11 +41,16 @@ export const SNAPSHOT = {
           "latestClose": 400.64
         }
       ],
-      "qqqClose": 582.06,
-      "qqqMa200Gap": -1.8165,
-      "qqqReturn21d": -3.5478,
-      "qqqReturn63d": -3.0562,
-      "vixClose": 26.78
+      "signalQqqClose": 582.06,
+      "signalQqqMa200Gap": -1.8165,
+      "signalQqqReturn21d": -3.5478,
+      "signalQqqReturn63d": -3.0562,
+      "signalVixClose": 26.78,
+      "latestQqqClose": 573.79,
+      "latestQqqMa200Gap": -3.3903,
+      "latestQqqReturn21d": -6.955,
+      "latestQqqReturn63d": -7.7671,
+      "latestVixClose": 27.44
     },
     "v14": {
       "latestMarketDay": "2026-03-26",
@@ -69,11 +74,16 @@ export const SNAPSHOT = {
           "latestClose": 400.64
         }
       ],
-      "qqqClose": 582.06,
-      "qqqMa200Gap": -1.8165,
-      "qqqReturn21d": -3.5478,
-      "qqqReturn63d": -3.0562,
-      "vixClose": 26.78
+      "signalQqqClose": 582.06,
+      "signalQqqMa200Gap": -1.8165,
+      "signalQqqReturn21d": -3.5478,
+      "signalQqqReturn63d": -3.0562,
+      "signalVixClose": 26.78,
+      "latestQqqClose": 573.79,
+      "latestQqqMa200Gap": -3.3903,
+      "latestQqqReturn21d": -6.955,
+      "latestQqqReturn63d": -7.7671,
+      "latestVixClose": 27.44
     }
   }
 } as const;
