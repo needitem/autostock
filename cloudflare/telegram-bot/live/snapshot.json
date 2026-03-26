@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-26 23:36:17.563429+00:00",
+  "generatedAt": "2026-03-26 23:44:51.909422+00:00",
   "strategies": {
     "v2": {
       "label": "Strategy V2",
@@ -41,6 +41,23 @@
           "latestClose": 400.64
         }
       ],
+      "liveSignalDay": "2026-03-26",
+      "liveRegimeState": "risk_off",
+      "liveRegimeReason": "risk_off",
+      "livePositions": [
+        {
+          "symbol": "GLD",
+          "weight_pct": 100.0
+        }
+      ],
+      "livePositionPriceRefs": [
+        {
+          "symbol": "GLD",
+          "weightPct": 100.0,
+          "latestMarketDay": "2026-03-26",
+          "latestClose": 400.64
+        }
+      ],
       "signalQqqClose": 582.06,
       "signalQqqMa200Gap": -1.8165,
       "signalQqqReturn21d": -3.5478,
@@ -70,6 +87,23 @@
           "weightPct": 100.0,
           "entryDay": "2026-03-23",
           "entryDayOpen": 405.12,
+          "latestMarketDay": "2026-03-26",
+          "latestClose": 400.64
+        }
+      ],
+      "liveSignalDay": "2026-03-26",
+      "liveRegimeState": "risk_off",
+      "liveRegimeReason": "risk_off:fallback",
+      "livePositions": [
+        {
+          "symbol": "GLD",
+          "weight_pct": 100.0
+        }
+      ],
+      "livePositionPriceRefs": [
+        {
+          "symbol": "GLD",
+          "weightPct": 100.0,
           "latestMarketDay": "2026-03-26",
           "latestClose": 400.64
         }

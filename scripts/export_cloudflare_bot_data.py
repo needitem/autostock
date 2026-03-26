@@ -119,54 +119,63 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
             latest_data["symbol"] = sym
             by_symbol_latest[sym] = latest_data
 
+    regime_kwargs = {
+        "regime_source": selector._normalize_symbol(os.getenv("AI_REGIME_SOURCE", selector.BENCH)) or selector.BENCH,
+        "ma_fast": int(os.getenv("AI_REGIME_MA_FAST", "100")),
+        "ma_slow": int(os.getenv("AI_REGIME_MA_SLOW", "200")),
+        "mom_lb": int(os.getenv("AI_REGIME_MOM_LB", "21")),
+        "mom_thr": float(os.getenv("AI_REGIME_MOM_THR", "0.0")),
+        "risk_on_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_ON", "TQQQ")),
+        "risk_on_alt_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_ON_ALT", "QLD")),
+        "neutral_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_NEUTRAL", "QLD")),
+        "recovery_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_RECOVERY", "")),
+        "risk_off_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_OFF", "GLD")),
+        "crash_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_CRASH", "GLD")),
+        "vol_cap": float(os.getenv("AI_REGIME_VOL_CAP", "0.05")),
+        "vol_low": float(os.getenv("AI_REGIME_VOL_LOW", "0.035")),
+        "vol_mid": float(os.getenv("AI_REGIME_VOL_MID", "0.04")),
+        "mom_strong": float(os.getenv("AI_REGIME_MOM_STRONG", "0.06")),
+        "crash_vol": float(os.getenv("AI_REGIME_CRASH_VOL", "0.06")),
+        "crash_dd": float(os.getenv("AI_REGIME_CRASH_DD", "-0.2")),
+        "hysteresis": float(os.getenv("AI_REGIME_HYSTERESIS", "0.0")),
+        "recovery_slow_buffer": float(os.getenv("AI_REGIME_RECOVERY_SLOW_BUFFER", "0.03")),
+        "recovery_min_mom": float(os.getenv("AI_REGIME_RECOVERY_MIN_MOM", "0.015")),
+        "recovery_max_vol": float(os.getenv("AI_REGIME_RECOVERY_MAX_VOL", "0.045")),
+        "recovery_dd_floor": float(os.getenv("AI_REGIME_RECOVERY_DD_FLOOR", "-0.12")),
+        "risk_on_filter_asset": selector._normalize_symbol(os.getenv("AI_REGIME_FILTER_ASSET", "")),
+        "risk_on_filter_ma": int(os.getenv("AI_REGIME_FILTER_MA", "50")),
+        "risk_on_filter_safe_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_FILTER_SAFE", "")),
+        "risk_off_dynamic": _parse_bool(os.getenv("AI_REGIME_RISK_OFF_DYNAMIC", "0")),
+        "risk_off_pool_symbols": selector._parse_symbols(os.getenv("AI_REGIME_RISK_OFF_POOL", "")),
+        "risk_off_top_n": int(os.getenv("AI_REGIME_RISK_OFF_TOP_N", "1")),
+        "risk_off_min_ma_gap": float(os.getenv("AI_REGIME_RISK_OFF_MIN_MA_GAP", "0.0")),
+        "risk_off_min_ret21": float(os.getenv("AI_REGIME_RISK_OFF_MIN_RET21", "0.0")),
+        "risk_off_min_ret63": float(os.getenv("AI_REGIME_RISK_OFF_MIN_RET63", "0.0")),
+        "risk_off_max_vol": float(os.getenv("AI_REGIME_RISK_OFF_MAX_VOL", "0.0")),
+        "risk_off_min_dd252": float(os.getenv("AI_REGIME_RISK_OFF_MIN_DD252", "-1.0")),
+        "risk_off_weight_mode": str(os.getenv("AI_REGIME_RISK_OFF_WEIGHT_MODE", "inv_vol")),
+        "risk_off_fallback_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_OFF_FALLBACK", "")),
+        "crash_dynamic": _parse_bool(os.getenv("AI_REGIME_CRASH_DYNAMIC", "0")),
+        "crash_pool_symbols": selector._parse_symbols(os.getenv("AI_REGIME_CRASH_POOL", "")),
+        "crash_top_n": int(os.getenv("AI_REGIME_CRASH_TOP_N", "1")),
+        "crash_min_ma_gap": float(os.getenv("AI_REGIME_CRASH_MIN_MA_GAP", "0.0")),
+        "crash_min_ret21": float(os.getenv("AI_REGIME_CRASH_MIN_RET21", "0.0")),
+        "crash_min_ret63": float(os.getenv("AI_REGIME_CRASH_MIN_RET63", "0.0")),
+        "crash_max_vol": float(os.getenv("AI_REGIME_CRASH_MAX_VOL", "0.0")),
+        "crash_min_dd252": float(os.getenv("AI_REGIME_CRASH_MIN_DD252", "-1.0")),
+        "crash_weight_mode": str(os.getenv("AI_REGIME_CRASH_WEIGHT_MODE", "inv_vol")),
+        "crash_fallback_alloc": selector._parse_allocation_spec(os.getenv("AI_REGIME_CRASH_FALLBACK", "")),
+    }
+
     out = selector._regime_portfolio_from_features(
         by_symbol=by_symbol,
         prev_state="risk_off",
-        regime_source=selector._normalize_symbol(os.getenv("AI_REGIME_SOURCE", selector.BENCH)) or selector.BENCH,
-        ma_fast=int(os.getenv("AI_REGIME_MA_FAST", "100")),
-        ma_slow=int(os.getenv("AI_REGIME_MA_SLOW", "200")),
-        mom_lb=int(os.getenv("AI_REGIME_MOM_LB", "21")),
-        mom_thr=float(os.getenv("AI_REGIME_MOM_THR", "0.0")),
-        risk_on_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_ON", "TQQQ")),
-        risk_on_alt_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_ON_ALT", "QLD")),
-        neutral_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_NEUTRAL", "QLD")),
-        recovery_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_RECOVERY", "")),
-        risk_off_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_OFF", "GLD")),
-        crash_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_CRASH", "GLD")),
-        vol_cap=float(os.getenv("AI_REGIME_VOL_CAP", "0.05")),
-        vol_low=float(os.getenv("AI_REGIME_VOL_LOW", "0.035")),
-        vol_mid=float(os.getenv("AI_REGIME_VOL_MID", "0.04")),
-        mom_strong=float(os.getenv("AI_REGIME_MOM_STRONG", "0.06")),
-        crash_vol=float(os.getenv("AI_REGIME_CRASH_VOL", "0.06")),
-        crash_dd=float(os.getenv("AI_REGIME_CRASH_DD", "-0.2")),
-        hysteresis=float(os.getenv("AI_REGIME_HYSTERESIS", "0.0")),
-        recovery_slow_buffer=float(os.getenv("AI_REGIME_RECOVERY_SLOW_BUFFER", "0.03")),
-        recovery_min_mom=float(os.getenv("AI_REGIME_RECOVERY_MIN_MOM", "0.015")),
-        recovery_max_vol=float(os.getenv("AI_REGIME_RECOVERY_MAX_VOL", "0.045")),
-        recovery_dd_floor=float(os.getenv("AI_REGIME_RECOVERY_DD_FLOOR", "-0.12")),
-        risk_on_filter_asset=selector._normalize_symbol(os.getenv("AI_REGIME_FILTER_ASSET", "")),
-        risk_on_filter_ma=int(os.getenv("AI_REGIME_FILTER_MA", "50")),
-        risk_on_filter_safe_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_FILTER_SAFE", "")),
-        risk_off_dynamic=_parse_bool(os.getenv("AI_REGIME_RISK_OFF_DYNAMIC", "0")),
-        risk_off_pool_symbols=selector._parse_symbols(os.getenv("AI_REGIME_RISK_OFF_POOL", "")),
-        risk_off_top_n=int(os.getenv("AI_REGIME_RISK_OFF_TOP_N", "1")),
-        risk_off_min_ma_gap=float(os.getenv("AI_REGIME_RISK_OFF_MIN_MA_GAP", "0.0")),
-        risk_off_min_ret21=float(os.getenv("AI_REGIME_RISK_OFF_MIN_RET21", "0.0")),
-        risk_off_min_ret63=float(os.getenv("AI_REGIME_RISK_OFF_MIN_RET63", "0.0")),
-        risk_off_max_vol=float(os.getenv("AI_REGIME_RISK_OFF_MAX_VOL", "0.0")),
-        risk_off_min_dd252=float(os.getenv("AI_REGIME_RISK_OFF_MIN_DD252", "-1.0")),
-        risk_off_weight_mode=str(os.getenv("AI_REGIME_RISK_OFF_WEIGHT_MODE", "inv_vol")),
-        risk_off_fallback_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_RISK_OFF_FALLBACK", "")),
-        crash_dynamic=_parse_bool(os.getenv("AI_REGIME_CRASH_DYNAMIC", "0")),
-        crash_pool_symbols=selector._parse_symbols(os.getenv("AI_REGIME_CRASH_POOL", "")),
-        crash_top_n=int(os.getenv("AI_REGIME_CRASH_TOP_N", "1")),
-        crash_min_ma_gap=float(os.getenv("AI_REGIME_CRASH_MIN_MA_GAP", "0.0")),
-        crash_min_ret21=float(os.getenv("AI_REGIME_CRASH_MIN_RET21", "0.0")),
-        crash_min_ret63=float(os.getenv("AI_REGIME_CRASH_MIN_RET63", "0.0")),
-        crash_max_vol=float(os.getenv("AI_REGIME_CRASH_MAX_VOL", "0.0")),
-        crash_min_dd252=float(os.getenv("AI_REGIME_CRASH_MIN_DD252", "-1.0")),
-        crash_weight_mode=str(os.getenv("AI_REGIME_CRASH_WEIGHT_MODE", "inv_vol")),
-        crash_fallback_alloc=selector._parse_allocation_spec(os.getenv("AI_REGIME_CRASH_FALLBACK", "")),
+        **regime_kwargs,
+    )
+    live_out = selector._regime_portfolio_from_features(
+        by_symbol=by_symbol_latest,
+        prev_state=str(out.get("_regime_state", "risk_off") or "risk_off"),
+        **regime_kwargs,
     )
 
     source_symbol = selector._normalize_symbol(os.getenv("AI_REGIME_SOURCE", selector.BENCH)) or selector.BENCH
@@ -200,6 +209,25 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
                 "latestClose": round(latest_close, 2) if latest_close is not None else None,
             }
         )
+    live_price_refs: list[dict[str, Any]] = []
+    for position in live_out.get("positions", []):
+        symbol = str((position or {}).get("symbol", "") or "").strip().upper()
+        if not symbol:
+            continue
+        frame = frames.get(symbol)
+        latest_close = None
+        if frame is not None and not frame.empty:
+            latest_ref_day = selector._last_day(frame, latest_market_day)
+            if latest_ref_day is not None:
+                latest_close = float(frame.loc[latest_ref_day]["Close"])
+        live_price_refs.append(
+            {
+                "symbol": symbol,
+                "weightPct": round(float((position or {}).get("weight_pct", 0.0) or 0.0), 4),
+                "latestMarketDay": str(latest_market_day.date()),
+                "latestClose": round(latest_close, 2) if latest_close is not None else None,
+            }
+        )
     return {
         "latestMarketDay": str(latest_market_day.date()),
         "signalDay": str(signal_day.date()),
@@ -208,6 +236,11 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
         "regimeReason": str(out.get("_regime_reason", "")),
         "positions": out.get("positions", []),
         "positionPriceRefs": position_price_refs,
+        "liveSignalDay": str(latest_market_day.date()),
+        "liveRegimeState": str(live_out.get("_regime_state", "")),
+        "liveRegimeReason": str(live_out.get("_regime_reason", "")),
+        "livePositions": live_out.get("positions", []),
+        "livePositionPriceRefs": live_price_refs,
         "signalQqqClose": round(float(source.get("close", 0.0) or 0.0), 2),
         "signalQqqMa200Gap": round(float(source.get("ma200_gap", 0.0) or 0.0), 4),
         "signalQqqReturn21d": round(float(source.get("return_21d", 0.0) or 0.0), 4),

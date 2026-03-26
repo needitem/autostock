@@ -113,7 +113,12 @@ function getPriceRefs(signal: SignalSnapshot): PriceRef[] {
   return Array.isArray(refs) ? refs : [];
 }
 
-function renderPriceReferenceBlock(signal: SignalSnapshot): string[] {
+function getLivePriceRefs(signal: SignalSnapshot): PriceRef[] {
+  const refs = (signal as SignalSnapshot & { livePositionPriceRefs?: PriceRef[] }).livePositionPriceRefs;
+  return Array.isArray(refs) ? refs : [];
+}
+
+function renderWeeklyPriceReferenceBlock(signal: SignalSnapshot): string[] {
   const refs = getPriceRefs(signal);
   if (refs.length === 0) {
     return [];
@@ -126,6 +131,22 @@ function renderPriceReferenceBlock(signal: SignalSnapshot): string[] {
     if (Number.isFinite(entryOpen)) {
       lines.push(`- original weekly entry: ${symbol} ${entryOpen.toFixed(2)} (${String(ref.entryDay || "-")} open)`);
     }
+    if (Number.isFinite(latestClose)) {
+      lines.push(`- if entering now: ${symbol} ${latestClose.toFixed(2)} (${String(ref.latestMarketDay || "-")} close ref)`);
+    }
+  }
+  return lines;
+}
+
+function renderLivePriceReferenceBlock(signal: SignalSnapshot): string[] {
+  const refs = getLivePriceRefs(signal);
+  if (refs.length === 0) {
+    return [];
+  }
+  const lines = ["Now references"];
+  for (const ref of refs) {
+    const symbol = String(ref.symbol ?? "-");
+    const latestClose = Number(ref.latestClose ?? NaN);
     if (Number.isFinite(latestClose)) {
       lines.push(`- if entering now: ${symbol} ${latestClose.toFixed(2)} (${String(ref.latestMarketDay || "-")} close ref)`);
     }
@@ -174,7 +195,7 @@ function renderMenuText(snapshot: AppSnapshot): string {
     "/menu - main menu",
     "/v2 - latest Strategy V2 summary",
     "/v14 - latest Strategy V14 summary",
-    "/rebalance - current rebalance signal",
+    "/rebalance - weekly signal + latest recheck",
     "/refresh - collect latest data and recompute now",
     "/snapshot - full snapshot",
     "/subscribe - daily status + weekly rebalance alerts on",
@@ -204,25 +225,47 @@ function renderStrategyText(snapshot: AppSnapshot, strategyKey: StrategyKey): st
 function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): string {
   const signal = snapshot.rebalance[strategyKey];
   const positions = signal.positions.length > 0 ? signal.positions.map(formatWeightRow).join("\n") : "- no positions";
-  const priceRefs = renderPriceReferenceBlock(signal);
+  const livePositions = Array.isArray(signal.livePositions) && signal.livePositions.length > 0
+    ? signal.livePositions.map(formatWeightRow).join("\n")
+    : "- no positions";
+  const weeklyPriceRefs = renderWeeklyPriceReferenceBlock(signal);
+  const livePriceRefs = renderLivePriceReferenceBlock(signal);
   return [
     `${String(strategyKey).toUpperCase()} rebalance`,
     "",
-    `Latest market day: ${signal.latestMarketDay}`,
-    `Signal day: ${signal.signalDay}`,
-    `Entry day: ${signal.entryDay}`,
-    `State: ${signal.regimeState}`,
-    `Reason: ${signal.regimeReason || "-"}`,
+    "Confirmed weekly signal",
+    `- latest market day: ${signal.latestMarketDay}`,
+    `- signal day: ${signal.signalDay}`,
+    `- entry day: ${signal.entryDay}`,
+    `- state: ${signal.regimeState}`,
+    `- reason: ${signal.regimeReason || "-"}`,
     "",
     "Target weights",
     positions,
     "",
-    `QQQ close: ${Number(signal.signalQqqClose).toFixed(2)}`,
-    `MA200 gap: ${formatPct(Number(signal.signalQqqMa200Gap) * 100)}`,
-    `21d return: ${formatPct(Number(signal.signalQqqReturn21d) * 100)}`,
-    `63d return: ${formatPct(Number(signal.signalQqqReturn63d) * 100)}`,
-    `VIX: ${Number(signal.signalVixClose).toFixed(2)}`,
-    ...(priceRefs.length > 0 ? ["", ...priceRefs] : []),
+    "Signal-day market context",
+    `- QQQ close: ${Number(signal.signalQqqClose).toFixed(2)}`,
+    `- MA200 gap: ${formatPct(Number(signal.signalQqqMa200Gap) * 100)}`,
+    `- 21d return: ${formatPct(Number(signal.signalQqqReturn21d) * 100)}`,
+    `- 63d return: ${formatPct(Number(signal.signalQqqReturn63d) * 100)}`,
+    `- VIX: ${Number(signal.signalVixClose).toFixed(2)}`,
+    ...(weeklyPriceRefs.length > 0 ? ["", ...weeklyPriceRefs] : []),
+    "",
+    "Recomputed now from latest market day",
+    `- as of: ${signal.liveSignalDay || signal.latestMarketDay}`,
+    `- state: ${signal.liveRegimeState || "-"}`,
+    `- reason: ${signal.liveRegimeReason || "-"}`,
+    "",
+    "Now target weights",
+    livePositions,
+    "",
+    "Latest market context",
+    `- QQQ close: ${Number(signal.latestQqqClose).toFixed(2)}`,
+    `- MA200 gap: ${formatPct(Number(signal.latestQqqMa200Gap) * 100)}`,
+    `- 21d return: ${formatPct(Number(signal.latestQqqReturn21d) * 100)}`,
+    `- 63d return: ${formatPct(Number(signal.latestQqqReturn63d) * 100)}`,
+    `- VIX: ${Number(signal.latestVixClose).toFixed(2)}`,
+    ...(livePriceRefs.length > 0 ? ["", ...livePriceRefs] : []),
   ].join("\n");
 }
 
@@ -252,8 +295,8 @@ function renderDailyStatusText(snapshot: AppSnapshot): string {
     `QQQ 63d return: ${formatPct(Number(v2.latestQqqReturn63d) * 100)}`,
     `VIX: ${Number(v2.latestVixClose).toFixed(2)}`,
     "",
-    `V2 posture: ${v2.regimeState} -> ${formatCompactPositions(v2)}`,
-    `V14 posture: ${v14.regimeState} -> ${formatCompactPositions(v14)}`,
+    `V2 posture now: ${String(v2.liveRegimeState || v2.regimeState)} -> ${formatCompactPositions({ ...v2, positions: v2.livePositions || v2.positions })}`,
+    `V14 posture now: ${String(v14.liveRegimeState || v14.regimeState)} -> ${formatCompactPositions({ ...v14, positions: v14.livePositions || v14.positions })}`,
     "",
     `Last weekly signal day: ${v2.signalDay}`,
     `Snapshot generated at: ${snapshot.generatedAt}`,
