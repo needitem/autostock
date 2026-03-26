@@ -4,6 +4,7 @@ interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
   BOT_NOTIFY_TOKEN: string;
+  GITHUB_ACTIONS_TOKEN: string;
   SUBSCRIBERS: KVNamespace;
 }
 
@@ -11,6 +12,14 @@ type AppSnapshot = typeof FALLBACK_SNAPSHOT;
 type StrategyKey = keyof AppSnapshot["strategies"];
 type RebalanceKey = keyof AppSnapshot["rebalance"];
 type SignalSnapshot = AppSnapshot["rebalance"][RebalanceKey];
+type PriceRef = {
+  symbol?: string;
+  weightPct?: number;
+  entryDay?: string;
+  entryDayOpen?: number | null;
+  latestMarketDay?: string;
+  latestClose?: number | null;
+};
 
 type TelegramResponse = {
   ok: boolean;
@@ -53,6 +62,7 @@ const MENU_KEYBOARD: InlineKeyboard = {
       { text: "V14 Summary", callback_data: "strategy:v14" },
     ],
     [{ text: "Current Signal", callback_data: "rebalance" }],
+    [{ text: "Refresh Now", callback_data: "refresh" }],
     [
       { text: "Alerts On", callback_data: "subscribe" },
       { text: "Alerts Off", callback_data: "unsubscribe" },
@@ -98,6 +108,31 @@ function formatCompactPositions(signal: SignalSnapshot): string {
     .join(", ");
 }
 
+function getPriceRefs(signal: SignalSnapshot): PriceRef[] {
+  const refs = (signal as SignalSnapshot & { positionPriceRefs?: PriceRef[] }).positionPriceRefs;
+  return Array.isArray(refs) ? refs : [];
+}
+
+function renderPriceReferenceBlock(signal: SignalSnapshot): string[] {
+  const refs = getPriceRefs(signal);
+  if (refs.length === 0) {
+    return [];
+  }
+  const lines = ["Execution references"];
+  for (const ref of refs) {
+    const symbol = String(ref.symbol ?? "-");
+    const entryOpen = Number(ref.entryDayOpen ?? NaN);
+    const latestClose = Number(ref.latestClose ?? NaN);
+    if (Number.isFinite(entryOpen)) {
+      lines.push(`- original weekly entry: ${symbol} ${entryOpen.toFixed(2)} (${String(ref.entryDay || "-")} open)`);
+    }
+    if (Number.isFinite(latestClose)) {
+      lines.push(`- if entering now: ${symbol} ${latestClose.toFixed(2)} (${String(ref.latestMarketDay || "-")} close ref)`);
+    }
+  }
+  return lines;
+}
+
 function isWeeklySignalDay(signal: SignalSnapshot): boolean {
   return String(signal.latestMarketDay || "") === String(signal.signalDay || "");
 }
@@ -140,6 +175,7 @@ function renderMenuText(snapshot: AppSnapshot): string {
     "/v2 - latest Strategy V2 summary",
     "/v14 - latest Strategy V14 summary",
     "/rebalance - current rebalance signal",
+    "/refresh - collect latest data and recompute now",
     "/snapshot - full snapshot",
     "/subscribe - daily status + weekly rebalance alerts on",
     "/unsubscribe - alerts off",
@@ -168,6 +204,7 @@ function renderStrategyText(snapshot: AppSnapshot, strategyKey: StrategyKey): st
 function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): string {
   const signal = snapshot.rebalance[strategyKey];
   const positions = signal.positions.length > 0 ? signal.positions.map(formatWeightRow).join("\n") : "- no positions";
+  const priceRefs = renderPriceReferenceBlock(signal);
   return [
     `${String(strategyKey).toUpperCase()} rebalance`,
     "",
@@ -185,6 +222,7 @@ function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): str
     `21d return: ${formatPct(Number(signal.qqqReturn21d) * 100)}`,
     `63d return: ${formatPct(Number(signal.qqqReturn63d) * 100)}`,
     `VIX: ${Number(signal.vixClose).toFixed(2)}`,
+    ...(priceRefs.length > 0 ? ["", ...priceRefs] : []),
   ].join("\n");
 }
 
@@ -357,6 +395,13 @@ function resolveTextForCommand(snapshot: AppSnapshot, command: string): string {
       return renderRebalanceText(snapshot);
     case "/snapshot":
       return renderSnapshotText(snapshot);
+    case "/refresh":
+      return [
+        "Refresh started.",
+        "",
+        "The bot is collecting current market data and recomputing the rebalance from scratch.",
+        "Check /rebalance again in about a minute.",
+      ].join("\n");
     case "/subscribe":
       return [
         "Alerts are now ON.",
@@ -388,6 +433,13 @@ function resolveTextForCallback(snapshot: AppSnapshot, data: string | undefined)
       return renderStrategyText(snapshot, "v2");
     case "strategy:v14":
       return renderStrategyText(snapshot, "v14");
+    case "refresh":
+      return [
+        renderMenuText(snapshot),
+        "",
+        "Refresh started.",
+        "Check /rebalance again in about a minute.",
+      ].join("\n");
     case "subscribe":
       return [
         renderMenuText(snapshot),
@@ -421,6 +473,25 @@ function verifyWebhook(request: Request, env: Env): boolean {
 function verifyNotifyRequest(request: Request, env: Env): boolean {
   const auth = request.headers.get("Authorization") || "";
   return auth === `Bearer ${env.BOT_NOTIFY_TOKEN}`;
+}
+
+async function triggerRefreshWorkflow(env: Env): Promise<boolean> {
+  const response = await fetch("https://api.github.com/repos/needitem/autostock/actions/workflows/update-cloudflare-telegram-bot.yml/dispatches", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.GITHUB_ACTIONS_TOKEN}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "autostock-telegram-bot",
+    },
+    body: JSON.stringify({
+      ref: "master",
+      inputs: {
+        notify_broadcast: "false",
+      },
+    }),
+  });
+  return response.ok;
 }
 
 function shouldDropSubscriber(result: TelegramResponse): boolean {
@@ -474,6 +545,14 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
 
   if (update.message?.chat?.id && typeof update.message.text === "string") {
     const command = parseCommand(update.message.text);
+    if (command === "/refresh") {
+      const started = await triggerRefreshWorkflow(env);
+      const text = started
+        ? resolveTextForCommand(snapshot, command)
+        : "Refresh request failed. Try again in a moment.";
+      await sendMessage(env, update.message.chat.id, text);
+      return jsonResponse({ ok: started });
+    }
     if (isSubscriptionCommand(command)) {
       await ensureSubscribed(env, update.message.chat.id);
     } else if (isUnsubscribeCommand(command)) {
@@ -486,6 +565,15 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
 
   if (update.callback_query?.message?.chat?.id && update.callback_query.message.message_id) {
     const chatId = update.callback_query.message.chat.id;
+    if (update.callback_query.data === "refresh") {
+      const started = await triggerRefreshWorkflow(env);
+      const text = started
+        ? resolveTextForCallback(snapshot, update.callback_query.data)
+        : [renderMenuText(snapshot), "", "Refresh request failed. Try again in a moment."].join("\n");
+      await editMessage(env, chatId, update.callback_query.message.message_id, text);
+      await answerCallback(env, update.callback_query.id, started ? "Refresh started" : "Refresh failed");
+      return jsonResponse({ ok: started });
+    }
     if (update.callback_query.data === "subscribe") {
       await ensureSubscribed(env, chatId);
     } else if (update.callback_query.data === "unsubscribe") {
@@ -511,7 +599,7 @@ export default {
         ok: true,
         service: "autostock-telegram-bot",
         generatedAt: snapshot.generatedAt,
-        commands: ["/menu", "/v2", "/v14", "/rebalance", "/snapshot", "/subscribe", "/unsubscribe"],
+        commands: ["/menu", "/v2", "/v14", "/rebalance", "/refresh", "/snapshot", "/subscribe", "/unsubscribe"],
         subscribers: subscribers.length,
         automatedAlertKind: buildAutomatedAlert(snapshot).kind,
       });

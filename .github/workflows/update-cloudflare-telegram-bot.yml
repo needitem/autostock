@@ -2,6 +2,12 @@ name: Update Cloudflare Telegram Bot
 
 on:
   workflow_dispatch:
+    inputs:
+      notify_broadcast:
+        description: "Send subscriber broadcast after refresh"
+        required: false
+        default: "false"
+        type: string
   schedule:
     - cron: "15 22 * * *"
 
@@ -58,6 +64,7 @@ jobs:
           PY
 
       - name: Send Telegram daily status or weekly rebalance alert
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.notify_broadcast == 'true' }}
         run: |
           curl --fail --silent --show-error \
             -X POST \

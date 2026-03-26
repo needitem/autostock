@@ -162,6 +162,33 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
     )
 
     source = by_symbol.get(selector._normalize_symbol(os.getenv("AI_REGIME_SOURCE", selector.BENCH)) or selector.BENCH, {})
+    position_price_refs: list[dict[str, Any]] = []
+    entry_ts = pd.Timestamp(entry_day) if entry_day else None
+    for position in out.get("positions", []):
+        symbol = str((position or {}).get("symbol", "") or "").strip().upper()
+        if not symbol:
+            continue
+        frame = frames.get(symbol)
+        latest_close = None
+        entry_open = None
+        if frame is not None and not frame.empty:
+            latest_ref_day = selector._last_day(frame, latest_market_day)
+            if latest_ref_day is not None:
+                latest_close = float(frame.loc[latest_ref_day]["Close"])
+            if entry_ts is not None:
+                entry_ref_day = selector._last_day(frame, entry_ts)
+                if entry_ref_day is not None:
+                    entry_open = float(frame.loc[entry_ref_day]["Open"])
+        position_price_refs.append(
+            {
+                "symbol": symbol,
+                "weightPct": round(float((position or {}).get("weight_pct", 0.0) or 0.0), 4),
+                "entryDay": str(entry_day) if entry_day else "",
+                "entryDayOpen": round(entry_open, 2) if entry_open is not None else None,
+                "latestMarketDay": str(latest_market_day.date()),
+                "latestClose": round(latest_close, 2) if latest_close is not None else None,
+            }
+        )
     return {
         "latestMarketDay": str(latest_market_day.date()),
         "signalDay": str(signal_day.date()),
@@ -169,6 +196,7 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
         "regimeState": str(out.get("_regime_state", "")),
         "regimeReason": str(out.get("_regime_reason", "")),
         "positions": out.get("positions", []),
+        "positionPriceRefs": position_price_refs,
         "qqqClose": round(float(source.get("close", 0.0) or 0.0), 2),
         "qqqMa200Gap": round(float(source.get("ma200_gap", 0.0) or 0.0), 4),
         "qqqReturn21d": round(float(source.get("return_21d", 0.0) or 0.0), 4),
