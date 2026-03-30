@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-26 23:44:51.909422+00:00",
+  "generatedAt": "2026-03-30 00:17:02.216077+00:00",
   "strategies": {
     "v2": {
       "label": "Strategy V2",
@@ -20,9 +20,9 @@
   },
   "rebalance": {
     "v2": {
-      "latestMarketDay": "2026-03-26",
-      "signalDay": "2026-03-20",
-      "entryDay": "2026-03-23",
+      "latestMarketDay": "2026-03-27",
+      "signalDay": "2026-03-27",
+      "entryDay": "2026-03-30",
       "regimeState": "risk_off",
       "regimeReason": "risk_off",
       "positions": [
@@ -35,13 +35,13 @@
         {
           "symbol": "GLD",
           "weightPct": 100.0,
-          "entryDay": "2026-03-23",
-          "entryDayOpen": 405.12,
-          "latestMarketDay": "2026-03-26",
-          "latestClose": 400.64
+          "entryDay": "2026-03-30",
+          "entryDayOpen": 406.2,
+          "latestMarketDay": "2026-03-27",
+          "latestClose": 414.7
         }
       ],
-      "liveSignalDay": "2026-03-26",
+      "liveSignalDay": "2026-03-27",
       "liveRegimeState": "risk_off",
       "liveRegimeReason": "risk_off",
       "livePositions": [
@@ -54,25 +54,25 @@
         {
           "symbol": "GLD",
           "weightPct": 100.0,
-          "latestMarketDay": "2026-03-26",
-          "latestClose": 400.64
+          "latestMarketDay": "2026-03-27",
+          "latestClose": 414.7
         }
       ],
-      "signalQqqClose": 582.06,
-      "signalQqqMa200Gap": -1.8165,
-      "signalQqqReturn21d": -3.5478,
-      "signalQqqReturn63d": -3.0562,
-      "signalVixClose": 26.78,
-      "latestQqqClose": 573.79,
-      "latestQqqMa200Gap": -3.3903,
-      "latestQqqReturn21d": -6.955,
-      "latestQqqReturn63d": -7.7671,
-      "latestVixClose": 27.44
+      "signalQqqClose": 562.58,
+      "signalQqqMa200Gap": -5.3003,
+      "signalQqqReturn21d": -7.6587,
+      "signalQqqReturn63d": -9.8328,
+      "signalVixClose": 31.05,
+      "latestQqqClose": 562.58,
+      "latestQqqMa200Gap": -5.3003,
+      "latestQqqReturn21d": -7.6587,
+      "latestQqqReturn63d": -9.8328,
+      "latestVixClose": 31.05
     },
     "v14": {
-      "latestMarketDay": "2026-03-26",
-      "signalDay": "2026-03-20",
-      "entryDay": "2026-03-23",
+      "latestMarketDay": "2026-03-27",
+      "signalDay": "2026-03-27",
+      "entryDay": "2026-03-30",
       "regimeState": "risk_off",
       "regimeReason": "risk_off:fallback",
       "positions": [
@@ -85,13 +85,13 @@
         {
           "symbol": "GLD",
           "weightPct": 100.0,
-          "entryDay": "2026-03-23",
-          "entryDayOpen": 405.12,
-          "latestMarketDay": "2026-03-26",
-          "latestClose": 400.64
+          "entryDay": "2026-03-30",
+          "entryDayOpen": 406.2,
+          "latestMarketDay": "2026-03-27",
+          "latestClose": 414.7
         }
       ],
-      "liveSignalDay": "2026-03-26",
+      "liveSignalDay": "2026-03-27",
       "liveRegimeState": "risk_off",
       "liveRegimeReason": "risk_off:fallback",
       "livePositions": [
@@ -104,20 +104,20 @@
         {
           "symbol": "GLD",
           "weightPct": 100.0,
-          "latestMarketDay": "2026-03-26",
-          "latestClose": 400.64
+          "latestMarketDay": "2026-03-27",
+          "latestClose": 414.7
         }
       ],
-      "signalQqqClose": 582.06,
-      "signalQqqMa200Gap": -1.8165,
-      "signalQqqReturn21d": -3.5478,
-      "signalQqqReturn63d": -3.0562,
-      "signalVixClose": 26.78,
-      "latestQqqClose": 573.79,
-      "latestQqqMa200Gap": -3.3903,
-      "latestQqqReturn21d": -6.955,
-      "latestQqqReturn63d": -7.7671,
-      "latestVixClose": 27.44
+      "signalQqqClose": 562.58,
+      "signalQqqMa200Gap": -5.3003,
+      "signalQqqReturn21d": -7.6587,
+      "signalQqqReturn63d": -9.8328,
+      "signalVixClose": 31.05,
+      "latestQqqClose": 562.58,
+      "latestQqqMa200Gap": -5.3003,
+      "latestQqqReturn21d": -7.6587,
+      "latestQqqReturn63d": -9.8328,
+      "latestVixClose": 31.05
     }
   }
 }

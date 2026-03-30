@@ -57,6 +57,16 @@ def _parse_bool(raw: str) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_entry_day(selector: Any, index: pd.Index, signal_day: pd.Timestamp, execution_timing: str) -> date | None:
+    entry_pos = selector._execution_pos(index, signal_day, execution_timing)
+    if 0 <= entry_pos < len(index):
+        return pd.Timestamp(index[entry_pos]).date()
+    mode = str(execution_timing or "same_close").strip().lower()
+    if mode == "next_open" and entry_pos >= len(index):
+        return (pd.Timestamp(signal_day) + pd.offsets.BDay(1)).date()
+    return None
+
+
 def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]:
     sys.path.insert(0, str(ROOT / "scripts"))
     runner = _load_module(ROOT / "scripts" / runner_name, f"runner_{strategy_key}_cf")
@@ -91,8 +101,8 @@ def _build_current_signal(strategy_key: str, runner_name: str) -> dict[str, Any]
     frames = selector._build_frames(download_symbols)
     latest_market_day = pd.Timestamp(frames[selector.BENCH].index.max()).normalize()
     signal_day = max(d for d in selector._snapshot_dates() if d <= latest_market_day)
-    entry_pos = selector._execution_pos(frames[selector.BENCH].index, signal_day, "next_open")
-    entry_day = pd.Timestamp(frames[selector.BENCH].index[entry_pos]).date() if entry_pos >= 0 else None
+    execution_timing = str(os.getenv("AI_EXECUTION_TIMING", "same_close")).strip().lower() or "same_close"
+    entry_day = _resolve_entry_day(selector, frames[selector.BENCH].index, signal_day, execution_timing)
 
     by_symbol: dict[str, dict[str, Any]] = {}
     by_symbol_latest: dict[str, dict[str, Any]] = {}
