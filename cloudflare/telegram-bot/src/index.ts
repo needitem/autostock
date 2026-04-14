@@ -71,6 +71,26 @@ const MENU_KEYBOARD: InlineKeyboard = {
 
 const SUBSCRIBERS_KEY = "telegram_subscribers";
 const SNAPSHOT_KEY = "telegram_live_snapshot_v1";
+const BUDGET_STATE_PREFIX = "telegram_budget_state:";
+const DEFAULT_USDKRW_RATE = 1370;
+
+const BUDGET_MODE_KEYBOARD: InlineKeyboard = {
+  inline_keyboard: [
+    [
+      { text: "KRW Input", callback_data: "budget_mode:krw" },
+      { text: "USD Input", callback_data: "budget_mode:usd" },
+    ],
+    [
+      { text: "KRW 1M", callback_data: "budget_preset:krw:1000000" },
+      { text: "KRW 5M", callback_data: "budget_preset:krw:5000000" },
+    ],
+    [
+      { text: "USD 5k", callback_data: "budget_preset:usd:5000" },
+      { text: "USD 10k", callback_data: "budget_preset:usd:10000" },
+    ],
+    [{ text: "Open Menu", callback_data: "menu" }],
+  ],
+};
 
 function jsonResponse(payload: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload, null, 2), {
@@ -207,6 +227,38 @@ async function saveSnapshot(env: Env, snapshot: AppSnapshot): Promise<void> {
   await env.SUBSCRIBERS.put(SNAPSHOT_KEY, JSON.stringify(snapshot));
 }
 
+type BudgetState = {
+  currency: "USD" | "KRW";
+};
+
+function budgetStateKey(chatId: number): string {
+  return `${BUDGET_STATE_PREFIX}${chatId}`;
+}
+
+async function loadBudgetState(env: Env, chatId: number): Promise<BudgetState | null> {
+  const raw = await env.SUBSCRIBERS.get(budgetStateKey(chatId));
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as BudgetState;
+    if (parsed && (parsed.currency === "USD" || parsed.currency === "KRW")) {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function saveBudgetState(env: Env, chatId: number, state: BudgetState): Promise<void> {
+  await env.SUBSCRIBERS.put(budgetStateKey(chatId), JSON.stringify(state));
+}
+
+async function clearBudgetState(env: Env, chatId: number): Promise<void> {
+  await env.SUBSCRIBERS.delete(budgetStateKey(chatId));
+}
+
 function renderMenuText(snapshot: AppSnapshot): string {
   return [
     "Autostock Telegram Bot",
@@ -223,6 +275,44 @@ function renderMenuText(snapshot: AppSnapshot): string {
     "/unsubscribe - alerts off",
     "",
     `Snapshot generated at: ${snapshot.generatedAt}`,
+  ].join("\n");
+}
+
+function renderBudgetModeText(snapshot: AppSnapshot): string {
+  const signal = snapshot.rebalance.v4;
+  const liveCash = Number((signal as SignalSnapshot & { liveCashPct?: number }).liveCashPct ?? NaN);
+  return [
+    "Buy quantity calculator",
+    "",
+    "Choose a currency mode with the buttons below.",
+    "You can also tap a quick amount button.",
+    "",
+    `Current target invested: ${(100 - (Number.isFinite(liveCash) ? liveCash : 0)).toFixed(2)}%`,
+    `Current target cash: ${Number.isFinite(liveCash) ? liveCash.toFixed(2) : "-"}%`,
+    `Default KRW FX: ${DEFAULT_USDKRW_RATE}`,
+  ].join("\n");
+}
+
+function renderBudgetInputPrompt(currency: "USD" | "KRW"): string {
+  if (currency === "KRW") {
+    return [
+      "KRW input mode",
+      "",
+      "Now send the total portfolio amount in KRW.",
+      "Examples:",
+      "- 10000000",
+      "- 1000만원",
+      "",
+      `FX uses default ${DEFAULT_USDKRW_RATE} KRW per USD unless you use the /budget command with a custom FX.`,
+    ].join("\n");
+  }
+  return [
+    "USD input mode",
+    "",
+    "Now send the total portfolio amount in USD.",
+    "Examples:",
+    "- 10000",
+    "- 25000",
   ].join("\n");
 }
 
@@ -360,6 +450,41 @@ type BudgetRequest = {
   fxRate?: number;
 };
 
+function parseKrwAmount(text: string): number | null {
+  const compact = text.replace(/,/g, "").replace(/\s+/g, "").toLowerCase();
+  const eokMatch = compact.match(/([0-9]+(?:\.[0-9]+)?)억/);
+  const manMatch = compact.match(/([0-9]+(?:\.[0-9]+)?)만/);
+  if (eokMatch || manMatch) {
+    const eok = eokMatch ? Number(eokMatch[1]) : 0;
+    const man = manMatch ? Number(manMatch[1]) : 0;
+    const total = eok * 100_000_000 + man * 10_000;
+    return Number.isFinite(total) && total > 0 ? total : null;
+  }
+  const numeric = compact.match(/([0-9]+(?:\.[0-9]+)?)/);
+  if (!numeric) {
+    return null;
+  }
+  const value = Number(numeric[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function parseUsdAmount(text: string): number | null {
+  const compact = text.replace(/,/g, "").replace(/\s+/g, "").toLowerCase();
+  const suffixMatch = compact.match(/([0-9]+(?:\.[0-9]+)?)(k|m)\b/);
+  if (suffixMatch) {
+    const base = Number(suffixMatch[1]);
+    const mult = suffixMatch[2] === "m" ? 1_000_000 : 1_000;
+    const total = base * mult;
+    return Number.isFinite(total) && total > 0 ? total : null;
+  }
+  const numeric = compact.match(/([0-9]+(?:\.[0-9]+)?)/);
+  if (!numeric) {
+    return null;
+  }
+  const value = Number(numeric[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 function parseBudgetRequest(text: string): BudgetRequest | null {
   const cleaned = text.replace(/,/g, " ").trim();
   const parts = cleaned.split(/\s+/).filter(Boolean);
@@ -408,6 +533,30 @@ function parseBudgetRequest(text: string): BudgetRequest | null {
   }
 
   return null;
+}
+
+function parseBudgetRequestForState(text: string, state: BudgetState): BudgetRequest | null {
+  if (state.currency === "KRW") {
+    const rawAmount = parseKrwAmount(text);
+    if (rawAmount === null) {
+      return null;
+    }
+    return {
+      currency: "KRW",
+      rawAmount,
+      totalUsd: rawAmount / DEFAULT_USDKRW_RATE,
+      fxRate: DEFAULT_USDKRW_RATE,
+    };
+  }
+  const rawAmount = parseUsdAmount(text);
+  if (rawAmount === null) {
+    return null;
+  }
+  return {
+    currency: "USD",
+    rawAmount,
+    totalUsd: rawAmount,
+  };
 }
 
 function renderBudgetHelpText(snapshot: AppSnapshot): string {
@@ -509,12 +658,32 @@ async function sendMessage(env: Env, chatId: number, text: string): Promise<Tele
   });
 }
 
-async function editMessage(env: Env, chatId: number, messageId: number, text: string): Promise<TelegramResponse> {
+async function sendMessageWithKeyboard(
+  env: Env,
+  chatId: number,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<TelegramResponse> {
+  return telegramApi(env, "sendMessage", {
+    chat_id: chatId,
+    text,
+    reply_markup: keyboard,
+    disable_web_page_preview: true,
+  });
+}
+
+async function editMessage(
+  env: Env,
+  chatId: number,
+  messageId: number,
+  text: string,
+  keyboard: InlineKeyboard = MENU_KEYBOARD,
+): Promise<TelegramResponse> {
   return telegramApi(env, "editMessageText", {
     chat_id: chatId,
     message_id: messageId,
     text,
-    reply_markup: MENU_KEYBOARD,
+    reply_markup: keyboard,
     disable_web_page_preview: true,
   });
 }
@@ -623,8 +792,6 @@ function resolveTextForCallback(snapshot: AppSnapshot, data: string | undefined)
       return renderMenuText(snapshot);
     case "rebalance":
       return renderRebalanceText(snapshot);
-    case "budget_help":
-      return renderBudgetHelpText(snapshot);
     case "strategy:v4":
     case "strategy:v2":
     case "strategy:v14":
@@ -740,6 +907,24 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
   const snapshot = await loadSnapshot(env);
 
   if (update.message?.chat?.id && typeof update.message.text === "string") {
+    const pendingBudget = await loadBudgetState(env, update.message.chat.id);
+    if (pendingBudget) {
+      const budgetFromState = parseBudgetRequestForState(update.message.text, pendingBudget);
+      if (budgetFromState) {
+        await clearBudgetState(env, update.message.chat.id);
+        const text = renderBudgetPlan(snapshot, budgetFromState);
+        await sendMessage(env, update.message.chat.id, text);
+        return jsonResponse({ ok: true, mode: "budget_state" });
+      }
+      await sendMessageWithKeyboard(
+        env,
+        update.message.chat.id,
+        `Could not parse a ${pendingBudget.currency} amount. Please send the amount again.`,
+        BUDGET_MODE_KEYBOARD,
+      );
+      return jsonResponse({ ok: false, mode: "budget_state_parse_failed" }, { status: 400 });
+    }
+
     const budget = parseBudgetRequest(update.message.text);
     if (budget) {
       const text = renderBudgetPlan(snapshot, budget);
@@ -768,6 +953,45 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
 
   if (update.callback_query?.message?.chat?.id && update.callback_query.message.message_id) {
     const chatId = update.callback_query.message.chat.id;
+    const data = update.callback_query.data;
+    if (data === "budget_help") {
+      await clearBudgetState(env, chatId);
+      await editMessage(
+        env,
+        chatId,
+        update.callback_query.message.message_id,
+        renderBudgetModeText(snapshot),
+        BUDGET_MODE_KEYBOARD,
+      );
+      await answerCallback(env, update.callback_query.id, "Choose KRW or USD");
+      return jsonResponse({ ok: true, mode: "budget_menu" });
+    }
+    if (data === "budget_mode:krw" || data === "budget_mode:usd") {
+      const currency = data.endsWith(":krw") ? "KRW" : "USD";
+      await saveBudgetState(env, chatId, { currency });
+      await editMessage(
+        env,
+        chatId,
+        update.callback_query.message.message_id,
+        renderBudgetInputPrompt(currency),
+        BUDGET_MODE_KEYBOARD,
+      );
+      await answerCallback(env, update.callback_query.id, `${currency} input enabled`);
+      return jsonResponse({ ok: true, mode: "budget_mode", currency });
+    }
+    if (data?.startsWith("budget_preset:")) {
+      const [, currencyRaw, amountRaw] = data.split(":");
+      const amount = Number(amountRaw);
+      const currency = currencyRaw?.toLowerCase() === "krw" ? "KRW" : "USD";
+      const budget = currency === "KRW"
+        ? { currency, rawAmount: amount, totalUsd: amount / DEFAULT_USDKRW_RATE, fxRate: DEFAULT_USDKRW_RATE }
+        : { currency, rawAmount: amount, totalUsd: amount };
+      await clearBudgetState(env, chatId);
+      const text = renderBudgetPlan(snapshot, budget);
+      await editMessage(env, chatId, update.callback_query.message.message_id, text);
+      await answerCallback(env, update.callback_query.id, "Calculated");
+      return jsonResponse({ ok: true, mode: "budget_preset", currency });
+    }
     if (update.callback_query.data === "refresh") {
       const started = await triggerRefreshWorkflow(env);
       const text = started
@@ -781,6 +1005,8 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
       await ensureSubscribed(env, chatId);
     } else if (update.callback_query.data === "unsubscribe") {
       await ensureUnsubscribed(env, chatId);
+    } else if (update.callback_query.data === "menu") {
+      await clearBudgetState(env, chatId);
     }
     const text = resolveTextForCallback(snapshot, update.callback_query.data);
     await editMessage(env, chatId, update.callback_query.message.message_id, text);
