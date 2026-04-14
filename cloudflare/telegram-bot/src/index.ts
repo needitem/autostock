@@ -57,17 +57,14 @@ type TelegramUpdate = {
 
 const MENU_KEYBOARD: InlineKeyboard = {
   inline_keyboard: [
+    [{ text: "V4 Summary", callback_data: "strategy:v4" }],
+    [{ text: "Current Rebalance", callback_data: "rebalance" }],
+    [{ text: "Recompute Now", callback_data: "refresh" }],
     [
-      { text: "V2 Summary", callback_data: "strategy:v2" },
-      { text: "V14 Summary", callback_data: "strategy:v14" },
+      { text: "Start Alerts", callback_data: "subscribe" },
+      { text: "Stop Alerts", callback_data: "unsubscribe" },
     ],
-    [{ text: "Current Signal", callback_data: "rebalance" }],
-    [{ text: "Refresh Now", callback_data: "refresh" }],
-    [
-      { text: "Alerts On", callback_data: "subscribe" },
-      { text: "Alerts Off", callback_data: "unsubscribe" },
-    ],
-    [{ text: "Menu", callback_data: "menu" }],
+    [{ text: "Open Menu", callback_data: "menu" }],
   ],
 };
 
@@ -91,6 +88,16 @@ function formatPct(value: number, digits = 2): string {
 function formatDeltaPct(value: number, digits = 2): string {
   const sign = value >= 0 ? "+" : "";
   return `${sign}${value.toFixed(digits)}%p`;
+}
+
+function formatMaybePct(value: unknown, digits = 2): string {
+  const num = Number(value);
+  return Number.isFinite(num) ? formatPct(num, digits) : "-";
+}
+
+function formatMaybePrice(value: unknown, digits = 2): string {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toFixed(digits) : "-";
 }
 
 function formatWeightRow(position: { symbol?: string; weight_pct?: number }): string {
@@ -193,10 +200,9 @@ function renderMenuText(snapshot: AppSnapshot): string {
     "",
     "Commands",
     "/menu - main menu",
-    "/v2 - latest Strategy V2 summary",
-    "/v14 - latest Strategy V14 summary",
-    "/rebalance - weekly signal + latest recheck",
-    "/refresh - collect latest data and recompute now",
+    "/v4 - latest Strategy V4 summary",
+    "/rebalance - current actionable rebalance",
+    "/refresh - recompute latest exported state now",
     "/snapshot - full snapshot",
     "/subscribe - daily status + weekly rebalance alerts on",
     "/unsubscribe - alerts off",
@@ -231,9 +237,9 @@ function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): str
   const weeklyPriceRefs = renderWeeklyPriceReferenceBlock(signal);
   const livePriceRefs = renderLivePriceReferenceBlock(signal);
   return [
-    `${String(strategyKey).toUpperCase()} rebalance`,
+    `${String(strategyKey).toUpperCase()} current rebalance`,
     "",
-    "Confirmed weekly signal",
+    "Latest actionable rebalance",
     `- latest market day: ${signal.latestMarketDay}`,
     `- signal day: ${signal.signalDay}`,
     `- entry day: ${signal.entryDay}`,
@@ -244,14 +250,14 @@ function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): str
     positions,
     "",
     "Signal-day market context",
-    `- QQQ close: ${Number(signal.signalQqqClose).toFixed(2)}`,
-    `- MA200 gap: ${formatPct(Number(signal.signalQqqMa200Gap) * 100)}`,
-    `- 21d return: ${formatPct(Number(signal.signalQqqReturn21d) * 100)}`,
-    `- 63d return: ${formatPct(Number(signal.signalQqqReturn63d) * 100)}`,
-    `- VIX: ${Number(signal.signalVixClose).toFixed(2)}`,
+    `- QQQ close: ${formatMaybePrice(signal.signalQqqClose)}`,
+    `- MA200 gap: ${formatMaybePct(signal.signalQqqMa200Gap)}`,
+    `- 21d return: ${formatMaybePct(signal.signalQqqReturn21d)}`,
+    `- 63d return: ${formatMaybePct(signal.signalQqqReturn63d)}`,
+    `- VIX: ${formatMaybePrice(signal.signalVixClose)}`,
     ...(weeklyPriceRefs.length > 0 ? ["", ...weeklyPriceRefs] : []),
     "",
-    "Recomputed now from latest market day",
+    "Latest portfolio state",
     `- as of: ${signal.liveSignalDay || signal.latestMarketDay}`,
     `- state: ${signal.liveRegimeState || "-"}`,
     `- reason: ${signal.liveRegimeReason || "-"}`,
@@ -260,45 +266,37 @@ function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): str
     livePositions,
     "",
     "Latest market context",
-    `- QQQ close: ${Number(signal.latestQqqClose).toFixed(2)}`,
-    `- MA200 gap: ${formatPct(Number(signal.latestQqqMa200Gap) * 100)}`,
-    `- 21d return: ${formatPct(Number(signal.latestQqqReturn21d) * 100)}`,
-    `- 63d return: ${formatPct(Number(signal.latestQqqReturn63d) * 100)}`,
-    `- VIX: ${Number(signal.latestVixClose).toFixed(2)}`,
+    `- QQQ close: ${formatMaybePrice(signal.latestQqqClose)}`,
+    `- MA200 gap: ${formatMaybePct(signal.latestQqqMa200Gap)}`,
+    `- 21d return: ${formatMaybePct(signal.latestQqqReturn21d)}`,
+    `- 63d return: ${formatMaybePct(signal.latestQqqReturn63d)}`,
+    `- VIX: ${formatMaybePrice(signal.latestVixClose)}`,
     ...(livePriceRefs.length > 0 ? ["", ...livePriceRefs] : []),
   ].join("\n");
 }
 
 function renderRebalanceText(snapshot: AppSnapshot): string {
-  return [
-    renderSignalText(snapshot, "v2"),
-    "",
-    "--------------------",
-    "",
-    renderSignalText(snapshot, "v14"),
-  ].join("\n");
+  return renderSignalText(snapshot, "v4");
 }
 
 function renderDailyStatusText(snapshot: AppSnapshot): string {
-  const v2 = snapshot.rebalance.v2;
-  const v14 = snapshot.rebalance.v14;
+  const v4 = snapshot.rebalance.v4;
   return [
     "Daily market status",
     "",
     "No new weekly rebalance signal today.",
     "Keep the current weekly posture unless your own execution rules say otherwise.",
     "",
-    `Latest market day: ${v2.latestMarketDay}`,
-    `QQQ close: ${Number(v2.latestQqqClose).toFixed(2)}`,
-    `QQQ MA200 gap: ${formatPct(Number(v2.latestQqqMa200Gap) * 100)}`,
-    `QQQ 21d return: ${formatPct(Number(v2.latestQqqReturn21d) * 100)}`,
-    `QQQ 63d return: ${formatPct(Number(v2.latestQqqReturn63d) * 100)}`,
-    `VIX: ${Number(v2.latestVixClose).toFixed(2)}`,
+    `Latest market day: ${v4.latestMarketDay}`,
+    `QQQ close: ${formatMaybePrice(v4.latestQqqClose)}`,
+    `QQQ MA200 gap: ${formatMaybePct(v4.latestQqqMa200Gap)}`,
+    `QQQ 21d return: ${formatMaybePct(v4.latestQqqReturn21d)}`,
+    `QQQ 63d return: ${formatMaybePct(v4.latestQqqReturn63d)}`,
+    `VIX: ${formatMaybePrice(v4.latestVixClose)}`,
     "",
-    `V2 posture now: ${String(v2.liveRegimeState || v2.regimeState)} -> ${formatCompactPositions({ ...v2, positions: v2.livePositions || v2.positions })}`,
-    `V14 posture now: ${String(v14.liveRegimeState || v14.regimeState)} -> ${formatCompactPositions({ ...v14, positions: v14.livePositions || v14.positions })}`,
+    `V4 posture now: ${String(v4.liveRegimeState || v4.regimeState)} -> ${formatCompactPositions({ ...v4, positions: v4.livePositions || v4.positions })}`,
     "",
-    `Last weekly signal day: ${v2.signalDay}`,
+    `Last weekly signal day: ${v4.signalDay}`,
     `Snapshot generated at: ${snapshot.generatedAt}`,
   ].join("\n");
 }
@@ -328,11 +326,7 @@ function buildAutomatedAlert(snapshot: AppSnapshot): { kind: "daily_status" | "w
 
 function renderSnapshotText(snapshot: AppSnapshot): string {
   return [
-    renderStrategyText(snapshot, "v2"),
-    "",
-    "====================",
-    "",
-    renderStrategyText(snapshot, "v14"),
+    renderStrategyText(snapshot, "v4"),
     "",
     "====================",
     "",
@@ -430,10 +424,10 @@ function resolveTextForCommand(snapshot: AppSnapshot, command: string): string {
     case "/menu":
     case "/help":
       return renderMenuText(snapshot);
+    case "/v4":
     case "/v2":
-      return renderStrategyText(snapshot, "v2");
     case "/v14":
-      return renderStrategyText(snapshot, "v14");
+      return renderStrategyText(snapshot, "v4");
     case "/rebalance":
       return renderRebalanceText(snapshot);
     case "/snapshot":
@@ -472,10 +466,10 @@ function resolveTextForCallback(snapshot: AppSnapshot, data: string | undefined)
       return renderMenuText(snapshot);
     case "rebalance":
       return renderRebalanceText(snapshot);
+    case "strategy:v4":
     case "strategy:v2":
-      return renderStrategyText(snapshot, "v2");
     case "strategy:v14":
-      return renderStrategyText(snapshot, "v14");
+      return renderStrategyText(snapshot, "v4");
     case "refresh":
       return [
         renderMenuText(snapshot),
@@ -642,7 +636,7 @@ export default {
         ok: true,
         service: "autostock-telegram-bot",
         generatedAt: snapshot.generatedAt,
-        commands: ["/menu", "/v2", "/v14", "/rebalance", "/refresh", "/snapshot", "/subscribe", "/unsubscribe"],
+        commands: ["/menu", "/v4", "/rebalance", "/refresh", "/snapshot", "/subscribe", "/unsubscribe"],
         subscribers: subscribers.length,
         automatedAlertKind: buildAutomatedAlert(snapshot).kind,
       });

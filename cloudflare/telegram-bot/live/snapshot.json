@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-14 02:26:36.052101+00:00",
+  "generatedAt": "2026-04-14 02:35:05.899813+00:00",
   "strategies": {
     "v4": {
       "label": "Strategy V4",
@@ -12,54 +12,186 @@
   },
   "rebalance": {
     "v4": {
-      "latestMarketDay": "2026-04-13",
-      "signalDay": "2026-04-10",
-      "entryDay": "2026-04-13",
-      "regimeState": "risk_on_alt",
-      "regimeReason": "risk_on_alt",
+      "latestMarketDay": "2026-04-14",
+      "signalDay": "2026-04-14",
+      "entryDay": "2026-04-14",
+      "regimeState": "neutral",
+      "regimeReason": "Neutral: balanced exposure; keep core trend bias. Flows confidence=medium; scale exposure x0.90.",
       "positions": [
         {
-          "symbol": "QLD",
-          "weight_pct": 100.0
+          "symbol": "FANG",
+          "weight_pct": 8.2797
+        },
+        {
+          "symbol": "ETR",
+          "weight_pct": 8.1346
+        },
+        {
+          "symbol": "DOW",
+          "weight_pct": 6.3128
+        },
+        {
+          "symbol": "LYB",
+          "weight_pct": 5.4471
+        },
+        {
+          "symbol": "DELL",
+          "weight_pct": 5.3848
+        },
+        {
+          "symbol": "ARM",
+          "weight_pct": 4.54
+        },
+        {
+          "symbol": "APA",
+          "weight_pct": 3.15
         }
       ],
       "positionPriceRefs": [
         {
-          "symbol": "QLD",
-          "weightPct": 100.0,
-          "entryDay": "2026-04-13",
-          "entryDayOpen": 67.89,
-          "latestMarketDay": "2026-04-13",
-          "latestClose": 69.59
+          "symbol": "FANG",
+          "weightPct": 8.2797,
+          "entryDay": "2026-04-14",
+          "entryDayOpen": 188.41,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 189.1
+        },
+        {
+          "symbol": "ETR",
+          "weightPct": 8.1346,
+          "entryDay": "2026-04-14",
+          "entryDayOpen": 113.43,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 115.33
+        },
+        {
+          "symbol": "DOW",
+          "weightPct": 6.3128,
+          "entryDay": "2026-04-14",
+          "entryDayOpen": 39.92,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 40.11
+        },
+        {
+          "symbol": "LYB",
+          "weightPct": 5.4471,
+          "entryDay": "2026-04-14",
+          "entryDayOpen": 75.1,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 75.51
+        },
+        {
+          "symbol": "DELL",
+          "weightPct": 5.3848,
+          "entryDay": "2026-04-14",
+          "entryDayOpen": 157.09,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 189.79
+        },
+        {
+          "symbol": "ARM",
+          "weightPct": 4.54,
+          "entryDay": "2026-04-14",
+          "entryDayOpen": 139.39,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 157.58
+        },
+        {
+          "symbol": "APA",
+          "weightPct": 3.15,
+          "entryDay": "2026-04-14",
+          "entryDayOpen": 35.54,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 39.49
         }
       ],
-      "liveSignalDay": "2026-04-13",
-      "liveRegimeState": "risk_on_alt",
-      "liveRegimeReason": "risk_on_alt",
+      "liveSignalDay": "2026-04-14",
+      "liveRegimeState": "neutral",
+      "liveRegimeReason": "Neutral: balanced exposure; keep core trend bias. Flows confidence=medium; scale exposure x0.90.",
       "livePositions": [
         {
-          "symbol": "QLD",
-          "weight_pct": 100.0
+          "symbol": "FANG",
+          "weight_pct": 8.2797
+        },
+        {
+          "symbol": "ETR",
+          "weight_pct": 8.1346
+        },
+        {
+          "symbol": "DOW",
+          "weight_pct": 6.3128
+        },
+        {
+          "symbol": "LYB",
+          "weight_pct": 5.4471
+        },
+        {
+          "symbol": "DELL",
+          "weight_pct": 5.3848
+        },
+        {
+          "symbol": "ARM",
+          "weight_pct": 4.54
+        },
+        {
+          "symbol": "APA",
+          "weight_pct": 3.15
         }
       ],
       "livePositionPriceRefs": [
         {
-          "symbol": "QLD",
-          "weightPct": 100.0,
-          "latestMarketDay": "2026-04-13",
-          "latestClose": 69.59
+          "symbol": "FANG",
+          "weightPct": 8.2797,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 189.1
+        },
+        {
+          "symbol": "ETR",
+          "weightPct": 8.1346,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 115.33
+        },
+        {
+          "symbol": "DOW",
+          "weightPct": 6.3128,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 40.11
+        },
+        {
+          "symbol": "LYB",
+          "weightPct": 5.4471,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 75.51
+        },
+        {
+          "symbol": "DELL",
+          "weightPct": 5.3848,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 189.79
+        },
+        {
+          "symbol": "ARM",
+          "weightPct": 4.54,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 157.58
+        },
+        {
+          "symbol": "APA",
+          "weightPct": 3.15,
+          "latestMarketDay": "2026-04-14",
+          "latestClose": 39.49
         }
       ],
-      "signalQqqClose": 611.07,
-      "signalQqqMa200Gap": 2.4091,
-      "signalQqqReturn21d": 0.5562,
-      "signalQqqReturn63d": -1.515,
-      "signalVixClose": 19.23,
+      "signalQqqClose": 617.39,
+      "signalQqqMa200Gap": 3.6394,
+      "signalQqqReturn21d": 3.5,
+      "signalQqqReturn63d": -1.35,
+      "signalVixClose": null,
       "latestQqqClose": 617.39,
-      "latestQqqMa200Gap": 3.4022,
-      "latestQqqReturn21d": 3.3704,
-      "latestQqqReturn63d": -1.4777,
-      "latestVixClose": 19.12
+      "latestQqqMa200Gap": 3.6394,
+      "latestQqqReturn21d": 3.5,
+      "latestQqqReturn63d": -1.35,
+      "latestVixClose": null
     }
   }
 }
