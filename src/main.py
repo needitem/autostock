@@ -11,10 +11,9 @@ Usage:
   python src/main.py --deep-us        # US-only free pipeline report
   python src/main.py --all-us         # US-only full run (engines + rendered report)
   python src/main.py --rebalance-us   # US-only rebalance using report + charts
-  python src/main.py --backtest       # Strategy V2 baseline + verification
-  python src/main.py --v14-backtest   # Strategy V14 dynamic defense + verification
+  python src/main.py --backtest       # Strategy V4 stock-momentum baseline + verification
+  python src/main.py --strategy-v4    # Strategy V4 stock-momentum baseline + verification
   python src/main.py --stock-backtest # Strategy V4 stock-momentum baseline + verification
-  python src/main.py --legacy-backtest  # legacy ticker-level backtest
   python src/main.py --inventory-report  # inventory ledger/replenishment report (beta)
 """
 
@@ -30,8 +29,6 @@ from strategy_runtime import run_strategy_by_key
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-
 def _configure_console_output() -> None:
     """Avoid UnicodeEncodeError on legacy Windows terminals."""
     for stream_name in ("stdout", "stderr"):
@@ -150,7 +147,7 @@ def _strategy_snapshot_context(result: dict) -> dict[str, object]:
         if isinstance(metrics.get("ai_portfolio"), dict)
         else portfolio_metrics.get("ai_portfolio", {})
     )
-    qqq = (
+    benchmark = (
         metrics.get("benchmark")
         if isinstance(metrics.get("benchmark"), dict)
         else portfolio_metrics.get("benchmark", {})
@@ -161,7 +158,7 @@ def _strategy_snapshot_context(result: dict) -> dict[str, object]:
     return {
         "summary": summary,
         "ai": ai,
-        "qqq": qqq,
+        "benchmark": benchmark,
         "alpha": alpha,
         "turnover_ai": turnover_ai,
     }
@@ -177,14 +174,15 @@ def _print_strategy_snapshot(
     ctx = _strategy_snapshot_context(result)
     summary = ctx["summary"] if isinstance(ctx["summary"], dict) else {}
     ai = ctx["ai"] if isinstance(ctx["ai"], dict) else {}
-    qqq = ctx["qqq"] if isinstance(ctx["qqq"], dict) else {}
+    benchmark = ctx["benchmark"] if isinstance(ctx["benchmark"], dict) else {}
     alpha = ctx["alpha"] if isinstance(ctx["alpha"], dict) else {}
     turnover_ai = ctx["turnover_ai"] if isinstance(ctx["turnover_ai"], dict) else {}
 
     ai_cagr = float(ai.get("cagr_pct", 0.0) or 0.0)
-    qqq_cagr = float(qqq.get("cagr_pct", 0.0) or 0.0)
+    benchmark_cagr = float(benchmark.get("cagr_pct", 0.0) or 0.0)
     ai_mdd = float(ai.get("max_drawdown_pct", 0.0) or 0.0)
-    qqq_mdd = float(qqq.get("max_drawdown_pct", 0.0) or 0.0)
+    benchmark_mdd = float(benchmark.get("max_drawdown_pct", 0.0) or 0.0)
+    benchmark_symbol = str(summary.get("benchmark_symbol", "benchmark") or "benchmark")
 
     print(f"\n{heading}")
     print("=" * 70)
@@ -201,10 +199,14 @@ def _print_strategy_snapshot(
         f"MDD: {ai_mdd:.2f}%"
     )
     print(
-        f"benchmark CAGR: {qqq_cagr:.2f}% | Sharpe: {float(qqq.get('sharpe', 0.0) or 0.0):.2f} | "
-        f"MDD: {qqq_mdd:.2f}%"
+        f"benchmark({benchmark_symbol}) CAGR: {benchmark_cagr:.2f}% | "
+        f"Sharpe: {float(benchmark.get('sharpe', 0.0) or 0.0):.2f} | "
+        f"MDD: {benchmark_mdd:.2f}%"
     )
-    print(f"CAGR diff: {ai_cagr - qqq_cagr:.2f}%p | MDD diff: {ai_mdd - qqq_mdd:.2f}%p")
+    print(
+        f"CAGR diff: {ai_cagr - benchmark_cagr:.2f}%p | "
+        f"MDD diff: {ai_mdd - benchmark_mdd:.2f}%p"
+    )
     if alpha:
         print(
             "alpha stats: "
@@ -230,33 +232,6 @@ def run_strategy_once(strategy_key: str, verify: bool = True) -> None:
         verify=verify,
         show_universe=strategy_key == "v4",
     )
-
-
-def run_legacy_backtest_once(limit: int = 40) -> None:
-    from config import load_nasdaq_100
-    from core.backtest import backtest_symbols
-
-    symbols = load_nasdaq_100()[: max(1, limit)]
-    print(f"[{datetime.now()}] backtest started... ({len(symbols)} tickers)")
-    result = backtest_symbols(symbols, period="3y")
-
-    summary = result.get("summary", {})
-    ranked = result.get("ranked", [])
-    print("\nbacktest summary")
-    print("=" * 70)
-    print(f"symbols: {summary.get('symbol_count', 0)}")
-    print(f"avg win-rate: {summary.get('avg_win_rate', 0)}%")
-    print(f"avg return/trade: {summary.get('avg_return', 0)}%")
-    print(f"avg max-drawdown: {summary.get('avg_drawdown', 0)}%")
-    print("-" * 70)
-    for row in ranked[:10]:
-        print(
-            f"{row['symbol']:6} score {row['score']:6.2f} | "
-            f"wr {row['win_rate']:5.1f}% | "
-            f"avg {row['avg_return']:6.2f}% | "
-            f"mdd {row['max_drawdown']:6.2f}% | trades {row['trade_count']:3}"
-        )
-    print("=" * 70)
 
 
 def run_macro_once() -> None:
@@ -349,6 +324,7 @@ def run_bot(with_scheduler: bool = True) -> None:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Autostock runner")
     mode = parser.add_mutually_exclusive_group()
+    v4 = get_strategy_definition("v4")
     mode.add_argument("--scan", action="store_true", help="Run one-time scan")
     mode.add_argument("--ai", action="store_true", help="Run one-time AI report")
     mode.add_argument("--macro", action="store_true", help="Run one-time macro pipeline")
@@ -358,17 +334,20 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     mode.add_argument("--rebalance-us", action="store_true", help="Run US-only rebalance")
     mode.add_argument(
         "--backtest",
-        "--strategy-v2",
         dest="backtest",
         action="store_true",
-        help="Run Strategy V2 baseline + verification",
+        help=f"Run default backtest ({v4.label}) + verification",
     )
-    mode.add_argument("--v14-backtest", action="store_true", help="Run Strategy V14 dynamic defense + verification")
-    mode.add_argument("--stock-backtest", action="store_true", help="Run Strategy V4 stock-momentum baseline + verification")
-    mode.add_argument("--legacy-backtest", action="store_true", help="Run legacy ticker-level backtest")
+    mode.add_argument(
+        "--stock-backtest",
+        "--strategy-v4",
+        dest="stock_backtest",
+        action="store_true",
+        help="Run Strategy V4 stock-momentum baseline + verification",
+    )
     mode.add_argument("--inventory-report", action="store_true", help="Run inventory report (beta)")
     parser.add_argument("--no-schedule", action="store_true", help="Run bot without scheduler")
-    parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan/legacy-backtest mode")
+    parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan mode")
     return parser.parse_args(argv)
 
 
@@ -398,16 +377,10 @@ def main(argv: list[str] | None = None) -> None:
         run_rebalance_us_once()
         return
     if args.backtest:
-        run_strategy_once("v2", verify=True)
-        return
-    if args.v14_backtest:
-        run_strategy_once("v14", verify=True)
+        run_strategy_once("v4", verify=True)
         return
     if args.stock_backtest:
         run_strategy_once("v4", verify=True)
-        return
-    if args.legacy_backtest:
-        run_legacy_backtest_once(limit=args.limit)
         return
     if args.inventory_report:
         run_inventory_report_once()

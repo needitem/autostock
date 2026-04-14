@@ -15,21 +15,13 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET_TS = ROOT / "cloudflare" / "telegram-bot" / "src" / "snapshot-data.ts"
 TARGET_JSON = ROOT / "cloudflare" / "telegram-bot" / "live" / "snapshot.json"
 FALLBACK_STRATEGY_METRICS: dict[str, dict[str, Any]] = {
-    "v2": {
-        "label": "Strategy V2",
-        "cagr": 31.24,
+    "v4": {
+        "label": "Strategy V4",
+        "cagr": 54.16,
         "benchmarkCagr": 18.96,
-        "drawdown": -39.93,
-        "turnover": 0.272,
-        "pAlphaGt0": 0.957,
-    },
-    "v14": {
-        "label": "Strategy V14",
-        "cagr": 29.18,
-        "benchmarkCagr": 18.96,
-        "drawdown": -36.64,
-        "turnover": 0.289,
-        "pAlphaGt0": 0.929,
+        "drawdown": -33.81,
+        "turnover": 0.197,
+        "pAlphaGt0": 0.999,
     },
 }
 
@@ -293,12 +285,10 @@ def _build_payload() -> dict[str, Any]:
     return {
         "generatedAt": str(pd.Timestamp.utcnow()),
         "strategies": {
-            "v2": _strategy_metrics("ai_portfolio_backtest_verification_strategy_v2*.json", "v2"),
-            "v14": _strategy_metrics("ai_portfolio_backtest_verification_strategy_v14*.json", "v14"),
+            "v4": _strategy_metrics("ai_portfolio_backtest_verification_strategy_v4*.json", "v4"),
         },
         "rebalance": {
-            "v2": _build_current_signal("v2", "run_strategy_v2_baseline.py"),
-            "v14": _build_current_signal("v14", "run_strategy_v14_regime_gld_dynamic_defense.py"),
+            "v4": _build_current_signal("v4", "run_strategy_v4_stock_momentum.py"),
         },
     }
 

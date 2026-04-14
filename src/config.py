@@ -35,7 +35,12 @@ ALL_STOCKS_CACHE_FILE = os.path.join(CACHE_DIR, "all_stocks_cache.json")
 SECTOR_CACHE_FILE = os.path.join(CACHE_DIR, "sector_cache.json")
 CACHE_DAYS = 7
 
-MARKET_INDICATOR = "QQQ"
+MARKET_INDICATOR = (
+    (os.getenv("AI_MARKET_INDICATOR") or os.getenv("AI_BENCHMARK_SYMBOL") or "QQQ")
+    .strip()
+    .upper()
+    .replace(".", "-")
+)
 
 
 def _normalize_symbol(value: Any) -> str | None:

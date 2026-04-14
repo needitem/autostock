@@ -17,37 +17,15 @@ class StrategyDefinition:
 
 
 STRATEGY_DEFINITIONS: dict[str, StrategyDefinition] = {
-    "v2": StrategyDefinition(
-        key="v2",
-        label="Strategy V2",
-        pipeline_module="pipelines.strategy_v2_pipeline",
-        run_fn_name="run_strategy_v2_pipeline",
-        latest_fn_name="latest_strategy_v2_snapshot",
-        summary_title="strategy v2 baseline",
-        command_name="strategy_v2",
-        latest_command_name="strategy_v2_latest",
-        bot_enabled=True,
-    ),
     "v4": StrategyDefinition(
         key="v4",
-        label="Strategy V4",
+        label="Strategy V4 Broad Stock Momentum",
         pipeline_module="pipelines.strategy_v4_stock_pipeline",
         run_fn_name="run_strategy_v4_stock_pipeline",
         latest_fn_name="latest_strategy_v4_stock_snapshot",
-        summary_title="strategy v4 stock-momentum baseline",
+        summary_title="strategy v4 broad stock-momentum baseline",
         command_name="strategy_v4",
         latest_command_name="strategy_v4_latest",
-        bot_enabled=False,
-    ),
-    "v14": StrategyDefinition(
-        key="v14",
-        label="Strategy V14",
-        pipeline_module="pipelines.strategy_v14_pipeline",
-        run_fn_name="run_strategy_v14_pipeline",
-        latest_fn_name="latest_strategy_v14_snapshot",
-        summary_title="strategy v14 regime GLD dynamic defense",
-        command_name="strategy_v14",
-        latest_command_name="strategy_v14_latest",
         bot_enabled=True,
     ),
 }

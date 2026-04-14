@@ -171,14 +171,14 @@ def _format_strategy_snapshot(
     return "\n".join(lines)
 
 
-def format_strategy_v2_snapshot(
+def format_strategy_v4_snapshot(
     summary: dict[str, Any],
     verification: dict[str, Any] | None = None,
     summary_path: str | None = None,
     verification_path: str | None = None,
 ) -> str:
     return _format_strategy_snapshot(
-        title="Strategy V2 Baseline",
+        title="Strategy V4 Broad Stock Momentum",
         summary=summary,
         verification=verification,
         summary_path=summary_path,
@@ -186,36 +186,10 @@ def format_strategy_v2_snapshot(
     )
 
 
-def format_strategy_v2_message(result: dict[str, Any]) -> str:
+def format_strategy_v4_message(result: dict[str, Any]) -> str:
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
     verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
-    return format_strategy_v2_snapshot(
-        summary,
-        verification,
-        summary_path=str(result.get("summary_path", "") or ""),
-        verification_path=str(result.get("verification_json_path", "") or ""),
-    )
-
-
-def format_strategy_v14_snapshot(
-    summary: dict[str, Any],
-    verification: dict[str, Any] | None = None,
-    summary_path: str | None = None,
-    verification_path: str | None = None,
-) -> str:
-    return _format_strategy_snapshot(
-        title="Strategy V14 Dynamic Defense",
-        summary=summary,
-        verification=verification,
-        summary_path=summary_path,
-        verification_path=verification_path,
-    )
-
-
-def format_strategy_v14_message(result: dict[str, Any]) -> str:
-    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
-    verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
-    return format_strategy_v14_snapshot(
+    return format_strategy_v4_snapshot(
         summary,
         verification,
         summary_path=str(result.get("summary_path", "") or ""),

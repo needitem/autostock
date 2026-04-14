@@ -465,7 +465,7 @@ def run_bot(with_scheduler: bool = True) -> None:
     else:
         print("Bot started without scheduler")
 
-    print("Use /start or /menu or /strategy_v2 or /strategy_v14")
+    print("Use /start or /menu or /strategy_v4")
     app.run_polling()
 
 

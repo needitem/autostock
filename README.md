@@ -5,27 +5,22 @@ The AI path uses **Codex CLI login only** (ChatGPT session), with no manual API 
 
 ## Scope
 
-- Stock scanning and scoring
-- AI-written market/stock commentary (chart + regime driven)
-- AI portfolio backtests targeting QQQ outperformance
+- Broad US stock scanning and scoring
+- AI-written market/stock commentary across a wide stock universe
+- Stock-first portfolio backtests targeting high return before defensive ETF fallbacks
 - Telegram bot workflow for beginner-friendly operation
 
 `News collection modules were removed from runtime and tests.`
 
 ## Current Direction
 
-The current production research is centered on deterministic regime/trend systems, with stock-first selection remaining research-only.
+The current default research path is stock-first and broad-universe. Regime/ETF systems remain available as defensive alternatives, but they are no longer the only headline path.
 
-- Strategy reference: `docs/strategy-v2.md`
-- Implementation plan: `.omx/plans/strategy-v2-regime-core.md`
-- Baseline runner: `python scripts/run_strategy_v2_baseline.py`
-- Passing dynamic-defense challenger: `python scripts/run_strategy_v14_regime_gld_dynamic_defense.py`
-- Best raw trend runner: `python scripts/run_strategy_v8_levered_trend_best.py`
+- Default high-return baseline: `python scripts/run_strategy_v4_stock_momentum.py`
 - Stock-first research loop: `python scripts/run_stock_hypothesis_promotion_loop.py`
 
-The checked-in V2 baseline uses a mixed `risk_on` sleeve of `TQQQ 80% + QQQ 20%`, plus a `QLD MA50` filter that downshifts leveraged states into `QQQ`.
-The new V14 line keeps the same regime family but simplifies the defensive sleeve so `risk_off` collapses to `GLD`, which materially improved promotion-rule robustness.
-Stock-first remains useful as a research branch, but it is no longer the leading production thesis.
+The V4 stock-momentum runner now defaults to the broader `all_us` universe so the system can search a much wider price surface for higher-upside names.
+The checked-in V4 baseline also keeps up to `2` names in weak `risk_off` weeks, freezes most new neutral entries when breadth slips, and adds a point-in-time filing quality bonus plus a neutral-regime veto for weak fresh filings. In the latest broad-universe simulation that moved the baseline to roughly `53.73% CAGR / 1.45 Sharpe / -33.81% MDD` versus `QQQ 18.96% / 0.94 / -34.47%`.
 
 ## Requirements
 
@@ -69,6 +64,10 @@ AI_CLI_RETRIES=2
 AI_CLI_RETRY_DELAY_SEC=1.5
 AI_MODEL_FALLBACKS="gpt-5.4-pro,gpt-5.3,gpt-5.2"
 AI_FALLBACK_ON_AI_FAIL=1
+
+# Optional benchmark path
+AI_BENCHMARK_SYMBOL="QQQ"
+AI_MARKET_INDICATOR="QQQ"
 
 # Optional KIS integration
 KIS_APP_KEY=""
@@ -129,17 +128,16 @@ One-time strategy backtest summary:
 
 ```bash
 python src/main.py --backtest
-python src/main.py --legacy-backtest --limit 40
+python src/main.py --strategy-v4
 ```
 
 ## AI Portfolio Backtest (Primary)
 
-This mode builds a long-only top-K portfolio each rebalance from chart/regime features.
+This mode builds a long-only top-K portfolio each rebalance from chart/price features across a broad stock universe.
 
 ```bash
-set AI_UNIVERSE=nasdaq100
-set AI_UNIVERSE_MODE=by_date
-set AI_UNIVERSE_BY_DATE_FILE=data/universe/nasdaq100_by_date_monthly.json
+set AI_UNIVERSE=all_us
+set AI_UNIVERSE_MODE=static
 
 set AI_SNAPSHOT_FREQ=monthly
 set AI_HORIZON_MODE=next_snapshot
@@ -187,9 +185,8 @@ python scripts/backtest_ai_chart_decisions.py
 Useful knobs:
 
 ```bash
-set AI_UNIVERSE=nasdaq100
-set AI_UNIVERSE_MODE=by_date
-set AI_UNIVERSE_BY_DATE_FILE=data/universe/nasdaq100_by_date.json
+set AI_UNIVERSE=all_us
+set AI_UNIVERSE_MODE=static
 
 set AI_SNAPSHOT_FREQ=quarterly
 set AI_HORIZON_MODE=next_snapshot

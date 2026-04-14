@@ -42,12 +42,6 @@ _INSTANT_TAG_CANDIDATES: dict[str, tuple[str, ...]] = {
 _SEC_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
 
 
-def _session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update(SEC_HEADERS)
-    return s
-
-
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         out = float(value)
@@ -128,6 +122,18 @@ def load_companyfacts(cik: str, refresh: bool = False) -> dict[str, Any]:
         raise RuntimeError(f"SEC companyfacts malformed for {cik}")
     _cache_json(path, obj)
     return obj
+
+
+@dataclass(frozen=True)
+class PreparedCompanyFacts:
+    revenue: tuple["DurationFact", ...]
+    net_income: tuple["DurationFact", ...]
+    operating_income: tuple["DurationFact", ...]
+    gross_profit: tuple["DurationFact", ...]
+    eps_diluted: tuple["DurationFact", ...]
+    assets: tuple["InstantFact", ...]
+    liabilities: tuple["InstantFact", ...]
+    equity: tuple["InstantFact", ...]
 
 
 @dataclass(frozen=True)
@@ -223,40 +229,57 @@ def _instant_facts(obj: dict[str, Any], tags: tuple[str, ...]) -> list[InstantFa
     return sorted(out, key=lambda x: (x.filed, x.end))
 
 
-def _latest_duration_asof(rows: list[DurationFact], asof: date) -> DurationFact | None:
-    eligible = [row for row in rows if row.filed <= asof and math.isfinite(row.value)]
-    return max(eligible, key=lambda x: (x.filed, x.end)) if eligible else None
+def _latest_duration_asof(rows: tuple[DurationFact, ...] | list[DurationFact], asof: date) -> DurationFact | None:
+    for row in reversed(rows):
+        if row.filed <= asof and math.isfinite(row.value):
+            return row
+    return None
 
 
 def _prior_year_duration(rows: list[DurationFact], latest: DurationFact) -> DurationFact | None:
     target = latest.end.toordinal() - 365
-    eligible = [
-        row
-        for row in rows
-        if row.end < latest.end
-        and abs(row.end.toordinal() - target) <= 45
-        and math.isfinite(row.value)
-    ]
-    return max(eligible, key=lambda x: (x.filed, x.end)) if eligible else None
+    for row in reversed(rows):
+        if (
+            row.end < latest.end
+            and abs(row.end.toordinal() - target) <= 45
+            and math.isfinite(row.value)
+        ):
+            return row
+    return None
 
 
-def _latest_instant_asof(rows: list[InstantFact], asof: date) -> InstantFact | None:
-    eligible = [row for row in rows if row.filed <= asof and math.isfinite(row.value)]
-    return max(eligible, key=lambda x: (x.filed, x.end)) if eligible else None
+def _latest_instant_asof(rows: tuple[InstantFact, ...] | list[InstantFact], asof: date) -> InstantFact | None:
+    for row in reversed(rows):
+        if row.filed <= asof and math.isfinite(row.value):
+            return row
+    return None
 
 
-def build_pit_features(obj: dict[str, Any], asof: date) -> dict[str, float | int | bool | str | None]:
-    latest_rev = _latest_duration_asof(_duration_facts(obj, _DURATION_TAG_CANDIDATES["revenue"], ("USD",)), asof)
-    prev_rev = _prior_year_duration(_duration_facts(obj, _DURATION_TAG_CANDIDATES["revenue"], ("USD",)), latest_rev) if latest_rev else None
-    latest_ni = _latest_duration_asof(_duration_facts(obj, _DURATION_TAG_CANDIDATES["net_income"], ("USD",)), asof)
-    prev_ni = _prior_year_duration(_duration_facts(obj, _DURATION_TAG_CANDIDATES["net_income"], ("USD",)), latest_ni) if latest_ni else None
-    latest_oi = _latest_duration_asof(_duration_facts(obj, _DURATION_TAG_CANDIDATES["operating_income"], ("USD",)), asof)
-    latest_gp = _latest_duration_asof(_duration_facts(obj, _DURATION_TAG_CANDIDATES["gross_profit"], ("USD",)), asof)
-    latest_eps = _latest_duration_asof(_duration_facts(obj, _DURATION_TAG_CANDIDATES["eps_diluted"], ("USD/shares",)), asof)
-    prev_eps = _prior_year_duration(_duration_facts(obj, _DURATION_TAG_CANDIDATES["eps_diluted"], ("USD/shares",)), latest_eps) if latest_eps else None
-    latest_assets = _latest_instant_asof(_instant_facts(obj, _INSTANT_TAG_CANDIDATES["assets"]), asof)
-    latest_liab = _latest_instant_asof(_instant_facts(obj, _INSTANT_TAG_CANDIDATES["liabilities"]), asof)
-    latest_equity = _latest_instant_asof(_instant_facts(obj, _INSTANT_TAG_CANDIDATES["equity"]), asof)
+def _prepare_companyfacts(obj: dict[str, Any]) -> PreparedCompanyFacts:
+    return PreparedCompanyFacts(
+        revenue=tuple(_duration_facts(obj, _DURATION_TAG_CANDIDATES["revenue"], ("USD",))),
+        net_income=tuple(_duration_facts(obj, _DURATION_TAG_CANDIDATES["net_income"], ("USD",))),
+        operating_income=tuple(_duration_facts(obj, _DURATION_TAG_CANDIDATES["operating_income"], ("USD",))),
+        gross_profit=tuple(_duration_facts(obj, _DURATION_TAG_CANDIDATES["gross_profit"], ("USD",))),
+        eps_diluted=tuple(_duration_facts(obj, _DURATION_TAG_CANDIDATES["eps_diluted"], ("USD/shares",))),
+        assets=tuple(_instant_facts(obj, _INSTANT_TAG_CANDIDATES["assets"])),
+        liabilities=tuple(_instant_facts(obj, _INSTANT_TAG_CANDIDATES["liabilities"])),
+        equity=tuple(_instant_facts(obj, _INSTANT_TAG_CANDIDATES["equity"])),
+    )
+
+
+def _build_pit_features_from_prepared(prepared: PreparedCompanyFacts, asof: date) -> dict[str, float | int | bool | str | None]:
+    latest_rev = _latest_duration_asof(prepared.revenue, asof)
+    prev_rev = _prior_year_duration(prepared.revenue, latest_rev) if latest_rev else None
+    latest_ni = _latest_duration_asof(prepared.net_income, asof)
+    prev_ni = _prior_year_duration(prepared.net_income, latest_ni) if latest_ni else None
+    latest_oi = _latest_duration_asof(prepared.operating_income, asof)
+    latest_gp = _latest_duration_asof(prepared.gross_profit, asof)
+    latest_eps = _latest_duration_asof(prepared.eps_diluted, asof)
+    prev_eps = _prior_year_duration(prepared.eps_diluted, latest_eps) if latest_eps else None
+    latest_assets = _latest_instant_asof(prepared.assets, asof)
+    latest_liab = _latest_instant_asof(prepared.liabilities, asof)
+    latest_equity = _latest_instant_asof(prepared.equity, asof)
 
     def _yoy(cur: DurationFact | None, prev: DurationFact | None) -> float:
         if cur is None or prev is None or not math.isfinite(cur.value) or not math.isfinite(prev.value) or abs(prev.value) < 1e-9:
@@ -296,24 +319,28 @@ def build_pit_features(obj: dict[str, Any], asof: date) -> dict[str, float | int
     }
 
 
+def build_pit_features(obj: dict[str, Any], asof: date) -> dict[str, float | int | bool | str | None]:
+    return _build_pit_features_from_prepared(_prepare_companyfacts(obj), asof)
+
+
 class SecPointInTimeStore:
     def __init__(self, symbols: list[str]):
         self._ticker_to_cik = load_ticker_to_cik()
-        self._companyfacts: dict[str, dict[str, Any]] = {}
+        self._companyfacts: dict[str, PreparedCompanyFacts] = {}
         for symbol in sorted({str(s).upper() for s in symbols if isinstance(s, str) and s.strip()}):
             cik = self._ticker_to_cik.get(symbol)
             if not cik:
                 continue
             try:
-                self._companyfacts[symbol] = load_companyfacts(cik)
+                self._companyfacts[symbol] = _prepare_companyfacts(load_companyfacts(cik))
             except Exception:
                 continue
 
     def features_asof(self, symbol: str, asof: date) -> dict[str, Any]:
-        obj = self._companyfacts.get(str(symbol).upper())
-        if not obj:
+        prepared = self._companyfacts.get(str(symbol).upper())
+        if not prepared:
             return {"pit_has_data": False}
         try:
-            return build_pit_features(obj, asof)
+            return _build_pit_features_from_prepared(prepared, asof)
         except Exception:
             return {"pit_has_data": False}

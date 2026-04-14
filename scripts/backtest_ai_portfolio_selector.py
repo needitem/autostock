@@ -1322,6 +1322,71 @@ def _apply_breadth_new_entry_gate(
     return held_rows + new_rows[: max(0, max_new)]
 
 
+def _sector_focus_enabled_for_regime(regimes: tuple[str, ...], market_regime: str) -> bool:
+    active = tuple(str(x).strip().lower() for x in regimes if str(x).strip())
+    if not active:
+        return True
+    return str(market_regime).strip().lower() in set(active)
+
+
+def _apply_sector_focus(
+    feats: list[dict[str, Any]],
+    top_n: int,
+    min_positions_for_invest: int,
+    sector_scores: dict[str, float],
+    exempt_symbols: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    limit = int(top_n)
+    if limit <= 0 or not feats:
+        return feats
+
+    ranked = sorted(
+        ((str(sector), float(score)) for sector, score in dict(sector_scores or {}).items()),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    allowed_sectors = {sector for sector, _ in ranked[: max(0, limit)] if sector}
+    if not allowed_sectors:
+        return feats
+
+    exempt = {str(sym) for sym in (exempt_symbols or set()) if isinstance(sym, str) and sym}
+    filtered = [
+        row
+        for row in feats
+        if str(row.get("symbol")) in exempt or str(row.get("sector") or "Unknown") in allowed_sectors
+    ]
+    min_required = max(1, int(min_positions_for_invest))
+    return filtered if len(filtered) >= min_required else feats
+
+
+def _apply_breadth_topk_gate(
+    target_top_k: int,
+    market_regime: str,
+    breadth: dict[str, float],
+    neutral_min_up200: float,
+    neutral_min_pos63: float,
+    neutral_max_positions_when_weak: int,
+) -> int:
+    current = max(0, int(target_top_k))
+    if current <= 0 or str(market_regime).strip().lower() != "neutral":
+        return current
+
+    weak_cap = int(neutral_max_positions_when_weak)
+    if weak_cap < 0:
+        return current
+
+    up200_now = float(_f((breadth or {}).get("up200"), 0.0))
+    pos63_now = float(_f((breadth or {}).get("positive_63d"), 0.0))
+    weak = False
+    if float(neutral_min_up200) >= 0:
+        weak = weak or up200_now < float(neutral_min_up200)
+    if float(neutral_min_pos63) >= 0:
+        weak = weak or pos63_now < float(neutral_min_pos63)
+    if not weak:
+        return current
+    return min(current, max(0, weak_cap))
+
+
 def _cross_section_rank_scores(
     df: pd.DataFrame,
     metrics: dict[str, bool],
@@ -2214,14 +2279,14 @@ def _portfolio_prompt(
         prev_txt += "\n"
 
     bench_line = (
-        f"Benchmark ret63: {float(market_ctx.get('bench_r63', 0.0)):.2f}%\n"
+        f"Benchmark ({BENCH}) ret63: {float(market_ctx.get('bench_r63', 0.0)):.2f}%\n"
         if bool(market_ctx.get("algo_uses_benchmark", False))
-        else "Benchmark-relative features: disabled (benchmark used for evaluation only)\n"
+        else f"Benchmark-relative features: disabled ({BENCH} used for evaluation only)\n"
     )
 
     return (
         "You are a disciplined systematic trader.\n"
-        "Goal: Build a LONG-ONLY portfolio that outperforms QQQ over the next holding period.\n"
+        f"Goal: Build a LONG-ONLY portfolio that outperforms {BENCH} over the next holding period.\n"
         "Use only the inputs below (charts + regime). Ignore news and fundamentals.\n"
         "Be consistent: momentum (rs63/rs21) is the primary signal; use other indicators as risk filters.\n"
         f"Holding period: {horizon_txt}.\n\n"
@@ -2983,6 +3048,16 @@ def run() -> None:
     stock_momo_neutral_entry_min_breadth_up200 = _f_env("AI_STOCK_MOMO_NEUTRAL_ENTRY_MIN_BREADTH_UP200", -1.0)
     stock_momo_neutral_entry_min_breadth_pos63 = _f_env("AI_STOCK_MOMO_NEUTRAL_ENTRY_MIN_BREADTH_POS63", -1.0)
     stock_momo_neutral_max_new_when_weak = _i_env("AI_STOCK_MOMO_NEUTRAL_MAX_NEW_WHEN_WEAK", -1)
+    stock_momo_neutral_min_breadth_up200 = _f_env("AI_STOCK_MOMO_NEUTRAL_MIN_BREADTH_UP200", -1.0)
+    stock_momo_neutral_min_breadth_pos63 = _f_env("AI_STOCK_MOMO_NEUTRAL_MIN_BREADTH_POS63", -1.0)
+    stock_momo_neutral_max_positions_when_weak = _i_env("AI_STOCK_MOMO_NEUTRAL_MAX_POSITIONS_WHEN_WEAK", -1)
+    stock_momo_sector_focus_top_n = max(0, _i_env("AI_STOCK_MOMO_SECTOR_FOCUS_TOP_N", 0))
+    stock_momo_sector_focus_new_only = _as_bool_env("AI_STOCK_MOMO_SECTOR_FOCUS_NEW_ONLY", False)
+    stock_momo_sector_focus_regimes = tuple(
+        x.strip().lower()
+        for x in str(os.getenv("AI_STOCK_MOMO_SECTOR_FOCUS_REGIMES", "")).split(",")
+        if x.strip()
+    )
     quality_momo_weight_mode = str(os.getenv("AI_QM_WEIGHT_MODE", "inv_vol")).strip().lower() or "inv_vol"
     if quality_momo_weight_mode not in {"equal", "inv_vol", "score"}:
         quality_momo_weight_mode = "inv_vol"
@@ -3316,6 +3391,10 @@ def run() -> None:
         elif decision_engine == "stock_momentum":
             stock_momo_regime = str(algo_mkt.get("regime", "neutral")).strip().lower()
             stock_momo_veto_active = _pit_veto_enabled_for_regime(stock_momo_pit_veto_regimes, stock_momo_regime)
+            stock_momo_sector_focus_active = _sector_focus_enabled_for_regime(
+                stock_momo_sector_focus_regimes,
+                stock_momo_regime,
+            )
             stock_momo_feats = list(safe_feats)
             if stock_momo_veto_active and not stock_momo_pit_veto_new_only:
                 stock_momo_feats = _apply_pit_quality_veto(
@@ -3323,6 +3402,14 @@ def run() -> None:
                     threshold=stock_momo_pit_veto_threshold,
                     max_filing_age_days=stock_momo_pit_veto_max_filing_age,
                     min_positions_for_invest=stock_momo_min_positions_for_invest,
+                )
+            if stock_momo_sector_focus_active and not stock_momo_sector_focus_new_only:
+                stock_momo_sector_scores_for_focus = _sector_strength_scores(stock_momo_feats)
+                stock_momo_feats = _apply_sector_focus(
+                    stock_momo_feats,
+                    top_n=stock_momo_sector_focus_top_n,
+                    min_positions_for_invest=stock_momo_min_positions_for_invest,
+                    sector_scores=stock_momo_sector_scores_for_focus,
                 )
             stock_momo_candidate_symbols = {x.get("symbol") for x in stock_momo_feats if isinstance(x, dict)}
             stock_momo_held_syms = [
@@ -3335,6 +3422,14 @@ def run() -> None:
                 target_top_k = min(target_top_k, stock_momo_top_k_neutral)
             elif stock_momo_regime == "risk_off":
                 target_top_k = min(target_top_k, stock_momo_top_k_risk_off)
+            target_top_k = _apply_breadth_topk_gate(
+                target_top_k=target_top_k,
+                market_regime=stock_momo_regime,
+                breadth=breadth,
+                neutral_min_up200=stock_momo_neutral_min_breadth_up200,
+                neutral_min_pos63=stock_momo_neutral_min_breadth_pos63,
+                neutral_max_positions_when_weak=stock_momo_neutral_max_positions_when_weak,
+            )
             candidates = _select_candidates_with_includes(
                 stock_momo_feats,
                 prompt_max_symbols,
@@ -3347,6 +3442,15 @@ def run() -> None:
                     threshold=stock_momo_pit_veto_threshold,
                     max_filing_age_days=stock_momo_pit_veto_max_filing_age,
                     min_positions_for_invest=stock_momo_min_positions_for_invest,
+                    exempt_symbols=set(stock_momo_held_syms),
+                )
+            if stock_momo_sector_focus_active and stock_momo_sector_focus_new_only:
+                stock_momo_sector_scores_for_focus = _sector_strength_scores(stock_momo_feats)
+                candidates = _apply_sector_focus(
+                    candidates,
+                    top_n=stock_momo_sector_focus_top_n,
+                    min_positions_for_invest=stock_momo_min_positions_for_invest,
+                    sector_scores=stock_momo_sector_scores_for_focus,
                     exempt_symbols=set(stock_momo_held_syms),
                 )
             candidates = _apply_breadth_new_entry_gate(
@@ -3932,6 +4036,12 @@ def run() -> None:
         "stock_momo_neutral_entry_min_breadth_up200": float(stock_momo_neutral_entry_min_breadth_up200),
         "stock_momo_neutral_entry_min_breadth_pos63": float(stock_momo_neutral_entry_min_breadth_pos63),
         "stock_momo_neutral_max_new_when_weak": int(stock_momo_neutral_max_new_when_weak),
+        "stock_momo_neutral_min_breadth_up200": float(stock_momo_neutral_min_breadth_up200),
+        "stock_momo_neutral_min_breadth_pos63": float(stock_momo_neutral_min_breadth_pos63),
+        "stock_momo_neutral_max_positions_when_weak": int(stock_momo_neutral_max_positions_when_weak),
+        "stock_momo_sector_focus_top_n": int(stock_momo_sector_focus_top_n),
+        "stock_momo_sector_focus_new_only": bool(stock_momo_sector_focus_new_only),
+        "stock_momo_sector_focus_regimes": list(stock_momo_sector_focus_regimes),
         "quality_momo_weight_mode": str(quality_momo_weight_mode),
         "quality_momo_top_k_neutral": int(quality_momo_top_k_neutral),
         "quality_momo_top_k_risk_off": int(quality_momo_top_k_risk_off),

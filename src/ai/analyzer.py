@@ -31,6 +31,9 @@ class AIAnalyzer:
         self.codex_bin = configured
         self.base_url = None
         self.model = model or os.getenv("AI_MODEL", "gpt-5.4")
+        self.benchmark_symbol = (
+            os.getenv("AI_BENCHMARK_SYMBOL", os.getenv("AI_MARKET_INDICATOR", "QQQ")).strip().upper() or "QQQ"
+        ).replace(".", "-")
         self.reasoning_effort = os.getenv("AI_REASONING_EFFORT", "medium").strip().lower() or "medium"
         if self.reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
             self.reasoning_effort = "medium"
@@ -230,8 +233,8 @@ class AIAnalyzer:
             f"MA50 gap(%): {data.get('ma50_gap', 0)}\n"
             f"Return 21d(%): {data.get('return_21d', 0)}\n"
             f"Return 63d(%): {data.get('return_63d', 0)}\n"
-            f"Relative strength 21d vs QQQ(%p): {data.get('relative_strength_21d', 0)}\n"
-            f"Relative strength 63d vs QQQ(%p): {data.get('relative_strength_63d', 0)}\n"
+            f"Relative strength 21d vs {self.benchmark_symbol}(%p): {data.get('relative_strength_21d', 0)}\n"
+            f"Relative strength 63d vs {self.benchmark_symbol}(%p): {data.get('relative_strength_63d', 0)}\n"
             f"Volume ratio: {data.get('volume_ratio', 1)}\n"
             f"Support: {data.get('support', [])}\n"
             f"Resistance: {data.get('resistance', [])}\n"
@@ -331,7 +334,7 @@ class AIAnalyzer:
             f"Avg Quality: {avg_quality:.1f}\n"
             f"Avg Investability: {avg_inv:.1f}\n"
             f"Avg Setup Score: {avg_setup:.1f}\n"
-            f"Avg RS63 vs QQQ(%p): {avg_rs63:.1f}\n"
+            f"Avg RS63 vs {self.benchmark_symbol}(%p): {avg_rs63:.1f}\n"
             f"Avg Liquidity Score: {avg_liq:.1f}\n"
             f"Avg Suggested Position(%): {avg_pos:.1f}\n"
             f"Oversold count: {oversold}\n"
@@ -362,6 +365,8 @@ class AIAnalyzer:
             "avg_quality": avg_quality,
             "avg_investability": avg_inv,
             "avg_setup_score": avg_setup,
+            "benchmark_symbol": self.benchmark_symbol,
+            "avg_rs63_vs_benchmark": avg_rs63,
             "avg_rs63_vs_qqq": avg_rs63,
             "avg_liquidity": avg_liq,
             "avg_position_pct": avg_pos,

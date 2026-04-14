@@ -309,16 +309,18 @@ def get_finviz_data(symbol: str) -> dict[str, Any] | None:
 
 
 def get_market_condition() -> dict[str, Any]:
-    """Evaluate broad market regime from QQQ trend structure."""
+    """Evaluate broad market regime from the configured benchmark trend structure."""
+    from config import MARKET_INDICATOR
     from core.indicators import calculate_indicators
 
-    df = get_stock_data("QQQ")
+    benchmark = MARKET_INDICATOR or "QQQ"
+    df = get_stock_data(benchmark)
     if df is None:
         return {
             "status": "unknown",
             "emoji": "⚪",
             "message": "데이터 없음",
-            "benchmark": "QQQ",
+            "benchmark": benchmark,
             "benchmark_return_21d": 0.0,
             "benchmark_return_63d": 0.0,
         }
@@ -329,7 +331,7 @@ def get_market_condition() -> dict[str, Any]:
             "status": "unknown",
             "emoji": "⚪",
             "message": "지표 계산 실패",
-            "benchmark": "QQQ",
+            "benchmark": benchmark,
             "benchmark_return_21d": 0.0,
             "benchmark_return_63d": 0.0,
         }
@@ -352,7 +354,7 @@ def get_market_condition() -> dict[str, Any]:
         "price": round(price, 2),
         "ma50": round(ma50, 2),
         "ma200": round(ma200, 2),
-        "benchmark": "QQQ",
+        "benchmark": benchmark,
         "benchmark_return_21d": round(_to_float(ind.get("return_21d"), 0.0), 2),
         "benchmark_return_63d": round(_to_float(ind.get("return_63d"), 0.0), 2),
     }

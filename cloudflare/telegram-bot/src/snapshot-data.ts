@@ -1,123 +1,65 @@
 export const SNAPSHOT = {
-  "generatedAt": "2026-03-30 00:17:02.216077+00:00",
+  "generatedAt": "2026-04-14 01:35:32.585694+00:00",
   "strategies": {
-    "v2": {
-      "label": "Strategy V2",
-      "cagr": 31.24,
+    "v4": {
+      "label": "Strategy V4",
+      "cagr": 54.16,
       "benchmarkCagr": 18.96,
-      "drawdown": -39.93,
-      "turnover": 0.272,
-      "pAlphaGt0": 0.957
-    },
-    "v14": {
-      "label": "Strategy V14",
-      "cagr": 29.18,
-      "benchmarkCagr": 18.96,
-      "drawdown": -36.64,
-      "turnover": 0.289,
-      "pAlphaGt0": 0.929
+      "drawdown": -33.81,
+      "turnover": 0.197,
+      "pAlphaGt0": 0.999
     }
   },
   "rebalance": {
-    "v2": {
-      "latestMarketDay": "2026-03-27",
-      "signalDay": "2026-03-27",
-      "entryDay": "2026-03-30",
-      "regimeState": "risk_off",
-      "regimeReason": "risk_off",
+    "v4": {
+      "latestMarketDay": "2026-04-13",
+      "signalDay": "2026-04-10",
+      "entryDay": "2026-04-13",
+      "regimeState": "risk_on_alt",
+      "regimeReason": "risk_on_alt",
       "positions": [
         {
-          "symbol": "GLD",
+          "symbol": "QLD",
           "weight_pct": 100.0
         }
       ],
       "positionPriceRefs": [
         {
-          "symbol": "GLD",
+          "symbol": "QLD",
           "weightPct": 100.0,
-          "entryDay": "2026-03-30",
-          "entryDayOpen": 406.2,
-          "latestMarketDay": "2026-03-27",
-          "latestClose": 414.7
+          "entryDay": "2026-04-13",
+          "entryDayOpen": 67.89,
+          "latestMarketDay": "2026-04-13",
+          "latestClose": 69.59
         }
       ],
-      "liveSignalDay": "2026-03-27",
-      "liveRegimeState": "risk_off",
-      "liveRegimeReason": "risk_off",
+      "liveSignalDay": "2026-04-13",
+      "liveRegimeState": "risk_on_alt",
+      "liveRegimeReason": "risk_on_alt",
       "livePositions": [
         {
-          "symbol": "GLD",
+          "symbol": "QLD",
           "weight_pct": 100.0
         }
       ],
       "livePositionPriceRefs": [
         {
-          "symbol": "GLD",
+          "symbol": "QLD",
           "weightPct": 100.0,
-          "latestMarketDay": "2026-03-27",
-          "latestClose": 414.7
+          "latestMarketDay": "2026-04-13",
+          "latestClose": 69.59
         }
       ],
-      "signalQqqClose": 562.58,
-      "signalQqqMa200Gap": -5.3003,
-      "signalQqqReturn21d": -7.6587,
-      "signalQqqReturn63d": -9.8328,
-      "signalVixClose": 31.05,
-      "latestQqqClose": 562.58,
-      "latestQqqMa200Gap": -5.3003,
-      "latestQqqReturn21d": -7.6587,
-      "latestQqqReturn63d": -9.8328,
-      "latestVixClose": 31.05
-    },
-    "v14": {
-      "latestMarketDay": "2026-03-27",
-      "signalDay": "2026-03-27",
-      "entryDay": "2026-03-30",
-      "regimeState": "risk_off",
-      "regimeReason": "risk_off:fallback",
-      "positions": [
-        {
-          "symbol": "GLD",
-          "weight_pct": 100.0
-        }
-      ],
-      "positionPriceRefs": [
-        {
-          "symbol": "GLD",
-          "weightPct": 100.0,
-          "entryDay": "2026-03-30",
-          "entryDayOpen": 406.2,
-          "latestMarketDay": "2026-03-27",
-          "latestClose": 414.7
-        }
-      ],
-      "liveSignalDay": "2026-03-27",
-      "liveRegimeState": "risk_off",
-      "liveRegimeReason": "risk_off:fallback",
-      "livePositions": [
-        {
-          "symbol": "GLD",
-          "weight_pct": 100.0
-        }
-      ],
-      "livePositionPriceRefs": [
-        {
-          "symbol": "GLD",
-          "weightPct": 100.0,
-          "latestMarketDay": "2026-03-27",
-          "latestClose": 414.7
-        }
-      ],
-      "signalQqqClose": 562.58,
-      "signalQqqMa200Gap": -5.3003,
-      "signalQqqReturn21d": -7.6587,
-      "signalQqqReturn63d": -9.8328,
-      "signalVixClose": 31.05,
-      "latestQqqClose": 562.58,
-      "latestQqqMa200Gap": -5.3003,
-      "latestQqqReturn21d": -7.6587,
-      "latestQqqReturn63d": -9.8328,
-      "latestVixClose": 31.05
+      "signalQqqClose": 611.07,
+      "signalQqqMa200Gap": 2.4091,
+      "signalQqqReturn21d": 0.5562,
+      "signalQqqReturn63d": -1.515,
+      "signalVixClose": 19.23,
+      "latestQqqClose": 617.39,
+      "latestQqqMa200Gap": 3.4022,
+      "latestQqqReturn21d": 3.3704,
+      "latestQqqReturn63d": -1.4777,
+      "latestVixClose": 19.12
     }
   }
 } as const;

@@ -5,10 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from bot.scheduler_config import (
-    format_strategy_v14_message,
-    format_strategy_v14_snapshot,
-    format_strategy_v2_message,
-    format_strategy_v2_snapshot,
+    format_strategy_v4_message,
+    format_strategy_v4_snapshot,
 )
 from strategy_catalog import get_strategy_definition, iter_strategy_definitions
 from strategy_runtime import load_latest_strategy_by_key, run_strategy_by_key
@@ -30,23 +28,14 @@ class StrategySpec:
 
 
 STRATEGY_SPECS: dict[str, StrategySpec] = {
-    "v2": StrategySpec(
-        key="v2",
-        label=get_strategy_definition("v2").label,
-        pipeline_module=get_strategy_definition("v2").pipeline_module,
-        run_fn_name=get_strategy_definition("v2").run_fn_name,
-        latest_fn_name=get_strategy_definition("v2").latest_fn_name,
-        snapshot_formatter=format_strategy_v2_snapshot,
-        message_formatter=format_strategy_v2_message,
-    ),
-    "v14": StrategySpec(
-        key="v14",
-        label=get_strategy_definition("v14").label,
-        pipeline_module=get_strategy_definition("v14").pipeline_module,
-        run_fn_name=get_strategy_definition("v14").run_fn_name,
-        latest_fn_name=get_strategy_definition("v14").latest_fn_name,
-        snapshot_formatter=format_strategy_v14_snapshot,
-        message_formatter=format_strategy_v14_message,
+    "v4": StrategySpec(
+        key="v4",
+        label=get_strategy_definition("v4").label,
+        pipeline_module=get_strategy_definition("v4").pipeline_module,
+        run_fn_name=get_strategy_definition("v4").run_fn_name,
+        latest_fn_name=get_strategy_definition("v4").latest_fn_name,
+        snapshot_formatter=format_strategy_v4_snapshot,
+        message_formatter=format_strategy_v4_message,
     ),
 }
 
