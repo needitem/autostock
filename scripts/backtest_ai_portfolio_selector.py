@@ -279,6 +279,8 @@ def _load_sector_lookup(path: Path | None = None) -> dict[str, dict[str, str]]:
 
 def _periods_per_year(freq: str) -> int:
     f = (freq or "").strip().lower()
+    if f in {"d", "day", "days", "daily"}:
+        return 252
     if f in {"m", "month", "months", "monthly"}:
         return 12
     if f in {"w", "week", "weeks", "weekly"}:
@@ -303,6 +305,8 @@ def _snapshot_dates() -> list[pd.Timestamp]:
     f = SNAPSHOT_FREQ
     if f in {"q", "quarter", "quarters", "quarterly"}:
         dates = list(pd.date_range(start=start, end=end, freq="QE-DEC"))
+    elif f in {"d", "day", "days", "daily"}:
+        dates = list(pd.date_range(start=start, end=end, freq="B"))
     elif f in {"m", "month", "months", "monthly"}:
         dates = list(pd.date_range(start=start, end=end, freq="ME"))
     elif f in {"w", "week", "weeks", "weekly"}:
