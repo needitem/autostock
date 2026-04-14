@@ -72,17 +72,17 @@ const MENU_KEYBOARD: InlineKeyboard = {
 const SUBSCRIBERS_KEY = "telegram_subscribers";
 const SNAPSHOT_KEY = "telegram_live_snapshot_v1";
 const BUDGET_STATE_PREFIX = "telegram_budget_state:";
-const DEFAULT_USDKRW_RATE = 1370;
+const USDKRW_RATE_URL = "https://api.frankfurter.dev/v2/rate/USD/KRW";
 
 const BUDGET_MODE_KEYBOARD: InlineKeyboard = {
   inline_keyboard: [
     [
-      { text: "KRW Input", callback_data: "budget_mode:krw" },
-      { text: "USD Input", callback_data: "budget_mode:usd" },
+      { text: "KRW 금액 입력", callback_data: "budget_mode:krw" },
+      { text: "USD 금액 입력", callback_data: "budget_mode:usd" },
     ],
     [
-      { text: "KRW 1M", callback_data: "budget_preset:krw:1000000" },
-      { text: "KRW 5M", callback_data: "budget_preset:krw:5000000" },
+      { text: "₩100만", callback_data: "budget_preset:krw:1000000" },
+      { text: "₩500만", callback_data: "budget_preset:krw:5000000" },
     ],
     [
       { text: "USD 5k", callback_data: "budget_preset:usd:5000" },
@@ -231,6 +231,12 @@ type BudgetState = {
   currency: "USD" | "KRW";
 };
 
+type FxQuote = {
+  rate: number;
+  date?: string;
+  source: "api" | "manual";
+};
+
 function budgetStateKey(chatId: number): string {
   return `${BUDGET_STATE_PREFIX}${chatId}`;
 }
@@ -285,11 +291,12 @@ function renderBudgetModeText(snapshot: AppSnapshot): string {
     "Buy quantity calculator",
     "",
     "Choose a currency mode with the buttons below.",
+    "After choosing, send only the amount.",
     "You can also tap a quick amount button.",
     "",
     `Current target invested: ${(100 - (Number.isFinite(liveCash) ? liveCash : 0)).toFixed(2)}%`,
     `Current target cash: ${Number.isFinite(liveCash) ? liveCash.toFixed(2) : "-"}%`,
-    `Default KRW FX: ${DEFAULT_USDKRW_RATE}`,
+    "KRW mode uses live USD/KRW from Frankfurter.",
   ].join("\n");
 }
 
@@ -303,7 +310,7 @@ function renderBudgetInputPrompt(currency: "USD" | "KRW"): string {
       "- 10000000",
       "- 1000만원",
       "",
-      `FX uses default ${DEFAULT_USDKRW_RATE} KRW per USD unless you use the /budget command with a custom FX.`,
+      "Live USD/KRW will be fetched automatically.",
     ].join("\n");
   }
   return [
@@ -446,8 +453,9 @@ function renderSnapshotText(snapshot: AppSnapshot): string {
 type BudgetRequest = {
   currency: "USD" | "KRW";
   rawAmount: number;
-  totalUsd: number;
+  totalUsd?: number;
   fxRate?: number;
+  fxDate?: string;
 };
 
 function parseKrwAmount(text: string): number | null {
@@ -544,8 +552,6 @@ function parseBudgetRequestForState(text: string, state: BudgetState): BudgetReq
     return {
       currency: "KRW",
       rawAmount,
-      totalUsd: rawAmount / DEFAULT_USDKRW_RATE,
-      fxRate: DEFAULT_USDKRW_RATE,
     };
   }
   const rawAmount = parseUsdAmount(text);
@@ -556,6 +562,72 @@ function parseBudgetRequestForState(text: string, state: BudgetState): BudgetReq
     currency: "USD",
     rawAmount,
     totalUsd: rawAmount,
+  };
+}
+
+async function fetchUsdKrwRate(): Promise<FxQuote | null> {
+  try {
+    const response = await fetch(USDKRW_RATE_URL, {
+      headers: {
+        accept: "application/json",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as Record<string, unknown>;
+    const rate = Number(payload.rate);
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return null;
+    }
+    return {
+      rate,
+      date: typeof payload.date === "string" ? payload.date : undefined,
+      source: "api",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function normalizeBudgetRequest(budget: BudgetRequest): Promise<{ budget: BudgetRequest; fxQuote?: FxQuote } | null> {
+  if (budget.currency === "USD") {
+    return {
+      budget: {
+        ...budget,
+        totalUsd: budget.totalUsd ?? budget.rawAmount,
+      },
+    };
+  }
+
+  if (Number.isFinite(Number(budget.fxRate)) && Number(budget.fxRate) > 0) {
+    const rate = Number(budget.fxRate);
+    return {
+      budget: {
+        ...budget,
+        totalUsd: budget.rawAmount / rate,
+        fxRate: rate,
+      },
+      fxQuote: {
+        rate,
+        date: budget.fxDate,
+        source: "manual",
+      },
+    };
+  }
+
+  const fxQuote = await fetchUsdKrwRate();
+  if (!fxQuote) {
+    return null;
+  }
+  return {
+    budget: {
+      ...budget,
+      totalUsd: budget.rawAmount / fxQuote.rate,
+      fxRate: fxQuote.rate,
+      fxDate: fxQuote.date,
+    },
+    fxQuote,
   };
 }
 
@@ -578,7 +650,7 @@ function renderBudgetHelpText(snapshot: AppSnapshot): string {
   ].join("\n");
 }
 
-function renderBudgetPlan(snapshot: AppSnapshot, budget: BudgetRequest): string {
+function renderBudgetPlan(snapshot: AppSnapshot, budget: BudgetRequest, fxQuote?: FxQuote): string {
   const signal = snapshot.rebalance.v4;
   const positions = Array.isArray(signal.livePositions) ? signal.livePositions : [];
   const refs = getLivePriceRefs(signal);
@@ -593,13 +665,21 @@ function renderBudgetPlan(snapshot: AppSnapshot, budget: BudgetRequest): string 
 
   const lines = ["Buy quantity plan", ""];
   if (budget.currency === "KRW") {
-    lines.push(`Portfolio: ₩${budget.rawAmount.toFixed(0)} @ ${budget.fxRate?.toFixed(2)} = ${formatUsd(budget.totalUsd)}`);
+    lines.push(`Portfolio: ₩${budget.rawAmount.toFixed(0)} @ ${budget.fxRate?.toFixed(2)} = ${formatUsd(Number(budget.totalUsd ?? 0))}`);
   } else {
-    lines.push(`Portfolio: ${formatUsd(budget.totalUsd)}`);
+    lines.push(`Portfolio: ${formatUsd(Number(budget.totalUsd ?? 0))}`);
+  }
+  if (fxQuote) {
+    lines.push(
+      fxQuote.source === "api"
+        ? `FX: USD/KRW ${fxQuote.rate.toFixed(2)}${fxQuote.date ? ` (${fxQuote.date})` : ""} via Frankfurter`
+        : `FX: USD/KRW ${fxQuote.rate.toFixed(2)} (manual)`
+    );
   }
 
   const liveCash = Number((signal as SignalSnapshot & { liveCashPct?: number }).liveCashPct ?? NaN);
-  const targetCashUsd = Number.isFinite(liveCash) ? budget.totalUsd * (liveCash / 100) : 0;
+  const totalUsd = Number(budget.totalUsd ?? 0);
+  const targetCashUsd = Number.isFinite(liveCash) ? totalUsd * (liveCash / 100) : 0;
   lines.push(`Target cash reserve: ${formatUsd(targetCashUsd)}`);
   lines.push("");
 
@@ -612,7 +692,7 @@ function renderBudgetPlan(snapshot: AppSnapshot, budget: BudgetRequest): string 
     if (!symbol || !Number.isFinite(weightPct) || weightPct <= 0 || price === undefined || price <= 0) {
       continue;
     }
-    const targetUsd = budget.totalUsd * (weightPct / 100);
+    const targetUsd = totalUsd * (weightPct / 100);
     const shares = Math.floor(targetUsd / price);
     const estCost = shares * price;
     estimatedBuyUsd += estCost;
@@ -633,7 +713,7 @@ function renderBudgetPlan(snapshot: AppSnapshot, budget: BudgetRequest): string 
 
   lines.push("");
   lines.push(`Estimated stock buys: ${formatUsd(estimatedBuyUsd)}`);
-  lines.push(`Residual cash after rounding: ${formatUsd(budget.totalUsd - estimatedBuyUsd)}`);
+  lines.push(`Residual cash after rounding: ${formatUsd(totalUsd - estimatedBuyUsd)}`);
   lines.push("Uses latest close references from the latest rebalance snapshot.");
   return lines.join("\n");
 }
@@ -912,7 +992,17 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
       const budgetFromState = parseBudgetRequestForState(update.message.text, pendingBudget);
       if (budgetFromState) {
         await clearBudgetState(env, update.message.chat.id);
-        const text = renderBudgetPlan(snapshot, budgetFromState);
+        const normalized = await normalizeBudgetRequest(budgetFromState);
+        if (!normalized) {
+          await sendMessageWithKeyboard(
+            env,
+            update.message.chat.id,
+            "Live USD/KRW fetch failed. Please try again shortly.",
+            BUDGET_MODE_KEYBOARD,
+          );
+          return jsonResponse({ ok: false, mode: "budget_fx_failed" }, { status: 502 });
+        }
+        const text = renderBudgetPlan(snapshot, normalized.budget, normalized.fxQuote);
         await sendMessage(env, update.message.chat.id, text);
         return jsonResponse({ ok: true, mode: "budget_state" });
       }
@@ -927,7 +1017,17 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
 
     const budget = parseBudgetRequest(update.message.text);
     if (budget) {
-      const text = renderBudgetPlan(snapshot, budget);
+      const normalized = await normalizeBudgetRequest(budget);
+      if (!normalized) {
+        await sendMessageWithKeyboard(
+          env,
+          update.message.chat.id,
+          "Live USD/KRW fetch failed. Please try again shortly, or include a manual FX rate.",
+          BUDGET_MODE_KEYBOARD,
+        );
+        return jsonResponse({ ok: false, mode: "budget_fx_failed" }, { status: 502 });
+      }
+      const text = renderBudgetPlan(snapshot, normalized.budget, normalized.fxQuote);
       await sendMessage(env, update.message.chat.id, text);
       return jsonResponse({ ok: true, mode: "budget" });
     }
@@ -984,10 +1084,22 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
       const amount = Number(amountRaw);
       const currency = currencyRaw?.toLowerCase() === "krw" ? "KRW" : "USD";
       const budget = currency === "KRW"
-        ? { currency, rawAmount: amount, totalUsd: amount / DEFAULT_USDKRW_RATE, fxRate: DEFAULT_USDKRW_RATE }
+        ? { currency, rawAmount: amount }
         : { currency, rawAmount: amount, totalUsd: amount };
+      const normalized = await normalizeBudgetRequest(budget);
+      if (!normalized) {
+        await editMessage(
+          env,
+          chatId,
+          update.callback_query.message.message_id,
+          "Live USD/KRW fetch failed. Please try again shortly.",
+          BUDGET_MODE_KEYBOARD,
+        );
+        await answerCallback(env, update.callback_query.id, "FX fetch failed");
+        return jsonResponse({ ok: false, mode: "budget_preset_fx_failed" }, { status: 502 });
+      }
       await clearBudgetState(env, chatId);
-      const text = renderBudgetPlan(snapshot, budget);
+      const text = renderBudgetPlan(snapshot, normalized.budget, normalized.fxQuote);
       await editMessage(env, chatId, update.callback_query.message.message_id, text);
       await answerCallback(env, update.callback_query.id, "Calculated");
       return jsonResponse({ ok: true, mode: "budget_preset", currency });
