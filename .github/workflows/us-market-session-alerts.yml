@@ -1,0 +1,25 @@
+name: US Market Session Alerts
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 13-21 * * 1-5"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  send-market-session-alerts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Send US market open/close alerts when in session window
+        run: |
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $BOT_NOTIFY_TOKEN" \
+            https://autostock-telegram-bot.th07290828.workers.dev/api/market-session-notify
+        env:
+          BOT_NOTIFY_TOKEN: ${{ secrets.BOT_NOTIFY_TOKEN }}

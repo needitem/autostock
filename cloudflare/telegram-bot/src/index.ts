@@ -72,6 +72,7 @@ const MENU_KEYBOARD: InlineKeyboard = {
 const SUBSCRIBERS_KEY = "telegram_subscribers";
 const SNAPSHOT_KEY = "telegram_live_snapshot_v1";
 const BUDGET_STATE_PREFIX = "telegram_budget_state:";
+const MARKET_SESSION_STATE_PREFIX = "telegram_market_session_alert:";
 const USDKRW_RATE_URL = "https://api.frankfurter.dev/v2/rate/USD/KRW";
 
 const BUDGET_MODE_KEYBOARD: InlineKeyboard = {
@@ -237,6 +238,8 @@ type FxQuote = {
   source: "api" | "manual";
 };
 
+type MarketSessionKind = "open" | "close";
+
 function budgetStateKey(chatId: number): string {
   return `${BUDGET_STATE_PREFIX}${chatId}`;
 }
@@ -263,6 +266,137 @@ async function saveBudgetState(env: Env, chatId: number, state: BudgetState): Pr
 
 async function clearBudgetState(env: Env, chatId: number): Promise<void> {
   await env.SUBSCRIBERS.delete(budgetStateKey(chatId));
+}
+
+function marketSessionStateKey(kind: MarketSessionKind, dateKey: string): string {
+  return `${MARKET_SESSION_STATE_PREFIX}${kind}:${dateKey}`;
+}
+
+function currentNewYorkParts(now = new Date()): {
+  dateKey: string;
+  weekday: number;
+  hour: number;
+  minute: number;
+  year: number;
+  month: number;
+  day: number;
+} {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(now).map((part) => [part.type, part.value]));
+  const weekdayMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  return {
+    dateKey: `${parts.year}-${parts.month}-${parts.day}`,
+    weekday: weekdayMap[String(parts.weekday)] ?? 0,
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    year,
+    month,
+    day,
+  };
+}
+
+function nthWeekdayOfMonth(year: number, month: number, weekday: number, nth: number): number {
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  const firstWeekday = first.getUTCDay();
+  const offset = (weekday - firstWeekday + 7) % 7;
+  return 1 + offset + (nth - 1) * 7;
+}
+
+function lastWeekdayOfMonth(year: number, month: number, weekday: number): number {
+  const last = new Date(Date.UTC(year, month, 0));
+  const lastWeekday = last.getUTCDay();
+  const offset = (lastWeekday - weekday + 7) % 7;
+  return last.getUTCDate() - offset;
+}
+
+function observedFixedHoliday(year: number, month: number, day: number): string {
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  const weekday = dt.getUTCDay();
+  if (weekday === 6) {
+    dt.setUTCDate(dt.getUTCDate() - 1);
+  } else if (weekday === 0) {
+    dt.setUTCDate(dt.getUTCDate() + 1);
+  }
+  return dt.toISOString().slice(0, 10);
+}
+
+function easterSunday(year: number): { month: number; day: number } {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return { month, day };
+}
+
+function goodFridayDateKey(year: number): string {
+  const easter = easterSunday(year);
+  const dt = new Date(Date.UTC(year, easter.month - 1, easter.day));
+  dt.setUTCDate(dt.getUTCDate() - 2);
+  return dt.toISOString().slice(0, 10);
+}
+
+function isUsMarketHoliday(year: number, month: number, day: number): boolean {
+  const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const holidays = new Set<string>([
+    observedFixedHoliday(year, 1, 1),
+    `${year}-01-${String(nthWeekdayOfMonth(year, 1, 1, 3)).padStart(2, "0")}`,
+    `${year}-02-${String(nthWeekdayOfMonth(year, 2, 1, 3)).padStart(2, "0")}`,
+    goodFridayDateKey(year),
+    `${year}-05-${String(lastWeekdayOfMonth(year, 5, 1)).padStart(2, "0")}`,
+    observedFixedHoliday(year, 6, 19),
+    observedFixedHoliday(year, 7, 4),
+    `${year}-09-${String(nthWeekdayOfMonth(year, 9, 1, 1)).padStart(2, "0")}`,
+    `${year}-11-${String(nthWeekdayOfMonth(year, 11, 4, 4)).padStart(2, "0")}`,
+    observedFixedHoliday(year, 12, 25),
+  ]);
+  return holidays.has(dateKey);
+}
+
+function currentMarketSession(now = new Date()): { kind: MarketSessionKind; dateKey: string } | null {
+  const ny = currentNewYorkParts(now);
+  if (ny.weekday === 0 || ny.weekday === 6) {
+    return null;
+  }
+  if (isUsMarketHoliday(ny.year, ny.month, ny.day)) {
+    return null;
+  }
+  if (ny.hour === 9 && ny.minute >= 30 && ny.minute < 45) {
+    return { kind: "open", dateKey: ny.dateKey };
+  }
+  if (ny.hour === 16 && ny.minute >= 0 && ny.minute < 15) {
+    return { kind: "close", dateKey: ny.dateKey };
+  }
+  return null;
 }
 
 function renderMenuText(snapshot: AppSnapshot): string {
@@ -423,6 +557,22 @@ function renderWeeklyRebalanceAlertText(snapshot: AppSnapshot): string {
     "",
     renderRebalanceText(snapshot),
     "",
+    `Snapshot generated at: ${snapshot.generatedAt}`,
+  ].join("\n");
+}
+
+function renderMarketSessionAlertText(snapshot: AppSnapshot, kind: MarketSessionKind): string {
+  const signal = snapshot.rebalance.v4;
+  const liveCash = Number((signal as SignalSnapshot & { liveCashPct?: number }).liveCashPct ?? NaN);
+  return [
+    kind === "open" ? "US market opened" : "US market closed",
+    "",
+    `Session: ${kind === "open" ? "regular open (09:30 ET)" : "regular close (16:00 ET)"}`,
+    `V4 posture: ${String(signal.liveRegimeState || signal.regimeState || "-")}`,
+    `Target weights: ${formatCompactPositions({ ...signal, positions: signal.livePositions || signal.positions })}`,
+    `Target cash: ${Number.isFinite(liveCash) ? liveCash.toFixed(2) : "-"}%`,
+    "",
+    "Use /rebalance for the full current allocation.",
     `Snapshot generated at: ${snapshot.generatedAt}`,
   ].join("\n");
 }
@@ -983,6 +1133,48 @@ async function broadcastAutomatedAlert(env: Env): Promise<Response> {
   });
 }
 
+async function broadcastMarketSessionAlert(env: Env): Promise<Response> {
+  const session = currentMarketSession();
+  if (!session) {
+    return jsonResponse({ ok: true, sent: false, reason: "outside_window" });
+  }
+
+  const dedupeKey = marketSessionStateKey(session.kind, session.dateKey);
+  const alreadySent = await env.SUBSCRIBERS.get(dedupeKey);
+  if (alreadySent) {
+    return jsonResponse({ ok: true, sent: false, reason: "already_sent", kind: session.kind, dateKey: session.dateKey });
+  }
+
+  const subscribers = await loadSubscribers(env);
+  const snapshot = await loadSnapshot(env);
+  const text = renderMarketSessionAlertText(snapshot, session.kind);
+  let delivered = 0;
+  let removed = 0;
+
+  for (const chatId of subscribers) {
+    const result = await sendMessage(env, chatId, text);
+    if (result.ok) {
+      delivered += 1;
+      continue;
+    }
+    if (shouldDropSubscriber(result)) {
+      await ensureUnsubscribed(env, chatId);
+      removed += 1;
+    }
+  }
+
+  await env.SUBSCRIBERS.put(dedupeKey, JSON.stringify({ sentAt: new Date().toISOString() }));
+  return jsonResponse({
+    ok: true,
+    sent: true,
+    kind: session.kind,
+    dateKey: session.dateKey,
+    delivered,
+    removed,
+    subscribers: subscribers.length,
+  });
+}
+
 async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<Response> {
   const snapshot = await loadSnapshot(env);
 
@@ -1163,6 +1355,13 @@ export default {
         return jsonResponse({ ok: false, error: "unauthorized" }, { status: 401 });
       }
       return broadcastAutomatedAlert(env);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/market-session-notify") {
+      if (!verifyNotifyRequest(request, env)) {
+        return jsonResponse({ ok: false, error: "unauthorized" }, { status: 401 });
+      }
+      return broadcastMarketSessionAlert(env);
     }
 
     if (request.method === "POST" && url.pathname === "/telegram") {
