@@ -3,18 +3,68 @@ name: US Market Session Alerts
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 13-21 * * 1-5"
+    - cron: "25-40/5 13 * * 1-5"
+    - cron: "25-40/5 14 * * 1-5"
+    - cron: "55 19 * * 1-5"
+    - cron: "0-10/5 20 * * 1-5"
+    - cron: "55 20 * * 1-5"
+    - cron: "0-10/5 21 * * 1-5"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  send-market-session-alerts:
+  refresh-and-send-market-session-alerts:
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Recompute latest US rebalance before market-session alert
+        run: python src/main.py --rebalance-us
+
+      - name: Export latest strategy snapshot
+        run: python scripts/export_cloudflare_bot_data.py
+
+      - name: Sync latest snapshot to Cloudflare Worker
+        run: |
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $BOT_NOTIFY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @cloudflare/telegram-bot/live/snapshot.json \
+            https://autostock-telegram-bot.th07290828.workers.dev/api/snapshot-sync
+        env:
+          BOT_NOTIFY_TOKEN: ${{ secrets.BOT_NOTIFY_TOKEN }}
+
+      - name: Verify deployed snapshot endpoint
+        run: |
+          curl --fail --silent --show-error \
+            https://autostock-telegram-bot.th07290828.workers.dev/api/snapshot \
+            > /tmp/snapshot.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/snapshot.json").read_text(encoding="utf-8"))
+          assert "strategies" in payload
+          assert "rebalance" in payload
+          print("Snapshot endpoint verified.")
+          PY
+
       - name: Send US market open/close alerts when in session window
         run: |
           curl --fail --silent --show-error \
