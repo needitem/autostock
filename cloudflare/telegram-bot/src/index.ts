@@ -59,6 +59,7 @@ const MENU_KEYBOARD: InlineKeyboard = {
   inline_keyboard: [
     [{ text: "V4 Summary", callback_data: "strategy:v4" }],
     [{ text: "Current Rebalance", callback_data: "rebalance" }],
+    [{ text: "Buy Qty Calc", callback_data: "budget_help" }],
     [{ text: "Recompute Now", callback_data: "refresh" }],
     [
       { text: "Start Alerts", callback_data: "subscribe" },
@@ -98,6 +99,10 @@ function formatMaybePct(value: unknown, digits = 2): string {
 function formatMaybePrice(value: unknown, digits = 2): string {
   const num = Number(value);
   return Number.isFinite(num) ? num.toFixed(digits) : "-";
+}
+
+function formatUsd(value: number, digits = 2): string {
+  return `$${value.toFixed(digits)}`;
 }
 
 function formatWeightRow(position: { symbol?: string; weight_pct?: number }): string {
@@ -177,6 +182,11 @@ function isSnapshotLike(value: unknown): value is AppSnapshot {
   return Boolean(payload.generatedAt) && typeof payload.strategies === "object" && typeof payload.rebalance === "object";
 }
 
+function snapshotTimestamp(snapshot: AppSnapshot): number {
+  const ts = Date.parse(String(snapshot.generatedAt || ""));
+  return Number.isFinite(ts) ? ts : 0;
+}
+
 async function loadSnapshot(env: Env): Promise<AppSnapshot> {
   const raw = await env.SUBSCRIBERS.get(SNAPSHOT_KEY);
   if (!raw) {
@@ -184,7 +194,10 @@ async function loadSnapshot(env: Env): Promise<AppSnapshot> {
   }
   try {
     const parsed = JSON.parse(raw);
-    return isSnapshotLike(parsed) ? parsed : FALLBACK_SNAPSHOT;
+    if (!isSnapshotLike(parsed)) {
+      return FALLBACK_SNAPSHOT;
+    }
+    return snapshotTimestamp(parsed) >= snapshotTimestamp(FALLBACK_SNAPSHOT) ? parsed : FALLBACK_SNAPSHOT;
   } catch {
     return FALLBACK_SNAPSHOT;
   }
@@ -202,6 +215,8 @@ function renderMenuText(snapshot: AppSnapshot): string {
     "/menu - main menu",
     "/v4 - latest Strategy V4 summary",
     "/rebalance - current actionable rebalance",
+    "/budget 10000 - share counts for a 10,000 USD portfolio",
+    "/budget 10000000 krw 1370 - share counts using KRW capital and FX",
     "/refresh - recompute latest exported state now",
     "/snapshot - full snapshot",
     "/subscribe - daily status + weekly rebalance alerts on",
@@ -230,6 +245,8 @@ function renderStrategyText(snapshot: AppSnapshot, strategyKey: StrategyKey): st
 
 function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): string {
   const signal = snapshot.rebalance[strategyKey];
+  const signalCash = Number((signal as SignalSnapshot & { cashPct?: number }).cashPct ?? NaN);
+  const liveCash = Number((signal as SignalSnapshot & { liveCashPct?: number }).liveCashPct ?? NaN);
   const positions = signal.positions.length > 0 ? signal.positions.map(formatWeightRow).join("\n") : "- no positions";
   const livePositions = Array.isArray(signal.livePositions) && signal.livePositions.length > 0
     ? signal.livePositions.map(formatWeightRow).join("\n")
@@ -248,8 +265,9 @@ function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): str
     "",
     "Target weights",
     positions,
+    `- CASH: ${Number.isFinite(signalCash) ? signalCash.toFixed(2) : "-"}%`,
     "",
-    "Signal-day market context",
+    "Signal-day benchmark context",
     `- QQQ close: ${formatMaybePrice(signal.signalQqqClose)}`,
     `- MA200 gap: ${formatMaybePct(signal.signalQqqMa200Gap)}`,
     `- 21d return: ${formatMaybePct(signal.signalQqqReturn21d)}`,
@@ -264,8 +282,9 @@ function renderSignalText(snapshot: AppSnapshot, strategyKey: RebalanceKey): str
     "",
     "Now target weights",
     livePositions,
+    `- CASH: ${Number.isFinite(liveCash) ? liveCash.toFixed(2) : "-"}%`,
     "",
-    "Latest market context",
+    "Latest benchmark context",
     `- QQQ close: ${formatMaybePrice(signal.latestQqqClose)}`,
     `- MA200 gap: ${formatMaybePct(signal.latestQqqMa200Gap)}`,
     `- 21d return: ${formatMaybePct(signal.latestQqqReturn21d)}`,
@@ -332,6 +351,142 @@ function renderSnapshotText(snapshot: AppSnapshot): string {
     "",
     renderRebalanceText(snapshot),
   ].join("\n");
+}
+
+type BudgetRequest = {
+  currency: "USD" | "KRW";
+  rawAmount: number;
+  totalUsd: number;
+  fxRate?: number;
+};
+
+function parseBudgetRequest(text: string): BudgetRequest | null {
+  const cleaned = text.replace(/,/g, " ").trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const first = parts[0].toLowerCase();
+  const tokens = first === "/budget" ? parts.slice(1) : parts;
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  const amount = Number(tokens[0]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  if (tokens.length >= 3 && tokens[1].toLowerCase() === "krw") {
+    const fxRate = Number(tokens[2]);
+    if (!Number.isFinite(fxRate) || fxRate <= 0) {
+      return null;
+    }
+    return {
+      currency: "KRW",
+      rawAmount: amount,
+      totalUsd: amount / fxRate,
+      fxRate,
+    };
+  }
+
+  if (tokens.length >= 2 && tokens[1].toLowerCase() === "usd") {
+    return {
+      currency: "USD",
+      rawAmount: amount,
+      totalUsd: amount,
+    };
+  }
+
+  if (first === "/budget" || /^\d+(\.\d+)?$/.test(tokens[0])) {
+    return {
+      currency: "USD",
+      rawAmount: amount,
+      totalUsd: amount,
+    };
+  }
+
+  return null;
+}
+
+function renderBudgetHelpText(snapshot: AppSnapshot): string {
+  const signal = snapshot.rebalance.v4;
+  const liveCash = Number((signal as SignalSnapshot & { liveCashPct?: number }).liveCashPct ?? NaN);
+  return [
+    "Buy quantity calculator",
+    "",
+    "Send one of these:",
+    "/budget 10000",
+    "/budget 10000000 krw 1370",
+    "",
+    "Meaning:",
+    "- first form: total portfolio in USD",
+    "- second form: total portfolio in KRW and USD/KRW FX rate",
+    "",
+    `Current target invested: ${(100 - (Number.isFinite(liveCash) ? liveCash : 0)).toFixed(2)}%`,
+    `Current target cash: ${Number.isFinite(liveCash) ? liveCash.toFixed(2) : "-"}%`,
+  ].join("\n");
+}
+
+function renderBudgetPlan(snapshot: AppSnapshot, budget: BudgetRequest): string {
+  const signal = snapshot.rebalance.v4;
+  const positions = Array.isArray(signal.livePositions) ? signal.livePositions : [];
+  const refs = getLivePriceRefs(signal);
+  const priceBySymbol = new Map<string, number>();
+  for (const ref of refs) {
+    const symbol = String(ref.symbol ?? "").toUpperCase();
+    const price = Number(ref.latestClose ?? NaN);
+    if (symbol && Number.isFinite(price) && price > 0) {
+      priceBySymbol.set(symbol, price);
+    }
+  }
+
+  const lines = ["Buy quantity plan", ""];
+  if (budget.currency === "KRW") {
+    lines.push(`Portfolio: ₩${budget.rawAmount.toFixed(0)} @ ${budget.fxRate?.toFixed(2)} = ${formatUsd(budget.totalUsd)}`);
+  } else {
+    lines.push(`Portfolio: ${formatUsd(budget.totalUsd)}`);
+  }
+
+  const liveCash = Number((signal as SignalSnapshot & { liveCashPct?: number }).liveCashPct ?? NaN);
+  const targetCashUsd = Number.isFinite(liveCash) ? budget.totalUsd * (liveCash / 100) : 0;
+  lines.push(`Target cash reserve: ${formatUsd(targetCashUsd)}`);
+  lines.push("");
+
+  let estimatedBuyUsd = 0;
+  const skipped: string[] = [];
+  for (const position of positions) {
+    const symbol = String(position.symbol ?? "").toUpperCase();
+    const weightPct = Number(position.weight_pct ?? 0);
+    const price = priceBySymbol.get(symbol);
+    if (!symbol || !Number.isFinite(weightPct) || weightPct <= 0 || price === undefined || price <= 0) {
+      continue;
+    }
+    const targetUsd = budget.totalUsd * (weightPct / 100);
+    const shares = Math.floor(targetUsd / price);
+    const estCost = shares * price;
+    estimatedBuyUsd += estCost;
+    if (shares <= 0) {
+      skipped.push(`${symbol} (${formatUsd(targetUsd)} target < 1 share)`);
+      continue;
+    }
+    lines.push(`- ${symbol}: ${shares} shares @ ${formatUsd(price)} = ${formatUsd(estCost)} (target ${weightPct.toFixed(2)}%)`);
+  }
+
+  if (skipped.length > 0) {
+    lines.push("");
+    lines.push("Skipped");
+    for (const item of skipped) {
+      lines.push(`- ${item}`);
+    }
+  }
+
+  lines.push("");
+  lines.push(`Estimated stock buys: ${formatUsd(estimatedBuyUsd)}`);
+  lines.push(`Residual cash after rounding: ${formatUsd(budget.totalUsd - estimatedBuyUsd)}`);
+  lines.push("Uses latest close references from the latest rebalance snapshot.");
+  return lines.join("\n");
 }
 
 async function telegramApi(env: Env, method: string, payload: Record<string, unknown>): Promise<TelegramResponse> {
@@ -428,6 +583,8 @@ function resolveTextForCommand(snapshot: AppSnapshot, command: string): string {
     case "/v2":
     case "/v14":
       return renderStrategyText(snapshot, "v4");
+    case "/budget":
+      return renderBudgetHelpText(snapshot);
     case "/rebalance":
       return renderRebalanceText(snapshot);
     case "/snapshot":
@@ -466,6 +623,8 @@ function resolveTextForCallback(snapshot: AppSnapshot, data: string | undefined)
       return renderMenuText(snapshot);
     case "rebalance":
       return renderRebalanceText(snapshot);
+    case "budget_help":
+      return renderBudgetHelpText(snapshot);
     case "strategy:v4":
     case "strategy:v2":
     case "strategy:v14":
@@ -581,6 +740,13 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<R
   const snapshot = await loadSnapshot(env);
 
   if (update.message?.chat?.id && typeof update.message.text === "string") {
+    const budget = parseBudgetRequest(update.message.text);
+    if (budget) {
+      const text = renderBudgetPlan(snapshot, budget);
+      await sendMessage(env, update.message.chat.id, text);
+      return jsonResponse({ ok: true, mode: "budget" });
+    }
+
     const command = parseCommand(update.message.text);
     if (command === "/refresh") {
       const started = await triggerRefreshWorkflow(env);
@@ -636,7 +802,7 @@ export default {
         ok: true,
         service: "autostock-telegram-bot",
         generatedAt: snapshot.generatedAt,
-        commands: ["/menu", "/v4", "/rebalance", "/refresh", "/snapshot", "/subscribe", "/unsubscribe"],
+        commands: ["/menu", "/v4", "/rebalance", "/budget", "/refresh", "/snapshot", "/subscribe", "/unsubscribe"],
         subscribers: subscribers.length,
         automatedAlertKind: buildAutomatedAlert(snapshot).kind,
       });

@@ -101,6 +101,8 @@ def _build_current_signal() -> dict[str, Any]:
     executed_weights = payload.get("executed_weights_pct") or payload.get("weights_pct") or {}
     positions = _positions_from_weights(executed_weights)
     current_positions = _positions_from_weights(payload.get("weights_pct") or executed_weights)
+    executed_cash_pct = payload.get("executed_cash_pct")
+    current_cash_pct = payload.get("cash_pct")
 
     candidates = {
         str(item.get("symbol", "")).upper(): item
@@ -164,11 +166,13 @@ def _build_current_signal() -> dict[str, Any]:
         "entryDay": generated_day,
         "regimeState": str(risk.get("label", "unknown") or "unknown"),
         "regimeReason": str(regime_controls.get("note", "") or ""),
+        "cashPct": round(float(current_cash_pct), 2) if current_cash_pct is not None else round(100.0 - sum(float(row["weight_pct"]) for row in current_positions), 2),
         "positions": current_positions,
         "positionPriceRefs": refs,
         "liveSignalDay": generated_day,
         "liveRegimeState": str(risk.get("label", "unknown") or "unknown"),
         "liveRegimeReason": str(regime_controls.get("note", "") or ""),
+        "liveCashPct": round(float(executed_cash_pct), 2) if executed_cash_pct is not None else round(100.0 - sum(float(row["weight_pct"]) for row in positions), 2),
         "livePositions": positions,
         "livePositionPriceRefs": live_refs,
         "signalQqqClose": round(float(qqq_close), 2) if qqq_close is not None else None,

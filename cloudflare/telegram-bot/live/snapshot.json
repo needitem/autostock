@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-14 02:35:05.899813+00:00",
+  "generatedAt": "2026-04-14 05:48:31.925181+00:00",
   "strategies": {
     "v4": {
       "label": "Strategy V4",
@@ -17,6 +17,7 @@
       "entryDay": "2026-04-14",
       "regimeState": "neutral",
       "regimeReason": "Neutral: balanced exposure; keep core trend bias. Flows confidence=medium; scale exposure x0.90.",
+      "cashPct": 58.75,
       "positions": [
         {
           "symbol": "FANG",
@@ -108,6 +109,7 @@
       "liveSignalDay": "2026-04-14",
       "liveRegimeState": "neutral",
       "liveRegimeReason": "Neutral: balanced exposure; keep core trend bias. Flows confidence=medium; scale exposure x0.90.",
+      "liveCashPct": 58.75,
       "livePositions": [
         {
           "symbol": "FANG",
