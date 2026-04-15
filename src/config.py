@@ -172,19 +172,19 @@ def get_all_us_stocks() -> list[str]:
 
 
 def fetch_stock_sector(symbol: str) -> dict[str, str]:
-    """Fetch sector/industry metadata from yfinance."""
-    import yfinance as yf
+    """Fetch sector/industry metadata from the shared core Yahoo adapter."""
+    from core.stock_data import get_stock_info
 
     symbol = _normalize_symbol(symbol) or ""
     if not symbol:
         return {"symbol": "", "sector": "Unknown", "industry": "Unknown", "name": ""}
     try:
-        info = yf.Ticker(symbol).info or {}
+        info = get_stock_info(symbol)
         return {
             "symbol": symbol,
             "sector": str(info.get("sector") or "Unknown"),
             "industry": str(info.get("industry") or "Unknown"),
-            "name": str(info.get("shortName") or symbol),
+            "name": str(info.get("name") or symbol),
         }
     except Exception:
         return {"symbol": symbol, "sector": "Unknown", "industry": "Unknown", "name": symbol}

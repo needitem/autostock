@@ -4,21 +4,13 @@ Compatibility data fetcher module used by legacy tests.
 from __future__ import annotations
 
 import pandas as pd
-import yfinance as yf
 
-from core.stock_data import get_market_condition as _core_market_condition
+from core.stock_data import get_market_condition as _core_market_condition, get_stock_data as _core_get_stock_data
 
 
 def get_stock_data(symbol: str, period: str = "15mo") -> pd.DataFrame | None:
-    """Fetch OHLCV data via yfinance."""
-    try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period=period)
-        if df is None or df.empty:
-            return None
-        return df
-    except Exception:
-        return None
+    """Fetch OHLCV data via the shared core Yahoo Finance adapter."""
+    return _core_get_stock_data(symbol, period=period)
 
 
 def check_market_condition() -> dict:

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 
-import yfinance as yf
+from core.stock_data import get_stock_info
 
 
 def _to_float(value, default: float = 0.0) -> float:
@@ -27,40 +27,30 @@ def _to_pct(value) -> float:
     if math.isnan(v):
         return 0.0
     return v * 100 if abs(v) <= 1 else v
-
-
-def _safe_info(symbol: str) -> dict:
-    try:
-        ticker = yf.Ticker(symbol)
-        return ticker.info or {}
-    except Exception:
-        return {}
-
-
 def get_financial_data(symbol: str) -> dict:
     symbol = (symbol or "").upper()
-    info = _safe_info(symbol)
+    info = get_stock_info(symbol) if symbol else {}
 
     data = {
         "symbol": symbol,
-        "name": info.get("shortName", symbol),
-        "roe": _to_float(info.get("returnOnEquity", 0.0)),
-        "roa": _to_float(info.get("returnOnAssets", 0.0)),
-        "profit_margin": _to_float(info.get("profitMargins", 0.0)),
-        "operating_margin": _to_float(info.get("operatingMargins", 0.0)),
-        "pe_trailing": _to_float(info.get("trailingPE", 0.0)),
-        "pb": _to_float(info.get("priceToBook", 0.0)),
-        "peg": _to_float(info.get("pegRatio", 0.0)),
-        "revenue_growth": _to_float(info.get("revenueGrowth", 0.0)),
-        "earnings_growth": _to_float(info.get("earningsGrowth", 0.0)),
-        "debt_to_equity": _to_float(info.get("debtToEquity", 0.0)),
-        "current_ratio": _to_float(info.get("currentRatio", 0.0)),
-        "free_cash_flow": _to_float(info.get("freeCashflow", 0.0)),
-        "dividend_yield": _to_float(info.get("dividendYield", 0.0)),
-        "payout_ratio": _to_float(info.get("payoutRatio", 0.0)),
+        "name": info.get("name", symbol),
+        "roe": _to_float(info.get("roe", 0.0)),
+        "roa": _to_float(info.get("roa", 0.0)),
+        "profit_margin": _to_float(info.get("profit_margin", 0.0)),
+        "operating_margin": _to_float(info.get("operating_margin", 0.0)),
+        "pe_trailing": _to_float(info.get("pe", 0.0)),
+        "pb": _to_float(info.get("pb", 0.0)),
+        "peg": _to_float(info.get("peg", 0.0)),
+        "revenue_growth": _to_float(info.get("revenue_growth", 0.0)),
+        "earnings_growth": _to_float(info.get("earnings_growth", 0.0)),
+        "debt_to_equity": _to_float(info.get("debt_to_equity", 0.0)),
+        "current_ratio": _to_float(info.get("current_ratio", 0.0)),
+        "free_cash_flow": _to_float(info.get("free_cash_flow", 0.0)),
+        "dividend_yield": _to_float(info.get("dividend_yield", 0.0)),
+        "payout_ratio": 0.0,
     }
 
-    if not info:
+    if not info or not info.get("name"):
         data["error"] = "financial data unavailable"
     return data
 
