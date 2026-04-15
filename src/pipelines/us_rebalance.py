@@ -10,6 +10,7 @@ import numpy as np
 
 from ai.analyzer import AIAnalyzer
 from config import load_all_us_stocks, load_nasdaq_100, load_sp500
+from core.daily_defense import daily_defense_state
 from core.indicators import calculate_indicators
 from core.stock_data import get_market_condition, get_stock_data, get_stock_info
 
@@ -454,6 +455,52 @@ def _market_exposure_filter(market_ctx: dict[str, Any]) -> dict[str, Any]:
     if price < ma50:
         return {"multiplier": 0.85, "reason": "benchmark_below_ma50"}
     return {"multiplier": 1.0, "reason": "benchmark_above_ma50"}
+
+
+def _daily_defense_overlay(market_ctx: dict[str, Any]) -> dict[str, Any]:
+    enabled = _env_bool("AI_DAILY_DEFENSE_OVERLAY", True)
+    soft_exposure_pct = max(0.0, min(100.0, _env_float("AI_DAILY_DEFENSE_SOFT_EXPOSURE_PCT", 85.0)))
+    hard_exposure_pct = max(0.0, min(100.0, _env_float("AI_DAILY_DEFENSE_HARD_EXPOSURE_PCT", 50.0)))
+    vix_soft = _env_float("AI_DAILY_DEFENSE_VIX_SOFT", 26.0)
+    vix_hard = _env_float("AI_DAILY_DEFENSE_VIX_HARD", 32.0)
+    return21d_soft = _env_float("AI_DAILY_DEFENSE_RETURN21_SOFT", -4.0)
+    if not enabled:
+        return {
+            "enabled": False,
+            "state": "disabled",
+            "target_exposure_pct": 100.0,
+            "reasons": [],
+        }
+
+    ma50 = _f(market_ctx.get("ma50"), 0.0)
+    ma200 = _f(market_ctx.get("ma200"), 0.0)
+    price = _f(market_ctx.get("price"), 0.0)
+    ma50_gap_pct = ((price / ma50) - 1.0) * 100.0 if price > 0 and ma50 > 0 else 0.0
+    ma200_gap_pct = ((price / ma200) - 1.0) * 100.0 if price > 0 and ma200 > 0 else 0.0
+    state = daily_defense_state(
+        ma50_gap_pct=ma50_gap_pct,
+        ma200_gap_pct=ma200_gap_pct,
+        return21d_pct=_f(market_ctx.get("benchmark_return_21d"), 0.0),
+        vix_close=market_ctx.get("vix_close"),
+        soft_exposure_pct=soft_exposure_pct,
+        hard_exposure_pct=hard_exposure_pct,
+        vix_soft=vix_soft,
+        vix_hard=vix_hard,
+        return21d_soft=return21d_soft,
+    )
+    return {
+        "enabled": True,
+        "state": str(state.get("state", "normal")),
+        "target_exposure_pct": float(state.get("target_exposure_pct", 100.0)),
+        "reasons": list(state.get("reasons", [])),
+        "soft_exposure_pct": float(soft_exposure_pct),
+        "hard_exposure_pct": float(hard_exposure_pct),
+        "vix_soft": float(vix_soft),
+        "vix_hard": float(vix_hard),
+        "return21d_soft": float(return21d_soft),
+        "ma50_gap_pct": round(ma50_gap_pct, 2),
+        "ma200_gap_pct": round(ma200_gap_pct, 2),
+    }
 
 
 def _rebound_settings() -> dict[str, Any]:
@@ -1801,13 +1848,17 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
 
     market_ctx = get_market_condition()
     market_filter = _market_exposure_filter(market_ctx)
+    daily_defense = _daily_defense_overlay(market_ctx)
     regime_exposure_target_pct = float(regime.get("exposure_target_pct", 65.0))
-    final_exposure_target_pct = max(
+    pre_overlay_exposure_target_pct = max(
         0.0,
         min(100.0, round(regime_exposure_target_pct * _f(market_filter.get("multiplier", 1.0), 1.0), 2)),
     )
+    final_exposure_target_pct = min(pre_overlay_exposure_target_pct, float(daily_defense.get("target_exposure_pct", 100.0)))
     regime["regime_exposure_target_pct"] = regime_exposure_target_pct
     regime["market_filter"] = market_filter
+    regime["daily_defense_overlay"] = daily_defense
+    regime["exposure_target_pre_overlay_pct"] = pre_overlay_exposure_target_pct
     regime["exposure_target_pre_feasibility_pct"] = final_exposure_target_pct
 
     features: list[dict[str, Any]] = []
@@ -2060,7 +2111,7 @@ def run_us_rebalance(report_dir: str | None = None) -> dict[str, Any]:
     enable_execution_risk_cap = _env_bool("AI_ENABLE_EXECUTION_RISK_CAP", True)
     risk_off_context = str(regime.get("label", "neutral")).strip().lower() == "risk_off" or str(
         (market_filter or {}).get("reason", "")
-    ).strip().lower() in {"benchmark_below_ma200"}
+    ).strip().lower() in {"benchmark_below_ma200"} or str(daily_defense.get("state", "normal")) == "hard_defense"
     weights_pct, execution_plans_target, execution_risk_audit = _apply_execution_risk_cap(
         target_weights_pct=weights_pct,
         prev_port=prev_port,

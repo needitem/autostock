@@ -17,9 +17,10 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+from core.daily_defense import daily_defense_state
 
 DATA_DIR = ROOT / "data"
 RUNS_DIR = DATA_DIR / "runs"
@@ -408,6 +409,10 @@ def _market_ctx(
         "regime": regime,
         "bench_r21": bench_r21,
         "bench_r63": bench_r63,
+        "bench_close": close,
+        "bench_ma200": ma200,
+        "bench_ma50_gap": ((close / _f(hist["Close"].rolling(50).mean().iloc[-1], close)) - 1.0) * 100.0 if len(hist) >= 50 else 0.0,
+        "bench_ma200_gap": ((close / ma200) - 1.0) * 100.0 if ma200 > 0 else 0.0,
         "vix_close": v,
         "algo_uses_benchmark": bool(use_benchmark_features),
     }
@@ -444,6 +449,127 @@ def _build_frames(symbols: list[str]) -> dict[str, pd.DataFrame]:
             continue
         out[t] = f[cols].dropna(subset=["Open", "High", "Low", "Close"]).sort_index()
     return out
+
+
+def _frame_open_to_open_return(frame: pd.DataFrame, start_day: pd.Timestamp, end_day: pd.Timestamp) -> float:
+    start_pos = _asof_pos(frame.index, start_day)
+    end_pos = _asof_pos(frame.index, end_day)
+    if start_pos < 0 or end_pos <= start_pos or end_pos >= len(frame):
+        return 0.0
+    open0 = _f(frame.iloc[start_pos].get("Open"), -1.0)
+    open1 = _f(frame.iloc[end_pos].get("Open"), -1.0)
+    if open0 <= 0 or open1 <= 0:
+        return 0.0
+    return (open1 / open0 - 1.0) * 100.0
+
+
+def _daily_defense_overlay_return(
+    *,
+    frames: dict[str, pd.DataFrame],
+    bench_frame: pd.DataFrame,
+    bench_ind: pd.DataFrame,
+    vix_frame: pd.DataFrame | None,
+    signal_day: pd.Timestamp,
+    entry_pos: int,
+    exit_pos: int,
+    portfolio: dict[str, float],
+    enabled: bool,
+    soft_exposure_pct: float,
+    hard_exposure_pct: float,
+    vix_soft: float,
+    vix_hard: float,
+    return21d_soft: float,
+) -> dict[str, Any]:
+    if not enabled or exit_pos <= entry_pos:
+        return {
+            "gross_return_pct": None,
+            "avg_exposure_pct": 100.0,
+            "soft_segments": 0,
+            "hard_segments": 0,
+            "last_state": "normal",
+        }
+
+    signal_ref = _last_day(bench_ind, signal_day)
+    if signal_ref is None:
+        return {
+            "gross_return_pct": None,
+            "avg_exposure_pct": 100.0,
+            "soft_segments": 0,
+            "hard_segments": 0,
+            "last_state": "normal",
+        }
+
+    vix_signal = None
+    if vix_frame is not None and not vix_frame.empty:
+        vix_ref = _last_day(vix_frame, signal_day)
+        if vix_ref is not None:
+            vix_signal = _f(vix_frame.loc[vix_ref].get("Close"), 0.0)
+
+    initial_state = daily_defense_state(
+        ma50_gap_pct=_f(bench_ind.loc[signal_ref].get("ma50_gap"), 0.0),
+        ma200_gap_pct=_f(bench_ind.loc[signal_ref].get("ma200_gap"), 0.0),
+        return21d_pct=_f(bench_ind.loc[signal_ref].get("return_21d"), 0.0),
+        vix_close=vix_signal,
+        soft_exposure_pct=soft_exposure_pct,
+        hard_exposure_pct=hard_exposure_pct,
+        vix_soft=vix_soft,
+        vix_hard=vix_hard,
+        return21d_soft=return21d_soft,
+    )
+    exposure_ratio = max(0.0, min(1.0, float(initial_state.get("target_exposure_pct", 100.0)) / 100.0))
+    last_state = str(initial_state.get("state", "normal"))
+    soft_segments = 1 if last_state == "soft_defense" else 0
+    hard_segments = 1 if last_state == "hard_defense" else 0
+    exposure_samples = [exposure_ratio * 100.0]
+    curve = 1.0
+
+    for pos in range(entry_pos, exit_pos):
+        start_day = pd.Timestamp(bench_frame.index[pos])
+        end_day = pd.Timestamp(bench_frame.index[pos + 1])
+        segment_ret = 0.0
+        for sym, weight in portfolio.items():
+            if sym == "__CASH__":
+                continue
+            frame = frames.get(sym)
+            if frame is None or frame.empty:
+                continue
+            segment_ret += float(weight) * _frame_open_to_open_return(frame, start_day, end_day)
+        curve *= 1.0 + ((segment_ret / 100.0) * exposure_ratio)
+
+        bench_ref = _last_day(bench_ind, start_day)
+        if bench_ref is None:
+            continue
+        vix_close = None
+        if vix_frame is not None and not vix_frame.empty:
+            vix_ref = _last_day(vix_frame, start_day)
+            if vix_ref is not None:
+                vix_close = _f(vix_frame.loc[vix_ref].get("Close"), 0.0)
+        state = daily_defense_state(
+            ma50_gap_pct=_f(bench_ind.loc[bench_ref].get("ma50_gap"), 0.0),
+            ma200_gap_pct=_f(bench_ind.loc[bench_ref].get("ma200_gap"), 0.0),
+            return21d_pct=_f(bench_ind.loc[bench_ref].get("return_21d"), 0.0),
+            vix_close=vix_close,
+            soft_exposure_pct=soft_exposure_pct,
+            hard_exposure_pct=hard_exposure_pct,
+            vix_soft=vix_soft,
+            vix_hard=vix_hard,
+            return21d_soft=return21d_soft,
+        )
+        exposure_ratio = max(0.0, min(1.0, float(state.get("target_exposure_pct", 100.0)) / 100.0))
+        last_state = str(state.get("state", "normal"))
+        if last_state == "soft_defense":
+            soft_segments += 1
+        elif last_state == "hard_defense":
+            hard_segments += 1
+        exposure_samples.append(exposure_ratio * 100.0)
+
+    return {
+        "gross_return_pct": (curve - 1.0) * 100.0,
+        "avg_exposure_pct": float(sum(exposure_samples) / len(exposure_samples)) if exposure_samples else 100.0,
+        "soft_segments": int(soft_segments),
+        "hard_segments": int(hard_segments),
+        "last_state": last_state,
+    }
 
 
 def _indicator_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -3134,6 +3260,12 @@ def run() -> None:
     momentum_blend_high_breadth_up50_min = _f_env("AI_MOMENTUM_BLEND_HIGH_BREADTH_UP50_MIN", -1.0)
     momentum_blend_high_breadth_pos63_min = _f_env("AI_MOMENTUM_BLEND_HIGH_BREADTH_POS63_MIN", -1.0)
     momentum_blend_high_vix_max = _f_env("AI_MOMENTUM_BLEND_HIGH_VIX_MAX", 0.0)
+    daily_defense_overlay = _as_bool_env("AI_DAILY_DEFENSE_OVERLAY", False)
+    daily_defense_soft_exposure_pct = max(0.0, min(100.0, _f_env("AI_DAILY_DEFENSE_SOFT_EXPOSURE_PCT", 60.0)))
+    daily_defense_hard_exposure_pct = max(0.0, min(100.0, _f_env("AI_DAILY_DEFENSE_HARD_EXPOSURE_PCT", 25.0)))
+    daily_defense_vix_soft = _f_env("AI_DAILY_DEFENSE_VIX_SOFT", 24.0)
+    daily_defense_vix_hard = _f_env("AI_DAILY_DEFENSE_VIX_HARD", 32.0)
+    daily_defense_return21_soft = _f_env("AI_DAILY_DEFENSE_RETURN21_SOFT", -2.0)
 
     started_at = datetime.now(timezone.utc)
     ai_calls = 0
@@ -3881,6 +4013,25 @@ def run() -> None:
                 continue
             mom_gross += float(w) * float(fwd_ret_by_symbol.get(sym, 0.0))
 
+        daily_defense_result = _daily_defense_overlay_return(
+            frames=frames,
+            bench_frame=bench_frame,
+            bench_ind=bench_ind,
+            vix_frame=frames.get(VIX),
+            signal_day=signal_day,
+            entry_pos=bench_entry_pos,
+            exit_pos=bench_exit_pos,
+            portfolio=exec_port,
+            enabled=daily_defense_overlay,
+            soft_exposure_pct=daily_defense_soft_exposure_pct,
+            hard_exposure_pct=daily_defense_hard_exposure_pct,
+            vix_soft=daily_defense_vix_soft,
+            vix_hard=daily_defense_vix_hard,
+            return21d_soft=daily_defense_return21_soft,
+        )
+        if daily_defense_result.get("gross_return_pct") is not None:
+            gross = float(daily_defense_result["gross_return_pct"])
+
         turn = _turnover(prev_exec_port, exec_port)
         core_turn = _turnover(prev_port, core_port)
         mom_turn = _turnover(prev_mom, mom)
@@ -3914,6 +4065,11 @@ def run() -> None:
                 "candidate_count_safe": int(len(safe_feats)),
                 "target_positions": int(target_top_k),
                 "sit_out": bool(out.get("_sit_out", False)),
+                "daily_defense_enabled": bool(daily_defense_overlay),
+                "daily_defense_avg_exposure_pct": float(daily_defense_result.get("avg_exposure_pct", 100.0) or 100.0),
+                "daily_defense_soft_segments": int(daily_defense_result.get("soft_segments", 0) or 0),
+                "daily_defense_hard_segments": int(daily_defense_result.get("hard_segments", 0) or 0),
+                "daily_defense_last_state": str(daily_defense_result.get("last_state", "normal") or "normal"),
                 "regime_state": str(out.get("_regime_state", "")),
                 "regime_reason": str(out.get("_regime_reason", "")),
                 "positions": json.dumps(exec_weights_pct, ensure_ascii=True),
@@ -4095,6 +4251,12 @@ def run() -> None:
         "momentum_blend_high_breadth_pos63_min": float(momentum_blend_high_breadth_pos63_min),
         "momentum_blend_high_vix_max": float(momentum_blend_high_vix_max),
         "momentum_blend_sitout_only": bool(momentum_blend_sitout_only),
+        "daily_defense_overlay": bool(daily_defense_overlay),
+        "daily_defense_soft_exposure_pct": float(daily_defense_soft_exposure_pct),
+        "daily_defense_hard_exposure_pct": float(daily_defense_hard_exposure_pct),
+        "daily_defense_vix_soft": float(daily_defense_vix_soft),
+        "daily_defense_vix_hard": float(daily_defense_vix_hard),
+        "daily_defense_return21_soft": float(daily_defense_return21_soft),
         "ignore_prev_context": bool(ignore_prev_context),
         "force_fallback": bool(force_fallback),
     }
@@ -4247,6 +4409,12 @@ def run() -> None:
         "momentum_blend_high_breadth_pos63_min": float(momentum_blend_high_breadth_pos63_min),
         "momentum_blend_high_vix_max": float(momentum_blend_high_vix_max),
         "momentum_blend_sitout_only": bool(momentum_blend_sitout_only),
+        "daily_defense_overlay": bool(daily_defense_overlay),
+        "daily_defense_soft_exposure_pct": float(daily_defense_soft_exposure_pct),
+        "daily_defense_hard_exposure_pct": float(daily_defense_hard_exposure_pct),
+        "daily_defense_vix_soft": float(daily_defense_vix_soft),
+        "daily_defense_vix_hard": float(daily_defense_vix_hard),
+        "daily_defense_return21_soft": float(daily_defense_return21_soft),
         "ignore_prev_context": bool(ignore_prev_context),
         "force_fallback": bool(force_fallback),
         "started_at_utc": started_at.isoformat(),
@@ -4263,6 +4431,9 @@ def run() -> None:
         "avg_candidate_count_raw": float(df["candidate_count_raw"].mean()) if "candidate_count_raw" in df else 0.0,
         "avg_candidate_count_safe": float(df["candidate_count_safe"].mean()) if "candidate_count_safe" in df else 0.0,
         "avg_target_positions": float(df["target_positions"].mean()) if "target_positions" in df else 0.0,
+        "avg_daily_defense_exposure_pct": float(df["daily_defense_avg_exposure_pct"].mean()) if "daily_defense_avg_exposure_pct" in df else 100.0,
+        "daily_defense_soft_segments_total": int(df["daily_defense_soft_segments"].sum()) if "daily_defense_soft_segments" in df else 0,
+        "daily_defense_hard_segments_total": int(df["daily_defense_hard_segments"].sum()) if "daily_defense_hard_segments" in df else 0,
         "missing_price_symbols": missing_price_symbols[:200],
         "avg_universe_coverage_pct": float(df["universe_coverage_pct"].mean()) if "universe_coverage_pct" in df else 0.0,
         "min_universe_coverage_pct": float(df["universe_coverage_pct"].min()) if "universe_coverage_pct" in df else 0.0,
