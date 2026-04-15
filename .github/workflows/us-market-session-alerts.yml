@@ -35,6 +35,8 @@ jobs:
 
       - name: Recompute latest US rebalance before market-session alert
         run: python src/main.py --rebalance-us
+        env:
+          AI_ALLOW_FALLBACK_NO_API: "1"
 
       - name: Export latest strategy snapshot
         run: python scripts/export_cloudflare_bot_data.py
