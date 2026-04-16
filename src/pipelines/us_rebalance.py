@@ -459,10 +459,10 @@ def _market_exposure_filter(market_ctx: dict[str, Any]) -> dict[str, Any]:
 
 def _daily_defense_overlay(market_ctx: dict[str, Any]) -> dict[str, Any]:
     enabled = _env_bool("AI_DAILY_DEFENSE_OVERLAY", True)
-    soft_exposure_pct = max(0.0, min(100.0, _env_float("AI_DAILY_DEFENSE_SOFT_EXPOSURE_PCT", 85.0)))
-    hard_exposure_pct = max(0.0, min(100.0, _env_float("AI_DAILY_DEFENSE_HARD_EXPOSURE_PCT", 50.0)))
-    vix_soft = _env_float("AI_DAILY_DEFENSE_VIX_SOFT", 26.0)
-    vix_hard = _env_float("AI_DAILY_DEFENSE_VIX_HARD", 32.0)
+    soft_exposure_pct = max(0.0, min(100.0, _env_float("AI_DAILY_DEFENSE_SOFT_EXPOSURE_PCT", 75.0)))
+    hard_exposure_pct = max(0.0, min(100.0, _env_float("AI_DAILY_DEFENSE_HARD_EXPOSURE_PCT", 55.0)))
+    vix_soft = _env_float("AI_DAILY_DEFENSE_VIX_SOFT", 27.0)
+    vix_hard = _env_float("AI_DAILY_DEFENSE_VIX_HARD", 33.0)
     return21d_soft = _env_float("AI_DAILY_DEFENSE_RETURN21_SOFT", -4.0)
     if not enabled:
         return {
