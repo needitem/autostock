@@ -112,14 +112,25 @@ function formatDeltaPct(value: number, digits = 2): string {
   return `${sign}${value.toFixed(digits)}%p`;
 }
 
-function formatMaybePct(value: unknown, digits = 2): string {
+function parseOptionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
   const num = Number(value);
-  return Number.isFinite(num) ? formatPct(num, digits) : "-";
+  return Number.isFinite(num) ? num : null;
+}
+
+function formatMaybePct(value: unknown, digits = 2): string {
+  const num = parseOptionalNumber(value);
+  return num === null ? "-" : formatPct(num, digits);
 }
 
 function formatMaybePrice(value: unknown, digits = 2): string {
-  const num = Number(value);
-  return Number.isFinite(num) ? num.toFixed(digits) : "-";
+  const num = parseOptionalNumber(value);
+  return num === null ? "-" : num.toFixed(digits);
 }
 
 function formatUsd(value: number, digits = 2): string {
@@ -206,6 +217,13 @@ function isSnapshotLike(value: unknown): value is AppSnapshot {
 function snapshotTimestamp(snapshot: AppSnapshot): number {
   const ts = Date.parse(String(snapshot.generatedAt || ""));
   return Number.isFinite(ts) ? ts : 0;
+}
+
+function hasUsableRebalanceSnapshot(snapshot: AppSnapshot): boolean {
+  const signal = snapshot.rebalance.v4;
+  return Boolean(
+    String(signal.latestMarketDay || signal.signalDay || signal.liveSignalDay || "").trim()
+  );
 }
 
 async function loadSnapshot(env: Env): Promise<AppSnapshot> {
@@ -1096,6 +1114,9 @@ async function syncSnapshot(request: Request, env: Env): Promise<Response> {
   const payload = (await request.json()) as unknown;
   if (!isSnapshotLike(payload)) {
     return jsonResponse({ ok: false, error: "invalid_snapshot" }, { status: 400 });
+  }
+  if (!hasUsableRebalanceSnapshot(payload)) {
+    return jsonResponse({ ok: false, error: "empty_rebalance_snapshot" }, { status: 400 });
   }
   await saveSnapshot(env, payload);
   return jsonResponse({

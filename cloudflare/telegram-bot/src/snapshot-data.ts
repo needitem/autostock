@@ -1,198 +1,176 @@
 export const SNAPSHOT = {
-  "generatedAt": "2026-04-14 23:22:54.004436+00:00",
+  "generatedAt": "2026-04-16 07:09:55.305330+00:00",
   "strategies": {
     "v4": {
       "label": "Strategy V4",
-      "cagr": 54.16,
+      "cagr": 49.5,
       "benchmarkCagr": 18.96,
-      "drawdown": -33.81,
+      "drawdown": -29.36,
       "turnover": 0.197,
-      "pAlphaGt0": 0.999
+      "pAlphaGt0": 0.997
     }
   },
   "rebalance": {
     "v4": {
-      "latestMarketDay": "2026-04-14",
-      "signalDay": "2026-04-14",
-      "entryDay": "2026-04-14",
+      "latestMarketDay": "2026-04-16",
+      "signalDay": "2026-04-16",
+      "entryDay": "2026-04-16",
       "regimeState": "neutral",
       "regimeReason": "Neutral: balanced exposure; keep core trend bias. Flows confidence=medium; scale exposure x0.90.",
-      "cashPct": 58.75,
+      "cashPct": 74.22,
       "positions": [
         {
-          "symbol": "FANG",
-          "weight_pct": 8.2797
-        },
-        {
           "symbol": "ETR",
-          "weight_pct": 8.1346
-        },
-        {
-          "symbol": "DOW",
-          "weight_pct": 6.3128
+          "weight_pct": 8.0693
         },
         {
           "symbol": "LYB",
-          "weight_pct": 5.4471
+          "weight_pct": 5.4795
+        },
+        {
+          "symbol": "GLW",
+          "weight_pct": 3.78
+        },
+        {
+          "symbol": "CIEN",
+          "weight_pct": 3.376
+        },
+        {
+          "symbol": "LITE",
+          "weight_pct": 2.7172
         },
         {
           "symbol": "DELL",
-          "weight_pct": 5.3848
-        },
-        {
-          "symbol": "ARM",
-          "weight_pct": 4.54
-        },
-        {
-          "symbol": "APA",
-          "weight_pct": 3.15
+          "weight_pct": 2.3625
         }
       ],
       "positionPriceRefs": [
         {
-          "symbol": "FANG",
-          "weightPct": 8.2797,
-          "entryDay": "2026-04-14",
-          "entryDayOpen": 188.41,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 189.1
-        },
-        {
           "symbol": "ETR",
-          "weightPct": 8.1346,
-          "entryDay": "2026-04-14",
-          "entryDayOpen": 113.43,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 115.33
-        },
-        {
-          "symbol": "DOW",
-          "weightPct": 6.3128,
-          "entryDay": "2026-04-14",
-          "entryDayOpen": 39.92,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 40.11
+          "weightPct": 8.0693,
+          "entryDay": "2026-04-16",
+          "entryDayOpen": 112.08,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 114.95
         },
         {
           "symbol": "LYB",
-          "weightPct": 5.4471,
-          "entryDay": "2026-04-14",
-          "entryDayOpen": 75.1,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 75.51
+          "weightPct": 5.4795,
+          "entryDay": "2026-04-16",
+          "entryDayOpen": 70.98,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 73.13
+        },
+        {
+          "symbol": "GLW",
+          "weightPct": 3.78,
+          "entryDay": "2026-04-16",
+          "entryDayOpen": 128.75,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 168.27
+        },
+        {
+          "symbol": "CIEN",
+          "weightPct": 3.376,
+          "entryDay": "2026-04-16",
+          "entryDayOpen": 368.11,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 475.76
+        },
+        {
+          "symbol": "LITE",
+          "weightPct": 2.7172,
+          "entryDay": "2026-04-16",
+          "entryDayOpen": 656.58,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 824.01
         },
         {
           "symbol": "DELL",
-          "weightPct": 5.3848,
-          "entryDay": "2026-04-14",
-          "entryDayOpen": 157.09,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 189.79
-        },
-        {
-          "symbol": "ARM",
-          "weightPct": 4.54,
-          "entryDay": "2026-04-14",
-          "entryDayOpen": 139.39,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 157.58
-        },
-        {
-          "symbol": "APA",
-          "weightPct": 3.15,
-          "entryDay": "2026-04-14",
-          "entryDayOpen": 35.54,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 39.49
+          "weightPct": 2.3625,
+          "entryDay": "2026-04-16",
+          "entryDayOpen": 176.42,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 177.28
         }
       ],
-      "liveSignalDay": "2026-04-14",
+      "liveSignalDay": "2026-04-16",
       "liveRegimeState": "neutral",
       "liveRegimeReason": "Neutral: balanced exposure; keep core trend bias. Flows confidence=medium; scale exposure x0.90.",
-      "liveCashPct": 58.75,
+      "liveCashPct": 74.22,
       "livePositions": [
         {
-          "symbol": "FANG",
-          "weight_pct": 8.2797
-        },
-        {
           "symbol": "ETR",
-          "weight_pct": 8.1346
-        },
-        {
-          "symbol": "DOW",
-          "weight_pct": 6.3128
+          "weight_pct": 8.0693
         },
         {
           "symbol": "LYB",
-          "weight_pct": 5.4471
+          "weight_pct": 5.4795
+        },
+        {
+          "symbol": "GLW",
+          "weight_pct": 3.78
+        },
+        {
+          "symbol": "CIEN",
+          "weight_pct": 3.376
+        },
+        {
+          "symbol": "LITE",
+          "weight_pct": 2.7172
         },
         {
           "symbol": "DELL",
-          "weight_pct": 5.3848
-        },
-        {
-          "symbol": "ARM",
-          "weight_pct": 4.54
-        },
-        {
-          "symbol": "APA",
-          "weight_pct": 3.15
+          "weight_pct": 2.3625
         }
       ],
       "livePositionPriceRefs": [
         {
-          "symbol": "FANG",
-          "weightPct": 8.2797,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 189.1
-        },
-        {
           "symbol": "ETR",
-          "weightPct": 8.1346,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 115.33
-        },
-        {
-          "symbol": "DOW",
-          "weightPct": 6.3128,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 40.11
+          "weightPct": 8.0693,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 114.95
         },
         {
           "symbol": "LYB",
-          "weightPct": 5.4471,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 75.51
+          "weightPct": 5.4795,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 73.13
+        },
+        {
+          "symbol": "GLW",
+          "weightPct": 3.78,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 168.27
+        },
+        {
+          "symbol": "CIEN",
+          "weightPct": 3.376,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 475.76
+        },
+        {
+          "symbol": "LITE",
+          "weightPct": 2.7172,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 824.01
         },
         {
           "symbol": "DELL",
-          "weightPct": 5.3848,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 189.79
-        },
-        {
-          "symbol": "ARM",
-          "weightPct": 4.54,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 157.58
-        },
-        {
-          "symbol": "APA",
-          "weightPct": 3.15,
-          "latestMarketDay": "2026-04-14",
-          "latestClose": 39.49
+          "weightPct": 2.3625,
+          "latestMarketDay": "2026-04-16",
+          "latestClose": 177.28
         }
       ],
-      "signalQqqClose": 617.39,
-      "signalQqqMa200Gap": 3.6394,
-      "signalQqqReturn21d": 3.5,
-      "signalQqqReturn63d": -1.35,
+      "signalQqqClose": 637.4,
+      "signalQqqMa200Gap": 6.8405,
+      "signalQqqReturn21d": 6.3,
+      "signalQqqReturn63d": 1.91,
       "signalVixClose": null,
-      "latestQqqClose": 617.39,
-      "latestQqqMa200Gap": 3.6394,
-      "latestQqqReturn21d": 3.5,
-      "latestQqqReturn63d": -1.35,
+      "latestQqqClose": 637.4,
+      "latestQqqMa200Gap": 6.8405,
+      "latestQqqReturn21d": 6.3,
+      "latestQqqReturn63d": 1.91,
       "latestVixClose": null
     }
   }

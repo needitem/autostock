@@ -13,6 +13,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  AI_ALLOW_FALLBACK_NO_API: "1"
 
 jobs:
   refresh-snapshot-and-notify:
@@ -33,6 +34,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Recompute current rebalance before export
+        run: python src/main.py --rebalance-us
 
       - name: Export latest strategy snapshot
         run: python scripts/export_cloudflare_bot_data.py
@@ -60,6 +64,7 @@ jobs:
           payload = json.loads(Path("/tmp/snapshot.json").read_text(encoding="utf-8"))
           assert "strategies" in payload
           assert "rebalance" in payload
+          assert payload["rebalance"]["v4"]["latestMarketDay"], "rebalance snapshot missing latestMarketDay"
           print("Snapshot endpoint verified.")
           PY
 
