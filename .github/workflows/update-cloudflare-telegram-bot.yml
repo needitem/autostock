@@ -38,6 +38,9 @@ jobs:
       - name: Recompute current rebalance before export
         run: python src/main.py --rebalance-us
 
+      - name: Recompute event runtime before export
+        run: python src/main.py --event-runtime --v2-profile tsla
+
       - name: Export latest strategy snapshot
         run: python scripts/export_cloudflare_bot_data.py
 

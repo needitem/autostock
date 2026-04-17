@@ -11,6 +11,7 @@ Usage:
   python src/main.py --deep-us        # US-only free pipeline report
   python src/main.py --all-us         # US-only full run (engines + rendered report)
   python src/main.py --rebalance-us   # US-only rebalance using report + charts
+  python src/main.py --strategy-v2    # Autostock V2 watchlist event engine
   python src/main.py --backtest       # Strategy V4 stock-momentum baseline + verification
   python src/main.py --strategy-v4    # Strategy V4 stock-momentum baseline + verification
   python src/main.py --stock-backtest # Strategy V4 stock-momentum baseline + verification
@@ -24,6 +25,7 @@ import os
 import sys
 from datetime import datetime
 
+from event_profile import load_event_profile
 from strategy_catalog import get_strategy_definition
 from strategy_runtime import run_strategy_by_key
 
@@ -296,6 +298,72 @@ def run_rebalance_us_once() -> None:
     print(f"orders_csv: {result.get('orders_csv')}")
 
 
+def run_autostock_v2_once(
+    *,
+    watchlist_override: list[str] | None = None,
+    event_feed_path: str | None = None,
+    rss_urls: list[str] | None = None,
+    profile_name: str | None = None,
+) -> None:
+    from pipelines.autostock_v2_pipeline import run_autostock_v2
+
+    profile = load_event_profile(profile_name) if profile_name else None
+    resolved_watchlist = watchlist_override or (profile.get("symbols") if isinstance(profile, dict) else None)
+    resolved_event_file = event_feed_path or (str(profile.get("event_file")).strip() if isinstance(profile, dict) and profile.get("event_file") else None)
+    resolved_rss = rss_urls or (profile.get("rss_urls") if isinstance(profile, dict) else None)
+    print(f"[{datetime.now()}] autostock v2 started...")
+    result = run_autostock_v2(
+        profile=profile,
+        watchlist_override=resolved_watchlist,
+        event_feed_path=resolved_event_file,
+        rss_urls=resolved_rss,
+    )
+    payload = result.get("payload", {}) if isinstance(result, dict) else {}
+    recommendations = payload.get("recommendations", []) if isinstance(payload, dict) else []
+    top_rows = [row for row in recommendations if isinstance(row, dict)][:5]
+    print(f"autostock_v2_json: {result.get('report_path')}")
+    print(f"autostock_v2_md: {result.get('md_path')}")
+    if isinstance(payload, dict):
+        macro = payload.get("macro_overlay", {}) if isinstance(payload.get("macro_overlay"), dict) else {}
+        print(
+            "macro: "
+            f"mode={macro.get('mode', '-')}, "
+            f"reason={macro.get('reason', '-')}, "
+            f"fear_greed={macro.get('fear_greed_score', '-')}"
+        )
+    if top_rows:
+        print("top_actions:")
+        for row in top_rows:
+            print(
+                f"  {row.get('symbol', '-'):5} "
+                f"{row.get('action', '-'):5} "
+                f"conf={float(row.get('confidence', 0.0)):.2f} "
+                f"event={str(row.get('event_signal', '-'))}/{str(row.get('event_strength', '-'))} "
+                f"chart={str((row.get('chart_gate') or {}).get('state', '-'))}"
+            )
+
+
+def run_event_runtime_once(
+    *,
+    profile_name: str | None = None,
+    interval_seconds: int = 60,
+    continuous: bool = False,
+) -> None:
+    from event_runtime.engine import run_runtime_cycle, run_runtime_loop
+
+    print(f"[{datetime.now()}] event runtime started...")
+    result = (
+        run_runtime_loop(profile_name=profile_name, interval_seconds=interval_seconds)
+        if continuous
+        else run_runtime_cycle(profile_name=profile_name)
+    )
+    print(f"runtime_dir: {result.get('runtime_dir')}")
+    print(f"payload_json: {result.get('payload_path')}")
+    print(f"state_json: {result.get('state_path')}")
+    print(f"outbox_jsonl: {result.get('outbox_path')}")
+    print(f"notifications: {result.get('notification_count', 0)}")
+
+
 def run_inventory_report_once() -> None:
     from pipelines.inventory_report import run_inventory_report
 
@@ -333,6 +401,26 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     mode.add_argument("--all-us", action="store_true", help="Run US-only full engines + report")
     mode.add_argument("--rebalance-us", action="store_true", help="Run US-only rebalance")
     mode.add_argument(
+        "--strategy-v2",
+        "--autostock-v2",
+        "--v2",
+        dest="strategy_v2",
+        action="store_true",
+        help="Run Autostock V2 watchlist event engine",
+    )
+    mode.add_argument(
+        "--strategy-v2-tsla",
+        dest="strategy_v2_tsla",
+        action="store_true",
+        help="Run Autostock V2 in Tesla-only mode",
+    )
+    mode.add_argument(
+        "--event-runtime",
+        dest="event_runtime",
+        action="store_true",
+        help="Run event runtime once or continuously with --runtime-loop",
+    )
+    mode.add_argument(
         "--backtest",
         dest="backtest",
         action="store_true",
@@ -348,6 +436,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     mode.add_argument("--inventory-report", action="store_true", help="Run inventory report (beta)")
     parser.add_argument("--no-schedule", action="store_true", help="Run bot without scheduler")
     parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan mode")
+    parser.add_argument("--v2-profile", type=str, default="", help="Event profile name or JSON path for Autostock V2")
+    parser.add_argument("--v2-symbols", type=str, default="", help="Comma-separated symbols for Autostock V2")
+    parser.add_argument("--v2-event-file", type=str, default="", help="Event JSON file for Autostock V2")
+    parser.add_argument("--v2-rss-urls", type=str, default="", help="Comma-separated RSS feed URLs for Autostock V2")
+    parser.add_argument("--runtime-loop", action="store_true", help="Run event runtime continuously")
+    parser.add_argument("--runtime-interval-sec", type=int, default=60, help="Event runtime polling interval in seconds")
     return parser.parse_args(argv)
 
 
@@ -375,6 +469,31 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.rebalance_us:
         run_rebalance_us_once()
+        return
+    v2_symbols = [part.strip().upper() for part in str(args.v2_symbols or "").split(",") if part.strip()]
+    v2_rss_urls = [part.strip() for part in str(args.v2_rss_urls or "").split(",") if part.strip()]
+    if args.strategy_v2:
+        run_autostock_v2_once(
+            watchlist_override=v2_symbols or None,
+            event_feed_path=str(args.v2_event_file or "").strip() or None,
+            rss_urls=v2_rss_urls or None,
+            profile_name=str(args.v2_profile or "").strip() or None,
+        )
+        return
+    if args.strategy_v2_tsla:
+        run_autostock_v2_once(
+            watchlist_override=v2_symbols or None,
+            event_feed_path=str(args.v2_event_file or "").strip() or None,
+            rss_urls=v2_rss_urls or None,
+            profile_name=str(args.v2_profile or "tsla").strip() or "tsla",
+        )
+        return
+    if args.event_runtime:
+        run_event_runtime_once(
+            profile_name=str(args.v2_profile or "tsla").strip() or "tsla",
+            interval_seconds=max(5, int(args.runtime_interval_sec)),
+            continuous=bool(args.runtime_loop),
+        )
         return
     if args.backtest:
         run_strategy_once("v4", verify=True)

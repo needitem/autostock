@@ -210,16 +210,6 @@ Common outputs:
 - `data/universe/nasdaq100_by_date.json`
 - `data/universe/nasdaq100_by_date_monthly.json`
 
-## Testing
-
-Run all tests:
-
-```bash
-python -m pytest tests -q
-```
-
-Current suite: `122` passing tests (post news-module removal).
-
 ## Data Sources
 
 - OHLCV: `yfinance`
@@ -255,8 +245,6 @@ scripts/
   backtest_ai_portfolio_selector.py
   verify_ai_portfolio_backtest.py
   build_nasdaq100_universe_by_date.py
-tests/
-  ...
 ```
 
 ## Disclaimer

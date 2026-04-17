@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import time
+import json
 from contextlib import contextmanager
 import subprocess
 import tempfile
@@ -162,6 +163,27 @@ class AIAnalyzer:
                 break
         return cut.rstrip() + "\n\n[output truncated to token budget]"
 
+    def _extract_json_object(self, text: str) -> dict[str, Any] | None:
+        if not text:
+            return None
+        cleaned = text.strip().replace("```json", "").replace("```", "")
+        try:
+            obj = json.loads(cleaned)
+            return obj if isinstance(obj, dict) else None
+        except Exception:
+            pass
+        decoder = json.JSONDecoder()
+        for idx, ch in enumerate(cleaned):
+            if ch != "{":
+                continue
+            try:
+                obj, _ = decoder.raw_decode(cleaned[idx:])
+            except Exception:
+                continue
+            if isinstance(obj, dict):
+                return obj
+        return None
+
     def _call(self, prompt: str, max_tokens: int = 1400) -> str | None:
         if not self.has_api_access:
             return None
@@ -255,6 +277,78 @@ class AIAnalyzer:
         if not text:
             return {"error": "AI call failed", "mode": "codex-cli", "model": self.model, "symbol": symbol}
         return {"analysis": text, "mode": "codex-cli", "model": self.model}
+
+    def analyze_event_bundle(
+        self,
+        *,
+        symbol: str,
+        events: list[dict[str, Any]],
+        chart_gate: dict[str, Any],
+        intraday: dict[str, Any] | None = None,
+        next_known_events: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if not self.has_api_access:
+            return {
+                "error": "Codex login is required. Run: codex login",
+                "mode": "codex-cli",
+                "model": self.model,
+                "symbol": symbol,
+            }
+
+        top_events = []
+        for row in events[:8]:
+            if not isinstance(row, dict):
+                continue
+            top_events.append(
+                {
+                    "headline": row.get("headline"),
+                    "source": row.get("source"),
+                    "category": row.get("category"),
+                    "sentiment": row.get("sentiment"),
+                    "published_at": row.get("published_at"),
+                }
+            )
+
+        prompt = (
+            "You are an event-driven equity trading analyst.\n"
+            "Write in Korean reasoning internally, but output STRICT JSON only.\n"
+            "Assess the event bundle for the symbol and decide the news/event direction and strength.\n"
+            "Do NOT use numeric score output. Return only qualitative fields.\n"
+            "Use these enums only:\n"
+            "- signal: bullish | bearish | neutral\n"
+            "- strength: strong | moderate | weak | none\n\n"
+            f"Symbol: {symbol}\n"
+            f"Recent events: {top_events}\n"
+            f"Chart gate: {chart_gate}\n"
+            f"Intraday: {intraday or {}}\n"
+            f"Next known events: {next_known_events or []}\n\n"
+            "Return JSON only:\n"
+            '{"signal":"bullish|bearish|neutral","strength":"strong|moderate|weak|none","rationale":["short reason 1","short reason 2"],"headline":"most important current event headline"}'
+        )
+        text = self._call(prompt, max_tokens=700)
+        if not text:
+            return {"error": "AI call failed", "mode": "codex-cli", "model": self.model, "symbol": symbol}
+        obj = self._extract_json_object(text)
+        if not isinstance(obj, dict):
+            return {"error": "AI JSON parse failed", "mode": "codex-cli", "model": self.model, "symbol": symbol}
+        signal = str(obj.get("signal", "neutral")).strip().lower()
+        strength = str(obj.get("strength", "none")).strip().lower()
+        if signal not in {"bullish", "bearish", "neutral"}:
+            signal = "neutral"
+        if strength not in {"strong", "moderate", "weak", "none"}:
+            strength = "none"
+        rationale = obj.get("rationale")
+        if not isinstance(rationale, list):
+            rationale = []
+        return {
+            "signal": signal,
+            "strength": strength,
+            "rationale": [str(item) for item in rationale[:5]],
+            "headline": str(obj.get("headline", "") or ""),
+            "mode": "codex-cli",
+            "model": self.model,
+            "symbol": symbol,
+        }
 
     def analyze_full_market(
         self,

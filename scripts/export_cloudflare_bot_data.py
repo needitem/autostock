@@ -10,6 +10,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 TARGET_TS = ROOT / "cloudflare" / "telegram-bot" / "src" / "snapshot-data.ts"
 TARGET_JSON = ROOT / "cloudflare" / "telegram-bot" / "live" / "snapshot.json"
+EVENT_RUNTIME_DIR = ROOT / "data" / "event_runtime"
 FALLBACK_STRATEGY_METRICS: dict[str, dict[str, Any]] = {
     "v4": {
         "label": "Strategy V4",
@@ -213,15 +214,69 @@ def _strategy_metrics(pattern: str, strategy_key: str) -> dict[str, Any]:
     }
 
 
+def _latest_event_runtime_profile_dir() -> Path | None:
+    if not EVENT_RUNTIME_DIR.exists():
+        return None
+    dirs = [p for p in EVENT_RUNTIME_DIR.iterdir() if p.is_dir()]
+    if not dirs:
+        return None
+    dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return dirs[0]
+
+
+def _build_event_runtime() -> dict[str, Any]:
+    profile_dir = _latest_event_runtime_profile_dir()
+    if profile_dir is None:
+        return {}
+
+    payload_path = profile_dir / "latest_payload.json"
+    state_path = profile_dir / "state.json"
+    if not payload_path.exists():
+        return {}
+
+    payload = _load_json(payload_path)
+    state = _load_json(state_path) if state_path.exists() else {}
+    recommendations = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+    top = recommendations[0] if recommendations and isinstance(recommendations[0], dict) else {}
+    next_known_events = payload.get("next_known_events") if isinstance(payload.get("next_known_events"), list) else []
+    raw_events = top.get("raw_events") if isinstance(top.get("raw_events"), list) else []
+    chart_gate = top.get("chart_gate") if isinstance(top.get("chart_gate"), dict) else {}
+    return {
+        str(profile_dir.name): {
+            "profile": str(profile_dir.name),
+            "generatedAt": str(payload.get("generated_at", "") or ""),
+            "symbol": str(top.get("symbol", payload.get("watchlist", [""])[0] if isinstance(payload.get("watchlist"), list) else "") or ""),
+            "action": str(top.get("action", "") or ""),
+            "confidence": round(float(top.get("confidence", 0.0) or 0.0), 2),
+            "eventSignal": str(top.get("event_signal", "") or ""),
+            "eventStrength": str(top.get("event_strength", "") or ""),
+            "macroMode": str((payload.get("macro_overlay") or {}).get("mode", "") or ""),
+            "macroReason": str((payload.get("macro_overlay") or {}).get("reason", "") or ""),
+            "price": round(float(top.get("price", 0.0) or 0.0), 2) if top.get("price") is not None else None,
+            "chartState": str(chart_gate.get("state", "") or ""),
+            "volumeRatio": round(float(chart_gate.get("volume_ratio", 0.0) or 0.0), 2) if chart_gate.get("volume_ratio") is not None else None,
+            "reasons": [str(item) for item in (top.get("reason_lines") or [])[:5]],
+            "nextKnownEvents": next_known_events[:5],
+            "rawEvents": raw_events[:5],
+            "state": {
+                "lastRunAt": str(state.get("last_run_at", "") or ""),
+                "lastAction": str(((state.get("last_actions") or {}).get(str(top.get("symbol", "")), "")) or ""),
+                "seenEventCount": len(state.get("seen_event_keys") or []),
+            },
+        }
+    }
+
+
 def _build_payload() -> dict[str, Any]:
     return {
-        "generatedAt": str(pd.Timestamp.utcnow()),
+        "generatedAt": pd.Timestamp.utcnow().isoformat(),
         "strategies": {
             "v4": _strategy_metrics("ai_portfolio_backtest_verification_strategy_v4*.json", "v4"),
         },
         "rebalance": {
             "v4": _build_current_signal(),
         },
+        "eventRuntime": _build_event_runtime(),
     }
 
 

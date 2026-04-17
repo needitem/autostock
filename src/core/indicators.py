@@ -187,6 +187,67 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any] | None:
     }
 
 
+def calculate_intraday_snapshot(df: pd.DataFrame, interval_label: str = "5m") -> dict[str, Any] | None:
+    """Compute an intraday confirmation snapshot from OHLCV bars."""
+    if df is None or df.empty:
+        return None
+
+    required = ["Open", "High", "Low", "Close", "Volume"]
+    if any(col not in df.columns for col in required):
+        return None
+
+    frame = df[required].copy().dropna(subset=["Open", "High", "Low", "Close"])
+    if frame.empty:
+        return None
+
+    if isinstance(frame.index, pd.DatetimeIndex):
+        idx = frame.index
+        local_dates = idx.tz_convert(None).date if idx.tz is not None else idx.date
+        session_mask = local_dates == local_dates[-1]
+        session = frame.loc[session_mask].copy()
+    else:
+        session = frame.copy()
+
+    if session.empty:
+        return None
+
+    close = pd.to_numeric(session["Close"], errors="coerce").ffill().bfill()
+    volume = pd.to_numeric(session["Volume"], errors="coerce").fillna(0)
+    open_ = pd.to_numeric(session["Open"], errors="coerce").ffill().bfill()
+    high = pd.to_numeric(session["High"], errors="coerce").ffill().bfill()
+    low = pd.to_numeric(session["Low"], errors="coerce").ffill().bfill()
+
+    typical = (high + low + close) / 3.0
+    cumulative_volume = volume.cumsum()
+    cumulative_turnover = (typical * volume).cumsum()
+    vwap = (cumulative_turnover / cumulative_volume.replace(0, np.nan)).ffill().bfill()
+
+    latest_close = _f(close.iloc[-1])
+    latest_open = _f(open_.iloc[-1], latest_close)
+    latest_volume = _f(volume.iloc[-1], 0.0)
+    trailing_window = volume.iloc[:-1].tail(20)
+    avg_volume_20 = _f(trailing_window.mean(), latest_volume if latest_volume > 0 else 0.0)
+    volume_ratio = latest_volume / avg_volume_20 if avg_volume_20 > 0 else 0.0
+    session_open = _f(open_.iloc[0], latest_close)
+    latest_vwap = _f(vwap.iloc[-1], latest_close)
+    prev_close = _f(close.iloc[-2], latest_close) if len(close) >= 2 else latest_close
+
+    return {
+        "intraday_interval": interval_label,
+        "intraday_last_bar_at": str(session.index[-1]),
+        "intraday_last_open": _round(latest_open),
+        "intraday_last_close": _round(latest_close),
+        "intraday_last_volume": int(max(0, latest_volume)),
+        "intraday_volume_avg_20": int(max(0, avg_volume_20)),
+        "intraday_volume_ratio_5m": _round(volume_ratio, 2, 0.0),
+        "intraday_vwap": _round(latest_vwap),
+        "intraday_above_vwap": latest_close >= latest_vwap,
+        "intraday_return_from_open_pct": _round(_pct_gap(latest_close, session_open), 2),
+        "intraday_change_prev_bar_pct": _round(_pct_gap(latest_close, prev_close), 2),
+        "intraday_bar_count_session": int(len(session)),
+    }
+
+
 def detect_candle_patterns(df: pd.DataFrame) -> list[dict[str, str]]:
     """Detect a small, high-signal subset of candle patterns."""
     patterns: list[dict[str, str]] = []

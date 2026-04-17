@@ -3,6 +3,7 @@ Core market-data access layer.
 
 This module intentionally keeps API contracts stable for the rest of the app:
 - get_stock_data
+- get_intraday_stock_data
 - get_stock_info
 - get_finviz_data
 - get_market_condition
@@ -104,6 +105,15 @@ def _cache_bucket(env_key: str, default_minutes: int) -> int:
     return int(time.time() // (ttl * 60))
 
 
+def _cache_bucket_seconds(env_key: str, default_seconds: int) -> int:
+    try:
+        ttl = int(os.getenv(env_key, str(default_seconds)))
+    except Exception:
+        ttl = int(default_seconds)
+    ttl = max(15, ttl)
+    return int(time.time() // ttl)
+
+
 def _days_until_ts(value: Any) -> int | None:
     ts = int(_to_float(value, 0))
     if ts <= 0:
@@ -145,6 +155,43 @@ def _get_stock_data_cached(
         return None
 
 
+@lru_cache(maxsize=512)
+def _get_intraday_stock_data_cached(
+    symbol: str,
+    period: str,
+    interval: str,
+    auto_adjust: bool,
+    prepost: bool,
+    bucket: int,
+) -> pd.DataFrame | None:
+    _ = bucket
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(
+            period=period,
+            interval=interval,
+            actions=False,
+            auto_adjust=auto_adjust,
+            prepost=prepost,
+        )
+        if df is None or df.empty:
+            return None
+
+        required = ["Open", "High", "Low", "Close", "Volume"]
+        if any(col not in df.columns for col in required):
+            return None
+
+        clean = (
+            df[required]
+            .dropna(subset=["Open", "High", "Low", "Close"])
+            .sort_index()
+            .copy()
+        )
+        return clean if not clean.empty else None
+    except Exception:
+        return None
+
+
 def get_stock_data(symbol: str, period: str = "15mo", auto_adjust: bool | None = None) -> pd.DataFrame | None:
     """
     Fetch OHLCV history from Yahoo Finance.
@@ -159,6 +206,30 @@ def get_stock_data(symbol: str, period: str = "15mo", auto_adjust: bool | None =
         auto_adjust = _env_bool("AI_YF_AUTO_ADJUST", True)
     bucket = _cache_bucket("AI_YF_CACHE_TTL_MINUTES", 60)
     return _get_stock_data_cached(symbol, period, bool(auto_adjust), bucket)
+
+
+def get_intraday_stock_data(
+    symbol: str,
+    period: str = "5d",
+    interval: str = "5m",
+    auto_adjust: bool | None = None,
+    prepost: bool | None = None,
+) -> pd.DataFrame | None:
+    """
+    Fetch intraday OHLCV history from Yahoo Finance.
+
+    Intended for near-real-time confirmation layers such as 5-minute volume checks.
+    """
+    symbol = _clean_symbol(symbol)
+    if not symbol:
+        return None
+
+    if auto_adjust is None:
+        auto_adjust = _env_bool("AI_YF_AUTO_ADJUST", True)
+    if prepost is None:
+        prepost = _env_bool("AI_YF_INTRADAY_PREPOST", False)
+    bucket = _cache_bucket_seconds("AI_YF_INTRADAY_CACHE_TTL_SECONDS", 120)
+    return _get_intraday_stock_data_cached(symbol, period, interval, bool(auto_adjust), bool(prepost), bucket)
 
 
 @lru_cache(maxsize=512)

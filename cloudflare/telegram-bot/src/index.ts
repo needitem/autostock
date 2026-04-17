@@ -12,6 +12,8 @@ type AppSnapshot = typeof FALLBACK_SNAPSHOT;
 type StrategyKey = keyof AppSnapshot["strategies"];
 type RebalanceKey = keyof AppSnapshot["rebalance"];
 type SignalSnapshot = AppSnapshot["rebalance"][RebalanceKey];
+type EventRuntimeKey = keyof AppSnapshot["eventRuntime"];
+type EventRuntimeSnapshot = AppSnapshot["eventRuntime"][EventRuntimeKey];
 type PriceRef = {
   symbol?: string;
   weightPct?: number;
@@ -57,15 +59,15 @@ type TelegramUpdate = {
 
 const MENU_KEYBOARD: InlineKeyboard = {
   inline_keyboard: [
-    [{ text: "V4 Summary", callback_data: "strategy:v4" }],
-    [{ text: "Current Rebalance", callback_data: "rebalance" }],
-    [{ text: "Buy Qty Calc", callback_data: "budget_help" }],
-    [{ text: "Recompute Now", callback_data: "refresh" }],
+    [{ text: "Overview", callback_data: "overview:tsla" }],
+    [{ text: "Next Event", callback_data: "event_next:tsla" }],
+    [{ text: "Why", callback_data: "event_why:tsla" }],
+    [{ text: "Refresh", callback_data: "refresh" }],
     [
-      { text: "Start Alerts", callback_data: "subscribe" },
-      { text: "Stop Alerts", callback_data: "unsubscribe" },
+      { text: "Alerts On", callback_data: "subscribe" },
+      { text: "Alerts Off", callback_data: "unsubscribe" },
     ],
-    [{ text: "Open Menu", callback_data: "menu" }],
+    [{ text: "Menu", callback_data: "menu" }],
   ],
 };
 
@@ -215,7 +217,9 @@ function isSnapshotLike(value: unknown): value is AppSnapshot {
 }
 
 function snapshotTimestamp(snapshot: AppSnapshot): number {
-  const ts = Date.parse(String(snapshot.generatedAt || ""));
+  const raw = String(snapshot.generatedAt || "").trim();
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const ts = Date.parse(normalized);
   return Number.isFinite(ts) ? ts : 0;
 }
 
@@ -419,20 +423,55 @@ function currentMarketSession(now = new Date()): { kind: MarketSessionKind; date
 
 function renderMenuText(snapshot: AppSnapshot): string {
   return [
-    "Autostock Telegram Bot",
+    "Autostock Event Runtime",
     "",
     "Commands",
     "/menu - main menu",
-    "/v4 - latest Strategy V4 summary",
-    "/rebalance - current actionable rebalance",
-    "/budget 10000 - share counts for a 10,000 USD portfolio",
-    "/budget 10000000 krw 1370 - share counts using KRW capital and FX",
-    "/refresh - recompute latest exported state now",
-    "/snapshot - full snapshot",
-    "/subscribe - daily status + weekly rebalance alerts on",
+    "/event - current event signal",
+    "/next - next important event",
+    "/why - current event rationale",
+    "/refresh - recompute current runtime now",
+    "/snapshot - full event snapshot",
+    "/subscribe - alerts on",
     "/unsubscribe - alerts off",
     "",
     `Snapshot generated at: ${snapshot.generatedAt}`,
+  ].join("\n");
+}
+
+function eventRuntimeSnapshot(snapshot: AppSnapshot, key: string = "tsla"): EventRuntimeSnapshot | null {
+  const runtime = (snapshot as AppSnapshot & { eventRuntime?: Record<string, EventRuntimeSnapshot> }).eventRuntime;
+  if (!runtime || typeof runtime !== "object") {
+    return null;
+  }
+  const selected = runtime[key];
+  return selected && typeof selected === "object" ? selected : null;
+}
+
+function renderOverviewText(snapshot: AppSnapshot, key = "tsla"): string {
+  const runtime = eventRuntimeSnapshot(snapshot, key);
+  if (!runtime) {
+    return "Event runtime is not available yet.";
+  }
+  const nextRow = Array.isArray(runtime.nextKnownEvents) && runtime.nextKnownEvents.length > 0
+    ? runtime.nextKnownEvents[0]
+    : null;
+  const lastEvent = Array.isArray(runtime.rawEvents) && runtime.rawEvents.length > 0
+    ? runtime.rawEvents[0]
+    : null;
+  return [
+    `${String(runtime.symbol || key).toUpperCase()} overview`,
+    "",
+    `Action: ${String(runtime.action || "-")}`,
+    `Confidence: ${Number(runtime.confidence ?? 0).toFixed(2)}`,
+    `Macro: ${String(runtime.macroMode || "-")} / ${String(runtime.macroReason || "-")}`,
+    `Chart: ${String(runtime.chartState || "-")} / volume ${formatMaybePrice(runtime.volumeRatio)}`,
+    `Price: ${formatMaybePrice(runtime.price)}`,
+    "",
+    `Next event: ${nextRow ? `${String(nextRow.headline || "-")} (${String(nextRow.expected_date || "-")})` : "-"}`,
+    `Latest important event: ${lastEvent ? String(lastEvent.headline || "-") : "-"}`,
+    "",
+    `Last runtime update: ${String((runtime.state || {}).lastRunAt || runtime.generatedAt || "-")}`,
   ].join("\n");
 }
 
@@ -489,6 +528,67 @@ function renderStrategyText(snapshot: AppSnapshot, strategyKey: StrategyKey): st
     `P(alpha>0): ${Number(strategy.pAlphaGt0).toFixed(3)}`,
     "",
     `Snapshot generated at: ${snapshot.generatedAt}`,
+  ].join("\n");
+}
+
+function renderEventRuntimeText(snapshot: AppSnapshot, key = "tsla"): string {
+  const runtime = eventRuntimeSnapshot(snapshot, key);
+  if (!runtime) {
+    return "Event runtime is not available yet.";
+  }
+  return [
+    `${String(runtime.symbol || key).toUpperCase()} event runtime`,
+    "",
+    `Action: ${String(runtime.action || "-")}`,
+    `Confidence: ${Number(runtime.confidence ?? 0).toFixed(2)}`,
+    `Event: ${String(runtime.eventSignal || "-")} / ${String(runtime.eventStrength || "-")}`,
+    `Macro mode: ${String(runtime.macroMode || "-")}`,
+    `Macro reason: ${String(runtime.macroReason || "-")}`,
+    `Price: ${formatMaybePrice(runtime.price)}`,
+    `Chart: ${String(runtime.chartState || "-")}`,
+    `Volume ratio: ${formatMaybePrice(runtime.volumeRatio)}`,
+    "",
+    `Last runtime update: ${String((runtime.state || {}).lastRunAt || runtime.generatedAt || "-")}`,
+    `Seen events: ${String((runtime.state || {}).seenEventCount ?? "-")}`,
+  ].join("\n");
+}
+
+function renderEventNextText(snapshot: AppSnapshot, key = "tsla"): string {
+  const runtime = eventRuntimeSnapshot(snapshot, key);
+  if (!runtime) {
+    return "Next important events are not available yet.";
+  }
+  const rows = Array.isArray(runtime.nextKnownEvents) ? runtime.nextKnownEvents : [];
+  return [
+    `${String(runtime.symbol || key).toUpperCase()} next important events`,
+    "",
+    ...(rows.length > 0
+      ? rows.slice(0, 5).map((row) => `- ${String(row.headline || "-")} (${String(row.expected_date || "-")}, D-${String(row.days_until ?? "-")})`)
+      : ["- none"]),
+  ].join("\n");
+}
+
+function renderEventWhyText(snapshot: AppSnapshot, key = "tsla"): string {
+  const runtime = eventRuntimeSnapshot(snapshot, key);
+  if (!runtime) {
+    return "Event rationale is not available yet.";
+  }
+  const reasons = Array.isArray(runtime.reasons) ? runtime.reasons : [];
+  const events = Array.isArray(runtime.rawEvents) ? runtime.rawEvents : [];
+  return [
+    `${String(runtime.symbol || key).toUpperCase()} why now`,
+    "",
+    `Current action: ${String(runtime.action || "-")}`,
+    `Macro: ${String(runtime.macroMode || "-")} / ${String(runtime.macroReason || "-")}`,
+    `Chart: ${String(runtime.chartState || "-")} / volume ${formatMaybePrice(runtime.volumeRatio)}`,
+    "",
+    "Reasons",
+    ...(reasons.length > 0 ? reasons.map((row) => `- ${String(row)}`) : ["- none"]),
+    "",
+    "Recent important events",
+    ...(events.length > 0
+      ? events.slice(0, 5).map((row) => `- ${String(row.headline || "-")} [${String(row.source || "-")}/${String(row.category || "-")}]`)
+      : ["- none"]),
   ].join("\n");
 }
 
@@ -610,11 +710,11 @@ function buildAutomatedAlert(snapshot: AppSnapshot): { kind: "daily_status" | "w
 
 function renderSnapshotText(snapshot: AppSnapshot): string {
   return [
-    renderStrategyText(snapshot, "v4"),
+    renderOverviewText(snapshot, "tsla"),
     "",
     "====================",
     "",
-    renderRebalanceText(snapshot),
+    renderEventWhyText(snapshot, "tsla"),
   ].join("\n");
 }
 
@@ -996,6 +1096,33 @@ function resolveTextForCommand(snapshot: AppSnapshot, command: string): string {
     case "/menu":
     case "/help":
       return renderMenuText(snapshot);
+    case "/event":
+      return renderOverviewText(snapshot, "tsla");
+    case "/next":
+      return renderEventNextText(snapshot, "tsla");
+    case "/why":
+      return renderEventWhyText(snapshot, "tsla");
+    case "/snapshot":
+      return renderSnapshotText(snapshot);
+    case "/refresh":
+      return [
+        "Refresh started.",
+        "",
+        "The bot is collecting current event data and recomputing the runtime state.",
+        "Check /event again in about a minute.",
+      ].join("\n");
+    case "/subscribe":
+      return [
+        "Alerts are now ON.",
+        "",
+        "You will receive runtime alerts when the event state changes.",
+      ].join("\n");
+    case "/unsubscribe":
+      return [
+        "Alerts are now OFF.",
+        "",
+        "You can turn them back on anytime with /subscribe.",
+      ].join("\n");
     case "/v4":
     case "/v2":
     case "/v14":
@@ -1004,27 +1131,6 @@ function resolveTextForCommand(snapshot: AppSnapshot, command: string): string {
       return renderBudgetHelpText(snapshot);
     case "/rebalance":
       return renderRebalanceText(snapshot);
-    case "/snapshot":
-      return renderSnapshotText(snapshot);
-    case "/refresh":
-      return [
-        "Refresh started.",
-        "",
-        "The bot is collecting current market data and recomputing the rebalance from scratch.",
-        "Check /rebalance again in about a minute.",
-      ].join("\n");
-    case "/subscribe":
-      return [
-        "Alerts are now ON.",
-        "",
-        "You will receive daily market status updates and a weekly rebalance alert when the fresh signal day arrives.",
-      ].join("\n");
-    case "/unsubscribe":
-      return [
-        "Alerts are now OFF.",
-        "",
-        "You can turn them back on anytime with /subscribe.",
-      ].join("\n");
     default:
       return [
         "Unknown command.",
@@ -1038,18 +1144,19 @@ function resolveTextForCallback(snapshot: AppSnapshot, data: string | undefined)
   switch (data) {
     case "menu":
       return renderMenuText(snapshot);
-    case "rebalance":
-      return renderRebalanceText(snapshot);
-    case "strategy:v4":
-    case "strategy:v2":
-    case "strategy:v14":
-      return renderStrategyText(snapshot, "v4");
+    case "overview:tsla":
+    case "event_runtime:tsla":
+      return renderOverviewText(snapshot, "tsla");
+    case "event_next:tsla":
+      return renderEventNextText(snapshot, "tsla");
+    case "event_why:tsla":
+      return renderEventWhyText(snapshot, "tsla");
     case "refresh":
       return [
         renderMenuText(snapshot),
         "",
         "Refresh started.",
-        "Check /rebalance again in about a minute.",
+        "Check /event again in about a minute.",
       ].join("\n");
     case "subscribe":
       return [
@@ -1063,6 +1170,12 @@ function resolveTextForCallback(snapshot: AppSnapshot, data: string | undefined)
         "",
         "Alerts are now OFF.",
       ].join("\n");
+    case "strategy:v4":
+    case "strategy:v2":
+    case "strategy:v14":
+      return renderStrategyText(snapshot, "v4");
+    case "rebalance":
+      return renderRebalanceText(snapshot);
     default:
       return renderMenuText(snapshot);
   }
@@ -1353,7 +1466,7 @@ export default {
         ok: true,
         service: "autostock-telegram-bot",
         generatedAt: snapshot.generatedAt,
-        commands: ["/menu", "/v4", "/rebalance", "/budget", "/refresh", "/snapshot", "/subscribe", "/unsubscribe"],
+        commands: ["/menu", "/event", "/next", "/why", "/refresh", "/snapshot", "/subscribe", "/unsubscribe"],
         subscribers: subscribers.length,
         automatedAlertKind: buildAutomatedAlert(snapshot).kind,
       });

@@ -1,4 +1,4 @@
-# 미너비니를 위한 needitem/autostock 적용·전환 심층 연구 보고서
+﻿# 미너비니를 위한 needitem/autostock 적용·전환 심층 연구 보고서
 
 ## 핵심 요약
 
@@ -39,7 +39,7 @@ README 기준으로 autostock의 스코프는 (1) 종목 스캐닝/스코어링,
 - **AI 분석 (`src/ai/analyzer.py`)**  
   Codex CLI 로그인 상태를 확인(`codex login status` 호출)하고, 세션 기반으로 LLM 응답을 생성하는 구조다. citeturn7view0  
 - **의존성 (`requirements.txt`)**  
-  `yfinance`, `pandas`, `python-telegram-bot[job-queue]`, `requests`, `ta`(기술적 지표), HTML 파싱 라이브러리, `pykrx`, `pytest` 등을 사용한다. fileciteturn27file0L1-L16  
+  `yfinance`, `pandas`, `python-telegram-bot[job-queue]`, `requests`, `ta`(기술적 지표), HTML 파싱 라이브러리, `pykrx` 등을 사용한다. fileciteturn27file0L1-L16  
   특히 `python-telegram-bot`의 JobQueue는 APScheduler 래퍼이며, `job-queue` extra 설치가 필요하다는 점이 공식 문서에 명시돼 있다. citeturn0search1turn22search5  
 
 ### 데이터 흐름과 실행 흐름
@@ -85,7 +85,7 @@ flowchart LR
 
 - **환경변수(.env)**: 텔레그램 토큰, Codex CLI 사용 모델/경로, 스케줄 시간(Asia/Seoul), KIS 연동 키 등이 README에 정리되어 있다. fileciteturn10file0L30-L64  
 - **실행 방식**: `python src/main.py`로 봇(+스케줄러) 실행, 혹은 `--no-schedule`로 스케줄러 비활성, 일회성 실행 모드는 `--scan`, `--ai`, `--backtest` 등으로 제공된다. fileciteturn10file0L75-L110 fileciteturn11file0L226-L272  
-- **테스트**: pytest 기반 테스트 실행을 안내하며, “122 passing tests”를 명시한다. fileciteturn10file0L193-L201  
+- **테스트**: 현재 저장소에는 별도 테스트 스위트가 없다. fileciteturn10file0L193-L201  
 
 ### 미너비니 관점의 적합성 진단
 
@@ -321,7 +321,7 @@ gantt
 
 ### 테스트 전략
 
-autostock는 pytest 기반 테스트 문화를 갖고 있으므로, 이를 유지·확장하는 것이 합리적이다. fileciteturn10file0L193-L199
+autostock는 현재 별도 테스트 스위트 없이 운영되고 있으므로, 검증은 수동 실행과 스모크 체크 중심으로 이뤄진다. fileciteturn10file0L193-L199
 
 - **단위 테스트**: 원장 합산(available 계산), ROP/안전재고 계산, 권한 체크  
 - **통합 테스트**: 채널 API sandbox/모의 응답 기반 “주문→출고→재고 푸시” 흐름  
