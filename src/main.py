@@ -1,38 +1,29 @@
-"""
-Autostock main entrypoint.
-
-Usage:
-  python src/main.py                  # run telegram bot
-  python src/main.py --no-schedule    # run bot without scheduler
-  python src/main.py --scan           # one-time scan
-  python src/main.py --ai             # one-time market analysis
-  python src/main.py --macro          # one-time macro pipeline report
-  python src/main.py --deep           # deep research pipeline report
-  python src/main.py --deep-us        # US-only free pipeline report
-  python src/main.py --all-us         # US-only full run (engines + rendered report)
-  python src/main.py --rebalance-us   # US-only rebalance using report + charts
-  python src/main.py --strategy-v2    # Autostock V2 watchlist event engine
-  python src/main.py --backtest       # Strategy V4 stock-momentum baseline + verification
-  python src/main.py --strategy-v4    # Strategy V4 stock-momentum baseline + verification
-  python src/main.py --stock-backtest # Strategy V4 stock-momentum baseline + verification
-  python src/main.py --inventory-report  # inventory ledger/replenishment report (beta)
-"""
-
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from event_profile import load_event_profile
-from strategy_catalog import get_strategy_definition
-from strategy_runtime import run_strategy_by_key
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
+
+from event_profile import load_event_profile, symbol_slug
+from event_runtime.engine import run_runtime_cycle, run_runtime_loop
+from nautilus_v2.bridge import export_symbol_bundle
+from pipelines.autostock_v2_pipeline import run_autostock_v2
+from core.stock_data import get_stock_data
 
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+DATA_ROOT = ROOT / "data" / "nautilus_v2"
+
+
 def _configure_console_output() -> None:
-    """Avoid UnicodeEncodeError on legacy Windows terminals."""
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)
         if stream and hasattr(stream, "reconfigure"):
@@ -42,295 +33,37 @@ def _configure_console_output() -> None:
                 pass
 
 
-def run_scan_once(limit: int = 50) -> None:
-    from config import load_nasdaq_100
-    from core.signals import scan_stocks
-
-    print(f"[{datetime.now()}] scan started...")
-    symbols = load_nasdaq_100()[: max(1, limit)]
-    result = scan_stocks(symbols)
-    ranked = sorted(result["results"], key=lambda x: -x.get("investability_score", x.get("quality_score", 0)))
-
-    print(f"\nscan result: {result['total']} analyzed")
-    print("=" * 70)
-    for row in ranked[:10]:
-        score = row.get("score", {})
-        emojis = ", ".join(s.get("emoji", "") for s in row.get("strategies", [])) or "-"
-        print(
-            f"{row['symbol']:6} ${row.get('price', 0):8.2f} | "
-            f"inv {row.get('investability_score', 0):5.1f} | "
-            f"quality {row.get('quality_score', 0):5.1f} | "
-            f"score {score.get('total_score', 0):5.1f} | RSI {row.get('rsi', 50):5.1f} | "
-            f"RS63 {row.get('relative_strength_63d', 0):+5.1f} | "
-            f"fin {row.get('financial_coverage', 0):.2f} | {emojis}"
-        )
-        plan = row.get("trade_plan", {})
-        rr2 = plan.get("risk_reward", {}).get("rr2")
-        stage = plan.get("positioning", {}).get("stage")
-        pos_pct = plan.get("execution", {}).get("position_pct")
-        liq = row.get("avg_dollar_volume_m", 0)
-        evt = row.get("days_to_earnings")
-        if rr2 is not None and stage:
-            print(
-                f"         entry {plan.get('entry', {}).get('buy2', 0):.2f} "
-                f"stop {plan.get('stop_loss', 0):.2f} "
-                f"t2 {plan.get('targets', {}).get('target2', 0):.2f} "
-                f"RR2 {rr2:.2f} [{stage}] "
-                f"size {float(pos_pct or 0):.1f}% "
-                f"liq {float(liq):.1f}M "
-                f"earnings D{evt if evt is not None else '-'}"
-            )
-    print("=" * 70)
+def _s(value: Any) -> str:
+    return str(value or "").strip()
 
 
-def run_ai_once() -> None:
-    from ai.analyzer import ai
-    from config import load_all_us_stocks, load_stock_categories
-    from core.signals import scan_stocks
-    from core.stock_data import get_fear_greed_index, get_market_condition
-
-    universe = load_all_us_stocks()
-    categories = load_stock_categories()
-    print(f"[{datetime.now()}] market analysis started...")
-    print(f"[1/3] scanning symbols... ({len(universe)} tickers)")
-    result = scan_stocks(universe)
-    stocks = result["results"]
-    print(
-        f"  -> scan done: {len(stocks)} "
-        f"(fundamentals enriched: {result.get('fundamentals_enriched', 0)})"
-    )
-
-    print("[2/3] loading market context...")
-    market_data = {
-        "fear_greed": get_fear_greed_index(),
-        "market_condition": get_market_condition(),
-    }
-    print(
-        "  -> "
-        f"fear-greed {market_data['fear_greed'].get('score', 'N/A')}, "
-        f"regime {market_data['market_condition'].get('message', 'N/A')}"
-    )
-
-    print("[3/3] generating analysis...")
-    result = ai.analyze_full_market(stocks, {}, market_data, categories)
-    if "error" in result:
-        print(f"analysis failed: {result['error']}")
-        return
-
-    print("\nAI market report")
-    print("=" * 70)
-    print(result["analysis"])
-    print("=" * 70)
-
-    stats = result.get("stats", {})
-    if stats:
-        print(f"\nsummary: {result.get('total', 0)} symbols")
-        print(
-            f"avg RSI {stats.get('avg_rsi', 0):.1f}, "
-            f"avg score {stats.get('avg_score', 0):.1f}, "
-            f"avg quality {stats.get('avg_quality', 0):.1f}, "
-            f"avg inv {stats.get('avg_investability', 0):.1f}"
-        )
-        print(
-            f"oversold {stats.get('oversold', 0)}, "
-            f"overbought {stats.get('overbought', 0)}, "
-            f"strong trend {stats.get('strong_trend', 0)}, "
-            f"tradeable {stats.get('tradeable_count', 0)}"
-        )
+def _profile(profile_name: str | None) -> dict[str, Any]:
+    return load_event_profile(profile_name)
 
 
-def _strategy_snapshot_context(result: dict) -> dict[str, object]:
-    summary = result.get("summary", {}) if isinstance(result, dict) else {}
-    verification = result.get("verification", {}) if isinstance(result, dict) else {}
-    metrics = verification.get("metrics", {}) if isinstance(verification, dict) else {}
-    portfolio_metrics = summary.get("portfolio_metrics", {}) if isinstance(summary, dict) else {}
-    ai = (
-        metrics.get("ai_portfolio")
-        if isinstance(metrics.get("ai_portfolio"), dict)
-        else portfolio_metrics.get("ai_portfolio", {})
-    )
-    benchmark = (
-        metrics.get("benchmark")
-        if isinstance(metrics.get("benchmark"), dict)
-        else portfolio_metrics.get("benchmark", {})
-    )
-    alpha = verification.get("alpha", {}) if isinstance(verification, dict) else {}
-    turnover = verification.get("turnover", {}) if isinstance(verification, dict) else {}
-    turnover_ai = turnover.get("ai", {}) if isinstance(turnover.get("ai"), dict) else {}
-    return {
-        "summary": summary,
-        "ai": ai,
-        "benchmark": benchmark,
-        "alpha": alpha,
-        "turnover_ai": turnover_ai,
-    }
+def _bundle_dir(profile: dict[str, Any], date_tag: str | None = None) -> Path:
+    tag = date_tag or datetime.now().strftime("%Y-%m-%d")
+    return DATA_ROOT / _s(profile.get("name") or symbol_slug(profile)) / tag
 
 
-def _print_strategy_snapshot(
-    *,
-    heading: str,
-    result: dict,
-    verify: bool,
-    show_universe: bool = False,
-) -> None:
-    ctx = _strategy_snapshot_context(result)
-    summary = ctx["summary"] if isinstance(ctx["summary"], dict) else {}
-    ai = ctx["ai"] if isinstance(ctx["ai"], dict) else {}
-    benchmark = ctx["benchmark"] if isinstance(ctx["benchmark"], dict) else {}
-    alpha = ctx["alpha"] if isinstance(ctx["alpha"], dict) else {}
-    turnover_ai = ctx["turnover_ai"] if isinstance(ctx["turnover_ai"], dict) else {}
-
-    ai_cagr = float(ai.get("cagr_pct", 0.0) or 0.0)
-    benchmark_cagr = float(benchmark.get("cagr_pct", 0.0) or 0.0)
-    ai_mdd = float(ai.get("max_drawdown_pct", 0.0) or 0.0)
-    benchmark_mdd = float(benchmark.get("max_drawdown_pct", 0.0) or 0.0)
-    benchmark_symbol = str(summary.get("benchmark_symbol", "benchmark") or "benchmark")
-
-    print(f"\n{heading}")
-    print("=" * 70)
-    print(f"run_tag: {summary.get('run_tag', result.get('run_tag', '-'))}")
-    print(
-        f"window: {summary.get('start_date', '-')} -> {summary.get('end_date', '-')} "
-        f"({summary.get('snapshot_freq', '-')})"
-    )
-    print(f"engine: {summary.get('decision_engine', '-')}")
-    if show_universe:
-        print(f"universe: {summary.get('universe', '-')}")
-    print(
-        f"strategy CAGR: {ai_cagr:.2f}% | Sharpe: {float(ai.get('sharpe', 0.0) or 0.0):.2f} | "
-        f"MDD: {ai_mdd:.2f}%"
-    )
-    print(
-        f"benchmark({benchmark_symbol}) CAGR: {benchmark_cagr:.2f}% | "
-        f"Sharpe: {float(benchmark.get('sharpe', 0.0) or 0.0):.2f} | "
-        f"MDD: {benchmark_mdd:.2f}%"
-    )
-    print(
-        f"CAGR diff: {ai_cagr - benchmark_cagr:.2f}%p | "
-        f"MDD diff: {ai_mdd - benchmark_mdd:.2f}%p"
-    )
-    if alpha:
-        print(
-            "alpha stats: "
-            f"NW p(two-sided)={float(alpha.get('nw_p_two_sided', 1.0) or 1.0):.3f} | "
-            f"P(alpha>0)={float(alpha.get('nw_p_gt0', 0.5) or 0.5):.3f}"
-        )
-    if turnover_ai:
-        print(f"avg turnover: {float(turnover_ai.get('mean', 0.0) or 0.0):.3f}")
-    print(f"summary_json: {result.get('summary_path')}")
-    if verify:
-        print(f"verification_json: {result.get('verification_json_path')}")
-        print(f"verification_md: {result.get('verification_md_path')}")
-    print("=" * 70)
+def _latest_bundle_dir(profile: dict[str, Any]) -> Path:
+    base_dir = DATA_ROOT / _s(profile.get("name") or symbol_slug(profile))
+    candidates = [item for item in base_dir.glob("*") if item.is_dir()]
+    if not candidates:
+        raise FileNotFoundError(f"No Nautilus bundles found under {base_dir}")
+    candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+    return candidates[0]
 
 
-def run_strategy_once(strategy_key: str, verify: bool = True) -> None:
-    definition = get_strategy_definition(strategy_key)
-    print(f"[{datetime.now()}] {definition.summary_title} started...")
-    result = run_strategy_by_key(strategy_key, verify)
-    _print_strategy_snapshot(
-        heading=definition.summary_title,
-        result=result,
-        verify=verify,
-        show_universe=strategy_key == "v4",
-    )
-
-
-def run_macro_once() -> None:
-    from pipelines.us_macro_pipeline import run_us_macro_pipeline
-
-    print(f"[{datetime.now()}] macro pipeline started...")
-    result = run_us_macro_pipeline()
-    report = result.get("report", {})
-    risk = (report.get("risk_on_off") or {}).get("label", "unknown")
-    score = (report.get("risk_on_off") or {}).get("score", "n/a")
-    print(f"macro risk-on/off: {risk} (score={score})")
-    print(f"json: {result.get('json_path')}")
-    print(f"md: {result.get('md_path')}")
-
-
-def run_deep_once() -> None:
-    from pipelines.deep_research_pipeline import run_deep_research_pipeline
-
-    print(f"[{datetime.now()}] deep research pipeline started...")
-    result = run_deep_research_pipeline()
-    report = result.get("report", {})
-    risk = ((report.get("module1_liquidity") or {}).get("risk_on_off") or {}).get("us", {}).get("risk", {}).get("label", "unknown")
-    print(f"deep research risk-on/off (US): {risk}")
-    print(f"json: {result.get('json_path')}")
-    print(f"md: {result.get('md_path')}")
-
-
-def run_deep_us_once() -> None:
-    from pipelines.us_free_pipeline import run_us_free_pipeline
-
-    print(f"[{datetime.now()}] us free pipeline started...")
-    result = run_us_free_pipeline()
-    report = result.get("report", {})
-    risk = (report.get("module1_liquidity") or {}).get("risk_on_off", {}).get("label", "unknown")
-    print(f"us free risk-on/off: {risk}")
-    if result.get("json_path"):
-        print(f"json: {result.get('json_path')}")
-    if result.get("md_path"):
-        print(f"md: {result.get('md_path')}")
-
-
-def run_all_us_once() -> None:
-    from pipelines.us_orchestrator import run_all_us_engines
-
-    print(f"[{datetime.now()}] us full run started...")
-    result = run_all_us_engines()
-    report_path = result.get("report_path", "")
-    if report_path:
-        print(f"report: {report_path}")
-
-
-def run_rebalance_us_once() -> None:
-    from pipelines.us_orchestrator import run_all_us_engines
-    from pipelines.us_rebalance import run_us_rebalance
-
-    print(f"[{datetime.now()}] us rebalance started...")
-    report_result = run_all_us_engines()
-    report_path = str(report_result.get("report_path", "") or "")
-    result = run_us_rebalance(report_path if report_path else None)
-    if report_path:
-        print(f"source_report_json: {report_path}")
-    print(f"orders_csv: {result.get('orders_csv')}")
-
-
-def run_autostock_v2_once(
-    *,
-    watchlist_override: list[str] | None = None,
-    event_feed_path: str | None = None,
-    rss_urls: list[str] | None = None,
-    profile_name: str | None = None,
-) -> None:
-    from pipelines.autostock_v2_pipeline import run_autostock_v2
-
-    profile = load_event_profile(profile_name) if profile_name else None
-    resolved_watchlist = watchlist_override or (profile.get("symbols") if isinstance(profile, dict) else None)
-    resolved_event_file = event_feed_path or (str(profile.get("event_file")).strip() if isinstance(profile, dict) and profile.get("event_file") else None)
-    resolved_rss = rss_urls or (profile.get("rss_urls") if isinstance(profile, dict) else None)
-    print(f"[{datetime.now()}] autostock v2 started...")
-    result = run_autostock_v2(
-        profile=profile,
-        watchlist_override=resolved_watchlist,
-        event_feed_path=resolved_event_file,
-        rss_urls=resolved_rss,
-    )
+def run_signal_once(profile_name: str | None) -> dict[str, Any]:
+    profile = _profile(profile_name)
+    print(f"[{datetime.now()}] signal analysis started...")
+    result = run_autostock_v2(profile=profile, watchlist_override=list(profile.get("symbols", [])))
     payload = result.get("payload", {}) if isinstance(result, dict) else {}
     recommendations = payload.get("recommendations", []) if isinstance(payload, dict) else []
     top_rows = [row for row in recommendations if isinstance(row, dict)][:5]
-    print(f"autostock_v2_json: {result.get('report_path')}")
-    print(f"autostock_v2_md: {result.get('md_path')}")
-    if isinstance(payload, dict):
-        macro = payload.get("macro_overlay", {}) if isinstance(payload.get("macro_overlay"), dict) else {}
-        print(
-            "macro: "
-            f"mode={macro.get('mode', '-')}, "
-            f"reason={macro.get('reason', '-')}, "
-            f"fear_greed={macro.get('fear_greed_score', '-')}"
-        )
+    print(f"signal_json: {result.get('report_path')}")
+    print(f"signal_md: {result.get('md_path')}")
     if top_rows:
         print("top_actions:")
         for row in top_rows:
@@ -338,174 +71,174 @@ def run_autostock_v2_once(
                 f"  {row.get('symbol', '-'):5} "
                 f"{row.get('action', '-'):5} "
                 f"conf={float(row.get('confidence', 0.0)):.2f} "
-                f"event={str(row.get('event_signal', '-'))}/{str(row.get('event_strength', '-'))} "
-                f"chart={str((row.get('chart_gate') or {}).get('state', '-'))}"
+                f"event={_s(row.get('event_signal'))}/{_s(row.get('event_strength'))} "
+                f"chart={_s((row.get('chart_gate') or {}).get('state'))}"
             )
+    return result
 
 
-def run_event_runtime_once(
-    *,
-    profile_name: str | None = None,
-    interval_seconds: int = 60,
-    continuous: bool = False,
-) -> None:
-    from event_runtime.engine import run_runtime_cycle, run_runtime_loop
-
+def run_runtime_once(profile_name: str | None, loop: bool, interval_seconds: int) -> dict[str, Any]:
+    profile = _profile(profile_name)
     print(f"[{datetime.now()}] event runtime started...")
     result = (
-        run_runtime_loop(profile_name=profile_name, interval_seconds=interval_seconds)
-        if continuous
-        else run_runtime_cycle(profile_name=profile_name)
+        run_runtime_loop(profile_name=_s(profile.get("name")), interval_seconds=max(5, int(interval_seconds)))
+        if loop
+        else run_runtime_cycle(profile_name=_s(profile.get("name")))
     )
     print(f"runtime_dir: {result.get('runtime_dir')}")
     print(f"payload_json: {result.get('payload_path')}")
     print(f"state_json: {result.get('state_path')}")
     print(f"outbox_jsonl: {result.get('outbox_path')}")
     print(f"notifications: {result.get('notification_count', 0)}")
+    return result
 
 
-def run_inventory_report_once() -> None:
-    from pipelines.inventory_report import run_inventory_report
+def export_nautilus_bundle(profile_name: str | None) -> dict[str, Any]:
+    profile = _profile(profile_name)
+    symbol = _s(profile.get("primary_symbol", "TSLA")).upper()
+    print(f"[{datetime.now()}] nautilus bundle export started...")
+    result = run_autostock_v2(profile=profile, watchlist_override=list(profile.get("symbols", [symbol])))
+    payload = result.get("payload", {}) if isinstance(result, dict) else {}
+    bars_df = get_stock_data(symbol, period=str(os.getenv("AI_EVENT_BARS_PERIOD", "15mo") or "15mo"), auto_adjust=False)
+    out_dir = _bundle_dir(profile)
+    paths = export_symbol_bundle(
+        payload=payload if isinstance(payload, dict) else {},
+        bars_df=bars_df,
+        output_dir=out_dir,
+        symbol=symbol,
+    )
+    print(f"bundle_dir: {out_dir}")
+    for key, value in paths.items():
+        print(f"{key}: {value}")
+    return {
+        "profile": _s(profile.get("name")),
+        "bundle_dir": str(out_dir),
+        "paths": paths,
+        "signal_report": result.get("report_path"),
+    }
 
-    print(f"[{datetime.now()}] inventory report started...")
-    result = run_inventory_report()
-    summary = result.get("summary", {}) if isinstance(result, dict) else {}
-    print(f"inventory_report_json: {result.get('report_path')}")
-    print(f"inventory_report_md: {result.get('md_path')}")
-    if isinstance(summary, dict):
-        print(
-            "summary: "
-            f"movements={summary.get('movement_count', 0)}, "
-            f"balances={summary.get('balance_count', 0)}, "
-            f"low_stock={summary.get('low_stock_count', 0)}, "
-            f"snapshot={summary.get('channel_snapshot_count', 0)}, "
-            f"mismatch={summary.get('mismatch_count', 0)}"
+
+def run_nautilus_backtest(profile_name: str | None) -> dict[str, Any]:
+    profile = _profile(profile_name)
+    print(f"[{datetime.now()}] nautilus backtest started...")
+    try:
+        from nautilus_v2.backtest import import_tsla_bundle_to_catalog, run_tsla_backtest_in_memory
+    except ModuleNotFoundError as exc:
+        if "nautilus_trader" not in str(exc):
+            raise
+        venv_python = ROOT / "nautilus_v2" / ".venv" / "Scripts" / "python.exe"
+        if not venv_python.exists():
+            raise
+        proc = subprocess.run(
+            [str(venv_python), str(ROOT / "scripts" / "run_nautilus_tsla_backtest.py")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            check=False,
+            cwd=str(ROOT),
         )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr or proc.stdout or "nautilus backtest failed")
+        print(proc.stdout.strip())
+        bundle_dir = _latest_bundle_dir(profile)
+        output_path = bundle_dir / f"{symbol_slug(profile)}_nautilus_backtest_summary.json"
+        return json.loads(output_path.read_text(encoding="utf-8"))
+
+    bundle_dir = _latest_bundle_dir(profile)
+    catalog_dir = bundle_dir / "catalog"
+    import_info = import_tsla_bundle_to_catalog(bundle_dir, catalog_dir)
+    summary = run_tsla_backtest_in_memory(bundle_dir)
+    output_path = bundle_dir / f"{symbol_slug(profile)}_nautilus_backtest_summary.json"
+    payload = {
+        "profile": _s(profile.get("name")),
+        "bundle_dir": str(bundle_dir),
+        "catalog_import": import_info,
+        "backtest_summary": summary,
+    }
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"summary_json: {output_path}")
+    return payload
 
 
-def run_bot(with_scheduler: bool = True) -> None:
-    from bot import run_bot
+def export_telegram_snapshot() -> None:
+    print(f"[{datetime.now()}] telegram snapshot export started...")
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "export_telegram_snapshot.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+        check=False,
+        cwd=str(ROOT),
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout or "telegram export failed")
+    if proc.stdout.strip():
+        print(proc.stdout.strip())
 
-    run_bot(with_scheduler=with_scheduler)
+
+def run_local_telegram_bot() -> None:
+    from local_telegram_bot import run_local_telegram_bot as _run_local_telegram_bot
+
+    print(f"[{datetime.now()}] local telegram bot started...")
+    _run_local_telegram_bot()
 
 
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Autostock runner")
+def run_all(profile_name: str | None) -> None:
+    profile = _profile(profile_name)
+    run_runtime_once(_s(profile.get("name")), loop=False, interval_seconds=60)
+    export_nautilus_bundle(_s(profile.get("name")))
+    run_nautilus_backtest(_s(profile.get("name")))
+    export_telegram_snapshot()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Autostock Nautilus + Telegram entrypoint")
     mode = parser.add_mutually_exclusive_group()
-    v4 = get_strategy_definition("v4")
-    mode.add_argument("--scan", action="store_true", help="Run one-time scan")
-    mode.add_argument("--ai", action="store_true", help="Run one-time AI report")
-    mode.add_argument("--macro", action="store_true", help="Run one-time macro pipeline")
-    mode.add_argument("--deep", action="store_true", help="Run deep research pipeline")
-    mode.add_argument("--deep-us", action="store_true", help="Run US-only free pipeline")
-    mode.add_argument("--all-us", action="store_true", help="Run US-only full engines + report")
-    mode.add_argument("--rebalance-us", action="store_true", help="Run US-only rebalance")
-    mode.add_argument(
-        "--strategy-v2",
-        "--autostock-v2",
-        "--v2",
-        dest="strategy_v2",
-        action="store_true",
-        help="Run Autostock V2 watchlist event engine",
-    )
-    mode.add_argument(
-        "--strategy-v2-tsla",
-        dest="strategy_v2_tsla",
-        action="store_true",
-        help="Run Autostock V2 in Tesla-only mode",
-    )
-    mode.add_argument(
-        "--event-runtime",
-        dest="event_runtime",
-        action="store_true",
-        help="Run event runtime once or continuously with --runtime-loop",
-    )
-    mode.add_argument(
-        "--backtest",
-        dest="backtest",
-        action="store_true",
-        help=f"Run default backtest ({v4.label}) + verification",
-    )
-    mode.add_argument(
-        "--stock-backtest",
-        "--strategy-v4",
-        dest="stock_backtest",
-        action="store_true",
-        help="Run Strategy V4 stock-momentum baseline + verification",
-    )
-    mode.add_argument("--inventory-report", action="store_true", help="Run inventory report (beta)")
-    parser.add_argument("--no-schedule", action="store_true", help="Run bot without scheduler")
-    parser.add_argument("--limit", type=int, default=50, help="Symbol limit for scan mode")
-    parser.add_argument("--v2-profile", type=str, default="", help="Event profile name or JSON path for Autostock V2")
-    parser.add_argument("--v2-symbols", type=str, default="", help="Comma-separated symbols for Autostock V2")
-    parser.add_argument("--v2-event-file", type=str, default="", help="Event JSON file for Autostock V2")
-    parser.add_argument("--v2-rss-urls", type=str, default="", help="Comma-separated RSS feed URLs for Autostock V2")
-    parser.add_argument("--runtime-loop", action="store_true", help="Run event runtime continuously")
-    parser.add_argument("--runtime-interval-sec", type=int, default=60, help="Event runtime polling interval in seconds")
-    return parser.parse_args(argv)
+    mode.add_argument("--signal", action="store_true", help="Run one-shot event signal analysis")
+    mode.add_argument("--runtime", action="store_true", help="Run event runtime")
+    mode.add_argument("--nautilus-bundle", action="store_true", help="Export the latest signal as a Nautilus bundle")
+    mode.add_argument("--nautilus-backtest", action="store_true", help="Run Nautilus backtest from the latest bundle")
+    mode.add_argument("--telegram-export", action="store_true", help="Export local Telegram snapshot data")
+    mode.add_argument("--telegram-bot", action="store_true", help="Run local Telegram polling bot")
+    mode.add_argument("--all", action="store_true", help="Run runtime -> Nautilus bundle -> backtest -> Telegram export")
+    parser.add_argument("--profile", default="tsla", help="Event profile name or JSON path")
+    parser.add_argument("--loop", action="store_true", help="Run runtime continuously")
+    parser.add_argument("--interval-sec", type=int, default=60, help="Runtime polling interval in seconds")
+    return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     _configure_console_output()
-    args = _parse_args(argv or sys.argv[1:])
+    raw_argv = argv or sys.argv[1:]
+    parser = _build_parser()
+    args = parser.parse_args(raw_argv)
 
-    if args.scan:
-        run_scan_once(limit=args.limit)
+    if args.signal:
+        run_signal_once(args.profile)
         return
-    if args.ai:
-        run_ai_once()
+    if args.runtime:
+        run_runtime_once(args.profile, loop=bool(args.loop), interval_seconds=max(5, int(args.interval_sec)))
         return
-    if args.macro:
-        run_macro_once()
+    if args.nautilus_bundle:
+        export_nautilus_bundle(args.profile)
         return
-    if args.deep:
-        run_deep_once()
+    if args.nautilus_backtest:
+        run_nautilus_backtest(args.profile)
         return
-    if args.deep_us:
-        run_deep_us_once()
+    if args.telegram_export:
+        export_telegram_snapshot()
         return
-    if args.all_us:
-        run_all_us_once()
-        return
-    if args.rebalance_us:
-        run_rebalance_us_once()
-        return
-    v2_symbols = [part.strip().upper() for part in str(args.v2_symbols or "").split(",") if part.strip()]
-    v2_rss_urls = [part.strip() for part in str(args.v2_rss_urls or "").split(",") if part.strip()]
-    if args.strategy_v2:
-        run_autostock_v2_once(
-            watchlist_override=v2_symbols or None,
-            event_feed_path=str(args.v2_event_file or "").strip() or None,
-            rss_urls=v2_rss_urls or None,
-            profile_name=str(args.v2_profile or "").strip() or None,
-        )
-        return
-    if args.strategy_v2_tsla:
-        run_autostock_v2_once(
-            watchlist_override=v2_symbols or None,
-            event_feed_path=str(args.v2_event_file or "").strip() or None,
-            rss_urls=v2_rss_urls or None,
-            profile_name=str(args.v2_profile or "tsla").strip() or "tsla",
-        )
-        return
-    if args.event_runtime:
-        run_event_runtime_once(
-            profile_name=str(args.v2_profile or "tsla").strip() or "tsla",
-            interval_seconds=max(5, int(args.runtime_interval_sec)),
-            continuous=bool(args.runtime_loop),
-        )
-        return
-    if args.backtest:
-        run_strategy_once("v4", verify=True)
-        return
-    if args.stock_backtest:
-        run_strategy_once("v4", verify=True)
-        return
-    if args.inventory_report:
-        run_inventory_report_once()
+    if args.telegram_bot:
+        run_local_telegram_bot()
         return
 
-    run_bot(with_scheduler=not args.no_schedule)
+    if args.all:
+        run_all(args.profile)
+        return
+
+    parser.print_help()
 
 
 if __name__ == "__main__":

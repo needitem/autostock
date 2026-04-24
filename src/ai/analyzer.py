@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import time
 import json
+import re
 from contextlib import contextmanager
 import subprocess
 import tempfile
@@ -31,22 +32,17 @@ class AIAnalyzer:
             configured = shutil.which("codex.cmd") or configured
         self.codex_bin = configured
         self.base_url = None
-        self.model = model or os.getenv("AI_MODEL", "gpt-5.4")
+        self.model = model or os.getenv("AI_MODEL", "gpt-5.5")
         self.benchmark_symbol = (
             os.getenv("AI_BENCHMARK_SYMBOL", os.getenv("AI_MARKET_INDICATOR", "QQQ")).strip().upper() or "QQQ"
         ).replace(".", "-")
-        self.reasoning_effort = os.getenv("AI_REASONING_EFFORT", "medium").strip().lower() or "medium"
+        self.reasoning_effort = os.getenv("AI_REASONING_EFFORT", "xhigh").strip().lower() or "xhigh"
         if self.reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
-            self.reasoning_effort = "medium"
+            self.reasoning_effort = "xhigh"
         self.no_proxy_mode = str(os.getenv("AI_DISABLE_PROXY", "0")).strip().lower() in {"1", "true", "yes", "on"}
         self.cli_retries = self._i_env("AI_CLI_RETRIES", 1)
         self.cli_retry_delay_sec = self._f_env("AI_CLI_RETRY_DELAY_SEC", 1.5)
-        fallback_models = os.getenv("AI_MODEL_FALLBACKS", "")
-        configured_fallbacks = [m.strip() for m in fallback_models.split(",") if m.strip()]
-        self.fallback_models = [self.model]
-        for fallback_model in configured_fallbacks:
-            if fallback_model and fallback_model not in self.fallback_models:
-                self.fallback_models.append(fallback_model)
+        self.cli_timeout_sec = self._i_env("AI_CLI_TIMEOUT_SEC", 600)
 
     @contextmanager
     def _temporary_proxy_env(self):
@@ -111,39 +107,38 @@ class AIAnalyzer:
 
     def _run_codex(self, cmd: list[str], prompt: str, max_tokens: int, timeout: int = 240) -> tuple[bool, subprocess.CompletedProcess[Any, Any], str | None]:
         last_error: str | None = None
-        for model in self.fallback_models:
-            for attempt in range(1, max(1, self.cli_retries) + 1):
-                if "-m" in cmd:
-                    run_cmd = list(cmd)
-                    mi = run_cmd.index("-m")
-                    if mi + 1 < len(run_cmd):
-                        run_cmd[mi + 1] = model
-                    else:
-                        run_cmd.append(model)
+        for attempt in range(1, max(1, self.cli_retries) + 1):
+            if "-m" in cmd:
+                run_cmd = list(cmd)
+                mi = run_cmd.index("-m")
+                if mi + 1 < len(run_cmd):
+                    run_cmd[mi + 1] = self.model
                 else:
-                    run_cmd = [*cmd, "-m", model]
-                try:
-                    with self._temporary_proxy_env():
-                        proc = subprocess.run(
-                            run_cmd,
-                            input=prompt,
-                            capture_output=True,
-                            text=True,
-                            encoding="utf-8",
-                            errors="ignore",
-                            timeout=timeout,
-                            check=False,
-                        )
-                except Exception as exc:
-                    last_error = f"{type(exc).__name__}: {exc}"
-                    proc = None
-                else:
-                    if proc.returncode == 0:
-                        return True, proc, model
-                    last_error = f"rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
+                    run_cmd.append(self.model)
+            else:
+                run_cmd = [*cmd, "-m", self.model]
+            try:
+                with self._temporary_proxy_env():
+                    proc = subprocess.run(
+                        run_cmd,
+                        input=prompt,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="ignore",
+                        timeout=timeout,
+                        check=False,
+                    )
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                proc = None
+            else:
+                if proc.returncode == 0:
+                    return True, proc, self.model
+                last_error = f"rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
 
-                if attempt < max(1, self.cli_retries):
-                    time.sleep(self.cli_retry_delay_sec)
+            if attempt < max(1, self.cli_retries):
+                time.sleep(self.cli_retry_delay_sec)
 
         return False, proc if "proc" in locals() and proc is not None else subprocess.CompletedProcess(cmd, 1), last_error
 
@@ -166,7 +161,7 @@ class AIAnalyzer:
     def _extract_json_object(self, text: str) -> dict[str, Any] | None:
         if not text:
             return None
-        cleaned = text.strip().replace("```json", "").replace("```", "")
+        cleaned = self._strip_cli_noise(text).strip().replace("```json", "").replace("```", "")
         try:
             obj = json.loads(cleaned)
             return obj if isinstance(obj, dict) else None
@@ -183,6 +178,19 @@ class AIAnalyzer:
             if isinstance(obj, dict):
                 return obj
         return None
+
+    def _strip_cli_noise(self, text: str) -> str:
+        if not text:
+            return text
+        cleaned_lines: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if re.match(r"^\d{4}-\d{2}-\d{2}T\S+\s+(WARN|INFO|ERROR)\s+codex_", stripped):
+                continue
+            if "failed to warm featured plugin ids cache" in stripped:
+                continue
+            cleaned_lines.append(line)
+        return "\n".join(cleaned_lines).strip()
 
     def _call(self, prompt: str, max_tokens: int = 1400) -> str | None:
         if not self.has_api_access:
@@ -214,14 +222,15 @@ class AIAnalyzer:
                 out_file.name,
                 "-",
             ]
-            ok, proc, used_model = self._run_codex(cmd, prompt_with_budget, token_budget, timeout=240)
+            ok, proc, used_model = self._run_codex(cmd, prompt_with_budget, token_budget, timeout=self.cli_timeout_sec)
             if not ok:
                 return None
 
             with open(out_file.name, "r", encoding="utf-8", errors="ignore") as fh:
                 text = fh.read().strip()
-            if not text and (proc.stdout or proc.stderr):
-                text = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+            if not text and proc.stdout:
+                text = proc.stdout.strip()
+            text = self._strip_cli_noise(text)
             if not text:
                 return None
             return self._truncate_to_token_budget(text, token_budget)
