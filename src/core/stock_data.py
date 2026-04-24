@@ -381,10 +381,9 @@ def get_finviz_data(symbol: str) -> dict[str, Any] | None:
 
 def get_market_condition() -> dict[str, Any]:
     """Evaluate broad market regime from the configured benchmark trend structure."""
-    from config import MARKET_INDICATOR
     from core.indicators import calculate_indicators
 
-    benchmark = MARKET_INDICATOR or "QQQ"
+    benchmark = (str(os.getenv("AI_MARKET_INDICATOR", "QQQ")).strip().upper() or "QQQ")
     df = get_stock_data(benchmark)
     if df is None:
         return {

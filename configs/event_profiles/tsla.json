@@ -73,15 +73,15 @@
     ]
   },
   "nautilus": {
+    "strategy": "ema_cross",
     "venue": "XNAS",
     "instrument_id": "TSLA.XNAS",
     "bar_type": "TSLA.XNAS-1-DAY-LAST-EXTERNAL",
     "trade_size": "10",
-    "custom_data_client_id": "CUSTOM",
-    "signal_name": "tsla_event_action",
-    "news_buy_threshold": 0.85,
-    "news_sell_threshold": -0.85,
-    "min_volume_ratio_for_entry": 1.5,
-    "allow_entries_in_risk_off": false
+    "fast_ema_period": 10,
+    "slow_ema_period": 20,
+    "subscribe_quote_ticks": false,
+    "subscribe_trade_ticks": true,
+    "request_bars": true
   }
 }

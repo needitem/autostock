@@ -7,18 +7,17 @@ from typing import Any
 def build_symbol_strategy_importable_config(profile: dict[str, Any]) -> dict[str, Any]:
     nautilus = profile.get("nautilus", {}) if isinstance(profile.get("nautilus"), dict) else {}
     return {
-        "strategy_path": "nautilus_v2.strategy:TslaEventStrategy",
-        "config_path": "nautilus_v2.strategy:TslaEventStrategyConfig",
+        "strategy_path": "nautilus_trader.examples.strategies.ema_cross:EMACross",
+        "config_path": "nautilus_trader.examples.strategies.ema_cross:EMACrossConfig",
         "config": {
             "instrument_id": nautilus.get("instrument_id"),
             "bar_type": nautilus.get("bar_type"),
             "trade_size": str(nautilus.get("trade_size", "10")),
-            "custom_data_client_id": nautilus.get("custom_data_client_id", "CUSTOM"),
-            "news_buy_threshold": float(nautilus.get("news_buy_threshold", 0.85)),
-            "news_sell_threshold": float(nautilus.get("news_sell_threshold", -0.85)),
-            "min_volume_ratio_for_entry": float(nautilus.get("min_volume_ratio_for_entry", 1.5)),
-            "allow_entries_in_risk_off": bool(nautilus.get("allow_entries_in_risk_off", False)),
-            "signal_name": nautilus.get("signal_name"),
+            "fast_ema_period": int(nautilus.get("fast_ema_period", 10)),
+            "slow_ema_period": int(nautilus.get("slow_ema_period", 20)),
+            "subscribe_quote_ticks": bool(nautilus.get("subscribe_quote_ticks", False)),
+            "subscribe_trade_ticks": bool(nautilus.get("subscribe_trade_ticks", True)),
+            "request_bars": bool(nautilus.get("request_bars", True)),
         },
     }
 
@@ -46,12 +45,12 @@ def build_symbol_backtest_stub(base_dir: str | Path, profile: dict[str, Any]) ->
     symbol = str(profile.get("primary_symbol", "TSLA")).upper()
     return {
         "engine": "nautilus_trader",
-        "mode": f"{symbol.lower()}_event_backtest_stub",
+        "mode": f"{symbol.lower()}_ema_cross_backtest_stub",
         "data_paths": build_symbol_data_paths(base_dir, symbol),
         "strategy": build_symbol_strategy_importable_config(profile),
         "notes": [
-            f"Import exported {symbol} bars into a Nautilus ParquetDataCatalog or wrangler pipeline.",
-            f"Import custom {symbol} news/macro events as custom data and subscribe to them in strategy.on_data.",
-            "Use the exported signal snapshot only as a sanity-check artifact, not as a trading input.",
+            f"Import exported {symbol} bars into a Nautilus ParquetDataCatalog.",
+            "Use the official NautilusTrader EMACross example strategy for the backtest.",
+            "Keep the exported runtime and signal snapshot as Telegram/UI context only.",
         ],
     }

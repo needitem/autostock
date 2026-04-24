@@ -14,18 +14,16 @@ from nautilus_trader.model.enums import BookType
 from nautilus_trader.model.enums import OmsType
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
-from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.objects import Money
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 from nautilus_trader.persistence.catalog.singleton import clear_singleton_instances
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
+from nautilus_trader.examples.strategies.ema_cross import EMACross
+from nautilus_trader.examples.strategies.ema_cross import EMACrossConfig
 
 from nautilus_v2.loader import load_tsla_bars_csv
-from nautilus_v2.loader import load_tsla_macro_events
-from nautilus_v2.loader import load_tsla_news_events
-from nautilus_v2.strategy import TslaEventStrategy
-from nautilus_v2.strategy import TslaEventStrategyConfig
+from event_profile import load_event_profile
 
 
 def _s(value: Any) -> str:
@@ -78,21 +76,15 @@ def import_tsla_bundle_to_catalog(bundle_dir: str | Path, catalog_dir: str | Pat
     catalog = setup_catalog(catalog_dir)
     instrument = tsla_instrument()
     bars = _csv_rows_to_bars(bundle / "tsla_bars.csv")
-    news = sorted(load_tsla_news_events(bundle / "tsla_news_events.jsonl"), key=lambda x: x.ts_init)
-    macro = sorted(load_tsla_macro_events(bundle / "tsla_macro_events.jsonl"), key=lambda x: x.ts_init)
 
     catalog.write_data([instrument])
     catalog.write_data(bars)
-    if news:
-        catalog.write_data(news)
-    if macro:
-        catalog.write_data(macro)
 
     return {
         "catalog_path": str(Path(catalog.path)),
         "bar_count": len(bars),
-        "news_count": len(news),
-        "macro_count": len(macro),
+        "news_count": 0,
+        "macro_count": 0,
         "instrument_id": str(instrument.id),
         "bar_type": str(tsla_bar_type()),
     }
@@ -100,11 +92,11 @@ def import_tsla_bundle_to_catalog(bundle_dir: str | Path, catalog_dir: str | Pat
 
 def run_tsla_backtest_in_memory(bundle_dir: str | Path) -> dict[str, Any]:
     bundle = Path(bundle_dir).resolve()
+    profile = load_event_profile("tsla")
+    nautilus = profile.get("nautilus", {}) if isinstance(profile.get("nautilus"), dict) else {}
     instrument = tsla_instrument()
     bar_type = tsla_bar_type()
     bars = _csv_rows_to_bars(bundle / "tsla_bars.csv")
-    news = sorted(load_tsla_news_events(bundle / "tsla_news_events.jsonl"), key=lambda x: x.ts_init)
-    macro = sorted(load_tsla_macro_events(bundle / "tsla_macro_events.jsonl"), key=lambda x: x.ts_init)
 
     engine = BacktestEngine(
         config=BacktestEngineConfig(
@@ -123,22 +115,17 @@ def run_tsla_backtest_in_memory(bundle_dir: str | Path) -> dict[str, Any]:
     )
     engine.add_instrument(instrument)
     engine.add_data(bars)
-    if news:
-        engine.add_data(news, client_id=ClientId("CUSTOM"))
-    if macro:
-        engine.add_data(macro, client_id=ClientId("CUSTOM"))
 
-    strategy = TslaEventStrategy(
-        TslaEventStrategyConfig(
+    strategy = EMACross(
+        EMACrossConfig(
             instrument_id=instrument.id,
             bar_type=bar_type,
-            trade_size=Decimal("10"),
-            custom_data_client_id="CUSTOM",
-            news_buy_threshold=0.85,
-            news_sell_threshold=-0.85,
-            min_volume_ratio_for_entry=1.5,
-            allow_entries_in_risk_off=False,
-            signal_name="tsla_event_action",
+            trade_size=Decimal(str(nautilus.get("trade_size", "10"))),
+            fast_ema_period=int(nautilus.get("fast_ema_period", 10)),
+            slow_ema_period=int(nautilus.get("slow_ema_period", 20)),
+            subscribe_quote_ticks=bool(nautilus.get("subscribe_quote_ticks", False)),
+            subscribe_trade_ticks=bool(nautilus.get("subscribe_trade_ticks", True)),
+            request_bars=bool(nautilus.get("request_bars", True)),
         )
     )
     engine.add_strategy(strategy)
@@ -146,9 +133,12 @@ def run_tsla_backtest_in_memory(bundle_dir: str | Path) -> dict[str, Any]:
     result = engine.get_result()
     summary: dict[str, Any] = {
         "engine": "BacktestEngine",
+        "strategy": "official_ema_cross",
         "bar_count": len(bars),
-        "news_count": len(news),
-        "macro_count": len(macro),
+        "news_count": 0,
+        "macro_count": 0,
+        "fast_ema_period": int(nautilus.get("fast_ema_period", 10)),
+        "slow_ema_period": int(nautilus.get("slow_ema_period", 20)),
     }
     if result is not None:
         summary["result_type"] = type(result).__name__

@@ -1,82 +1,46 @@
-# Nautilus V2 Lane
+# Nautilus Runtime
 
-This directory is the separate `NautilusTrader`-oriented strategy lane for Autostock.
+이 디렉터리는 이제 Autostock의 보조 레인이 아니라 **핵심 실행 엔진**입니다.
 
-It is intentionally **not** a full repo rewrite. The current Autostock codebase still owns:
+현재 구조:
+- 이벤트/뉴스 수집과 차트 확인은 Python 런타임이 수행
+- 그 결과를 Nautilus 입력 번들로 export
+- 최신 번들을 Nautilus backtest로 재생
+- Telegram Worker는 이 runtime + Nautilus 요약만 표시
 
-- news/public-filing collection
-- Telegram/Cloudflare delivery
-- watchlist scoring and macro overlay generation
+## Commands
 
-This lane owns the **event-driven trading inputs** for a future Nautilus-based strategy engine.
-
-## Current scope
-
-The current bridge exports TSLA-specific artifacts:
-
-- `news events` JSONL
-- `macro event` JSONL
-- `signal snapshot` JSON
-- `daily bars` CSV
-
-These files are generated from the existing `autostock_v2` TSLA event engine.
-
-## Why this split
-
-`NautilusTrader` is strongest as an event-driven strategy/runtime and backtest/live parity engine.
-It does **not** solve the news ingestion problem for us, so we keep ingestion in Autostock and
-export normalized artifacts into a Nautilus-ready lane.
-
-## Command
-
-From the repo root:
+루트 기준:
 
 ```bash
-python scripts/export_nautilus_tsla_inputs.py
+python src/main.py --runtime --profile tsla
+python src/main.py --nautilus-bundle --profile tsla
+python src/main.py --nautilus-backtest --profile tsla
+python src/main.py --telegram-export --profile tsla
+python src/main.py --all --profile tsla
 ```
 
-Optional environment variables:
+## Data
 
-- `AI_V2_EVENT_FILE` - manual event JSON to merge
-- `AI_V2_RSS_URLS` - comma-separated RSS feeds
-- `AI_V2_TSLA_BARS_PERIOD` - price history period, default `15mo`
-
-## Output
-
-Artifacts are written under:
+생성 산출물:
 
 ```text
-data/nautilus_v2/<YYYY-MM-DD>/
+data/nautilus_v2/<profile>/<date>/
+  tsla_news_events.jsonl
+  tsla_macro_events.jsonl
+  tsla_signal_snapshot.json
+  tsla_bars.csv
+  tsla_nautilus_backtest_summary.json
 ```
 
-## Next step
+## Package
 
-The next implementation step is a real Nautilus strategy package which reads these artifacts as:
+이 레인은 별도 Python 패키지로 다음만 포함합니다.
+- `bridge.py`
+- `loader.py`
+- `models.py`
+- `strategy.py`
+- `backtest.py`
+- `config_builders.py`
 
-- `NewsEvent`
-- `MacroEvent`
-- `Bar`
-
-and applies the TSLA event logic inside the Nautilus event loop.
-
-## Current runner status
-
-There is now a working TSLA-only runner:
-
-```bash
-nautilus_v2\.venv\Scripts\python scripts/run_nautilus_tsla_backtest.py
-```
-
-Important:
-
-- The artifacts are imported into a Nautilus catalog for inspection/reuse.
-- The actual backtest currently runs with the in-memory `BacktestEngine`.
-- This is deliberate: the Rust parquet backtest path currently rejects our Python custom news/macro data classes directly.
-
-So the current lane already provides:
-
-- real TSLA bar import
-- real TSLA custom event import
-- real Nautilus strategy execution
-
-but custom event playback is still using the Python/in-memory path rather than a pure Rust catalog streaming path.
+현재 기본 의존성은 [nautilus_v2/requirements.txt](</D:/my/autostock/nautilus_v2/requirements.txt>) 에 있습니다.

@@ -9,7 +9,6 @@ from typing import Any
 import pandas as pd
 
 from ai.analyzer import ai
-from config import MARKET_INDICATOR
 from core.earnings_pit import EarningsEventStore
 from core.event_watchlist import chart_volume_gate, classify_action, macro_overlay
 from core.indicators import calculate_indicators, calculate_intraday_snapshot
@@ -21,6 +20,7 @@ from event_runtime.collect import collect_profile_calendar_events, collect_profi
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "data" / "autostock_v2"
+MARKET_INDICATOR = (os.getenv("AI_MARKET_INDICATOR", "QQQ").strip().upper() or "QQQ")
 DEFAULT_WATCHLIST = [
     "TSLA",
     "NVDA",
@@ -42,6 +42,42 @@ def _f(value: Any, default: float = 0.0) -> float:
 
 def _s(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _load_cached_model_event(symbol: str) -> dict[str, Any] | None:
+    symbol_upper = _s(symbol).upper()
+    candidates: list[Path] = []
+    candidates.extend((ROOT / "data" / "event_runtime").glob("*/latest_payload.json"))
+    candidates.extend(OUTPUT_DIR.glob("autostock_v2_*.json"))
+    candidates = [path for path in candidates if path.is_file()]
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        recommendations = payload.get("recommendations") if isinstance(payload, dict) else None
+        if not isinstance(recommendations, list):
+            continue
+        for row in recommendations:
+            if not isinstance(row, dict):
+                continue
+            if _s(row.get("symbol")).upper() != symbol_upper:
+                continue
+            signal = _s(row.get("event_signal")).lower()
+            strength = _s(row.get("event_strength")).lower()
+            if signal not in {"bullish", "bearish", "neutral"}:
+                continue
+            if strength not in {"strong", "moderate", "weak", "none"}:
+                continue
+            return {
+                "signal": signal,
+                "strength": strength,
+                "rationale": [str(item) for item in (row.get("reason_lines") or [])[:5]],
+                "mode": "cached-model",
+                "cached_from": str(path),
+            }
+    return None
 
 
 def _parse_symbols(raw: str) -> list[str]:
@@ -210,7 +246,17 @@ def run_autostock_v2(
             next_known_events=[row for row in next_known_events if _s(row.get("symbol")).upper() == symbol][:5],
         )
         if "error" in model_event:
-            raise RuntimeError(f"Event analysis failed for {symbol}: {model_event.get('error')}")
+            cached_model_event = _load_cached_model_event(symbol)
+            if not cached_model_event:
+                raise RuntimeError(f"Event analysis failed for {symbol}: {model_event.get('error')}")
+            model_event = cached_model_event
+            cached_from = _s(cached_model_event.get("cached_from"))
+            reason_lines = [str(item) for item in (cached_model_event.get("rationale") or [])[:5]]
+            if cached_from:
+                reason_lines = [
+                    f"실시간 모델 해석을 사용할 수 없어 이전 모델 판단을 재사용했습니다. source={Path(cached_from).name}",
+                    *reason_lines,
+                ][:5]
         event_signal = _s(model_event.get("signal")) or "neutral"
         event_strength = _s(model_event.get("strength")) or "none"
         if event_signal not in {"bullish", "bearish", "neutral"}:

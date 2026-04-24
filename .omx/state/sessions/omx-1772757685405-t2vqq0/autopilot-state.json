@@ -17,8 +17,8 @@
     "pytest": "tests/test_openai_provider.py passed (6/6)",
     "real_call": "AIAnalyzer with gpt-5.4 + xhigh returned OK"
   },
-  "iteration": 70,
-  "last_turn_at": "2026-03-06T01:36:55.667Z",
+  "iteration": 210,
+  "last_turn_at": "2026-04-20T00:29:23.073Z",
   "run_tag": "ai20y_ndx100_bydate_weekly_ai_ro1_dynblend_v2_gpt54_low_20260306",
   "reasoning_effort": "low",
   "why_not_xhigh": "xhigh validated but projected multi-hour/very long 20y cycle per tuning round; impractical for iterative optimization",
