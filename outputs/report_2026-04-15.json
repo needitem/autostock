@@ -1,0 +1,1645 @@
+{
+  "as_of": "2026-04-15T23:47:15.309184Z",
+  "module1_liquidity": {
+    "metrics": {
+      "m2_latest": {
+        "date": "2026-02-01",
+        "value": 22667.3
+      },
+      "m2_base": {
+        "date": "2025-08-01",
+        "value": 22086.8
+      },
+      "m2_6m_pct": 2.63,
+      "real_rate_10y": 1.89,
+      "yield_curve_10y_2y": 0.53,
+      "dollar_latest": {
+        "date": "2026-04-10",
+        "value": 118.8552
+      },
+      "dollar_base": {
+        "date": "2025-10-10",
+        "value": 121.1163
+      },
+      "dollar_6m_pct": -1.87,
+      "dollar_index_series": "DTWEXBGS",
+      "cpi_6m_annualized": 3.73,
+      "unemployment_rate": 4.3,
+      "real_gdp_yoy": 1.99
+    },
+    "etf_flows": {
+      "items": [
+        {
+          "date": "2026-04-15",
+          "title": "ETFGI reports Global ETFs Industry Sets Q1 Record as YTD net Inflows Surge 35% Past 2025 High",
+          "scope": "global",
+          "month_label": "march",
+          "period_end": "2026-03",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 174.42,
+          "net_inflow_ytd_usd_b": 626.42,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": null,
+          "warnings": [
+            "title missing assets keyword"
+          ],
+          "link": "https://etfgi.com/news/press-releases/2026/04/etfgi-reports-global-etfs-industry-sets-q1-record-ytd-net-inflows-surge"
+        },
+        {
+          "date": "2026-04-14",
+          "title": "ETFGI reports that the European ETF industry recorded record net inflows in the first quarter, as the industry celebrated its 26th anniversary on April 11th",
+          "scope": "europe",
+          "month_label": "march",
+          "period_end": "2026-03",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 13.62,
+          "net_inflow_ytd_usd_b": 128.71,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": null,
+          "warnings": [
+            "title missing assets keyword"
+          ],
+          "link": "https://etfgi.com/news/press-releases/2026/04/etfgi-reports-european-etf-industry-recorded-record-net-inflows-first"
+        },
+        {
+          "date": "2026-03-26",
+          "title": "ETFGI Reports Actively Managed ETFs Globally Hit New US$2.15 Trillion Record Amid 71 Straight Months of Net Inflows at the end of February",
+          "scope": "global",
+          "month_label": "february",
+          "period_end": "2026-02",
+          "category": "active",
+          "industry_total": false,
+          "net_inflow_month_usd_b": 91.15,
+          "net_inflow_ytd_usd_b": null,
+          "category_ytd_usd_b": 167.58,
+          "aum_usd_trn": null,
+          "warnings": [
+            "title missing assets keyword",
+            "ytd_from_category_only",
+            "category_only"
+          ],
+          "link": "https://etfgi.com/news/press-releases/2026/03/etfgi-reports-actively-managed-etfs-globally-hit-new-us215-trillion"
+        },
+        {
+          "date": "2026-03-25",
+          "title": "ETFGI reports Asia Pacific ex‑Japan ETF industry Assets Hit Record US$1.81 Trillion at the end of February",
+          "scope": "asia_pacific",
+          "month_label": "february",
+          "period_end": "2026-02",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 34.37,
+          "net_inflow_ytd_usd_b": null,
+          "category_ytd_usd_b": 5.99,
+          "aum_usd_trn": 1.81,
+          "warnings": [
+            "ytd_from_category_only"
+          ],
+          "link": "https://etfgi.com/news/press-releases/2026/03/etfgi-reports-asia-pacific-ex-japan-etf-industry-assets-hit-record"
+        },
+        {
+          "date": "2026-03-24",
+          "title": "ETFGI reports record US$21.24 Trillion in Global ETF Assets as Inflows Reach Highest YTD Level on Record at end of February",
+          "scope": "global",
+          "month_label": "february",
+          "period_end": "2026-02",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 301.52,
+          "net_inflow_ytd_usd_b": 451.99,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": 21.24,
+          "warnings": [],
+          "link": "https://etfgi.com/news/press-releases/2026/03/etfgi-reports-record-us2124-trillion-global-etf-assets-inflows-reach"
+        },
+        {
+          "date": "2026-03-23",
+          "title": "ETFGI reports ETFs industry in Europe sets new record with US$3.53 trillion in assets and strongest YTD inflows on record",
+          "scope": "europe",
+          "month_label": "february",
+          "period_end": "2026-02",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 56.42,
+          "net_inflow_ytd_usd_b": 115.09,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": 3.53,
+          "warnings": [],
+          "link": "https://etfgi.com/news/press-releases/2026/03/etfgi-reports-etfs-industry-europe-sets-new-record-us353-trillion"
+        },
+        {
+          "date": "2026-03-16",
+          "title": "ETFGI reports that assets invested in the ETFs industry in the United States reached a new record of US$14.28 trillion at the end of February",
+          "scope": "us",
+          "month_label": "february",
+          "period_end": "2026-02",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 192.25,
+          "net_inflow_ytd_usd_b": 358.9,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": 14.28,
+          "warnings": [],
+          "link": "https://etfgi.com/news/press-releases/2026/03/etfgi-reports-assets-invested-etfs-industry-united-states-reached-new"
+        },
+        {
+          "date": "2026-03-12",
+          "title": "The global ETF industry marks its 36th anniversary, celebrating more than three decades of innovation since the launch of the world’s first ETF",
+          "scope": "global",
+          "month_label": "february",
+          "period_end": "2026-02",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 17.49,
+          "net_inflow_ytd_usd_b": 36.98,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": 0.64852,
+          "warnings": [],
+          "link": "https://etfgi.com/news/press-releases/2026/03/global-etf-industry-marks-its-36th-anniversary-celebrating-more-three"
+        },
+        {
+          "date": "2026-02-26",
+          "title": "ETFGI reports Active ETFs Smash Records: Assets Top US$2 Trillion on Highest‑Ever Monthly Inflows",
+          "scope": "global",
+          "month_label": "january",
+          "period_end": "2026-01",
+          "category": "active",
+          "industry_total": false,
+          "net_inflow_month_usd_b": 76.43,
+          "net_inflow_ytd_usd_b": null,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": 2.04,
+          "warnings": [
+            "category_only"
+          ],
+          "link": "https://etfgi.com/news/press-releases/2026/02/etfgi-reports-active-etfs-smash-records-assets-top-us2-trillion-highest"
+        },
+        {
+          "date": "2026-02-25",
+          "title": "ETFGI reports Global ETF Assets Hit New Record US$20.64 Trillion as January Net Inflows Hit Second Highest Level on Record",
+          "scope": "global",
+          "month_label": "january",
+          "period_end": "2026-01",
+          "category": null,
+          "industry_total": true,
+          "net_inflow_month_usd_b": 150.41,
+          "net_inflow_ytd_usd_b": null,
+          "category_ytd_usd_b": null,
+          "aum_usd_trn": 20.64,
+          "warnings": [],
+          "link": "https://etfgi.com/news/press-releases/2026/02/etfgi-reports-global-etf-assets-hit-new-record-us2064-trillion-january"
+        }
+      ],
+      "latest_net_inflow_month_usd_b": 301.52,
+      "latest_scope": "global",
+      "latest_date": "2026-03-24",
+      "latest_title": "ETFGI reports record US$21.24 Trillion in Global ETF Assets as Inflows Reach Highest YTD Level on Record at end of February",
+      "latest_month_label": "february",
+      "latest_kind": "global",
+      "latest_by_scope": {},
+      "latest_by_published_date": {
+        "date": "2026-04-15",
+        "title": "ETFGI reports Global ETFs Industry Sets Q1 Record as YTD net Inflows Surge 35% Past 2025 High",
+        "scope": "global",
+        "month_label": "march",
+        "period_end": "2026-03",
+        "category": null,
+        "industry_total": true,
+        "net_inflow_month_usd_b": 174.42,
+        "net_inflow_ytd_usd_b": 626.42,
+        "category_ytd_usd_b": null,
+        "aum_usd_trn": null,
+        "warnings": [
+          "title missing assets keyword"
+        ],
+        "link": "https://etfgi.com/news/press-releases/2026/04/etfgi-reports-global-etfs-industry-sets-q1-record-ytd-net-inflows-surge"
+      },
+      "warnings": [],
+      "stats": {
+        "items_total": 10,
+        "items_with_inflow": 10,
+        "items_with_inflow_total": 8,
+        "items_with_aum": 7,
+        "items_with_ytd": 6,
+        "items_with_warnings": 5
+      }
+    },
+    "risk_on_off": {
+      "score": 1.4,
+      "label": "neutral",
+      "notes": [],
+      "components": [
+        {
+          "factor": "m2_6m_pct",
+          "value": 2.63,
+          "points": 0.8
+        },
+        {
+          "factor": "real_rate_10y",
+          "value": 1.89,
+          "points": -1.0
+        },
+        {
+          "factor": "yield_curve_10y_2y",
+          "value": 0.53,
+          "points": 0.6
+        },
+        {
+          "factor": "etf_flow_latest_net_inflow_month_usd_b",
+          "value": 301.52,
+          "points": 1.0,
+          "scope": "global",
+          "kind": "global"
+        }
+      ]
+    },
+    "confidence": "medium",
+    "confidence_macro": "high",
+    "confidence_flows": "medium"
+  },
+  "module2_valuation_distortion": {
+    "details": [
+      {
+        "sector": "Communication Services",
+        "etf": "XLC",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.7652,
+          "mean_log": 4.2259,
+          "std_log": 0.2979,
+          "z": 1.81
+        },
+        "trend": {
+          "latest": 117.36,
+          "ma200": 113.94,
+          "ma200_gap_pct": 3.0,
+          "ret_63d_pct": 0.4,
+          "ret_252d_pct": 28.59
+        },
+        "pe": 31.048955,
+        "pb": 9.7748375,
+        "roe": 0.35705003,
+        "earnings_growth": 0.311,
+        "revenue_growth": 0.18,
+        "sample_size": 2
+      },
+      {
+        "sector": "Consumer Discretionary",
+        "etf": "XLY",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.7722,
+          "mean_log": 4.2616,
+          "std_log": 0.3256,
+          "z": 1.57
+        },
+        "trend": {
+          "latest": 118.18,
+          "ma200": 116.35,
+          "ma200_gap_pct": 1.57,
+          "ret_63d_pct": -4.85,
+          "ret_252d_pct": 24.58
+        }
+      },
+      {
+        "sector": "Consumer Staples",
+        "etf": "XLP",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.3952,
+          "mean_log": 4.1872,
+          "std_log": 0.1619,
+          "z": 1.28
+        },
+        "trend": {
+          "latest": 81.06,
+          "ma200": 81.02,
+          "ma200_gap_pct": 0.05,
+          "ret_63d_pct": -0.06,
+          "ret_252d_pct": 0.88
+        }
+      },
+      {
+        "sector": "Energy",
+        "etf": "XLE",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.0211,
+          "mean_log": 3.5384,
+          "std_log": 0.2915,
+          "z": 1.66
+        },
+        "trend": {
+          "latest": 55.76,
+          "ma200": 47.73,
+          "ma200_gap_pct": 16.83,
+          "ret_63d_pct": 18.64,
+          "ret_252d_pct": 41.36
+        },
+        "pe": 9.172932,
+        "pb": 2.1202643,
+        "roe": 0.2532,
+        "earnings_growth": -0.182,
+        "revenue_growth": -0.28,
+        "sample_size": 1
+      },
+      {
+        "sector": "Financials",
+        "etf": "XLF",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.9545,
+          "mean_log": 3.4785,
+          "std_log": 0.2832,
+          "z": 1.68
+        },
+        "trend": {
+          "latest": 52.17,
+          "ma200": 52.7,
+          "ma200_gap_pct": -1.0,
+          "ret_63d_pct": -3.8,
+          "ret_252d_pct": 11.78
+        }
+      },
+      {
+        "sector": "Health Care",
+        "etf": "XLV",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.9957,
+          "mean_log": 4.7032,
+          "std_log": 0.2498,
+          "z": 1.17
+        },
+        "trend": {
+          "latest": 147.77,
+          "ma200": 146.34,
+          "ma200_gap_pct": 0.98,
+          "ret_63d_pct": -5.72,
+          "ret_252d_pct": 7.96
+        }
+      },
+      {
+        "sector": "Industrials",
+        "etf": "XLI",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 5.1427,
+          "mean_log": 4.5232,
+          "std_log": 0.2928,
+          "z": 2.12
+        },
+        "trend": {
+          "latest": 171.18,
+          "ma200": 158.09,
+          "ma200_gap_pct": 8.28,
+          "ret_63d_pct": 4.37,
+          "ret_252d_pct": 36.21
+        },
+        "pe": 22.1221505,
+        "pb": 5.427213350000001,
+        "roe": 0.326405,
+        "earnings_growth": 0.0345,
+        "revenue_growth": 0.0565,
+        "sample_size": 4
+      },
+      {
+        "sector": "Materials",
+        "etf": "XLB",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.9392,
+          "mean_log": 3.5529,
+          "std_log": 0.2317,
+          "z": 1.67
+        },
+        "trend": {
+          "latest": 51.38,
+          "ma200": 46.69,
+          "ma200_gap_pct": 10.05,
+          "ret_63d_pct": 5.44,
+          "ret_252d_pct": 27.65
+        }
+      },
+      {
+        "sector": "Real Estate",
+        "etf": "XLRE",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.7707,
+          "mean_log": 3.6258,
+          "std_log": 0.1282,
+          "z": 1.13
+        },
+        "trend": {
+          "latest": 43.41,
+          "ma200": 41.66,
+          "ma200_gap_pct": 4.19,
+          "ret_63d_pct": 6.06,
+          "ret_252d_pct": 11.54
+        },
+        "pe": 32.775925,
+        "pb": 11.56013605,
+        "roe": 0.10211999999999999,
+        "earnings_growth": -0.332,
+        "revenue_growth": 0.0115,
+        "sample_size": 2
+      },
+      {
+        "sector": "Technology",
+        "etf": "XLK",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 5.0126,
+          "mean_log": 4.073,
+          "std_log": 0.5536,
+          "z": 1.7
+        },
+        "trend": {
+          "latest": 150.3,
+          "ma200": 139.28,
+          "ma200_gap_pct": 7.91,
+          "ret_63d_pct": 2.61,
+          "ret_252d_pct": 51.55
+        },
+        "pe": 37.144051,
+        "pb": 7.6833029,
+        "roe": 0.30807,
+        "earnings_growth": 0.37949999999999995,
+        "revenue_growth": 0.1385,
+        "sample_size": 8
+      },
+      {
+        "sector": "Utilities",
+        "etf": "XLU",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.8291,
+          "mean_log": 3.4601,
+          "std_log": 0.1713,
+          "z": 2.15
+        },
+        "trend": {
+          "latest": 46.02,
+          "ma200": 43.92,
+          "ma200_gap_pct": 4.79,
+          "ret_63d_pct": 7.4,
+          "ret_252d_pct": 20.6
+        },
+        "pe": 20.699066,
+        "pb": 2.346913,
+        "roe": 0.11299,
+        "earnings_growth": -0.058,
+        "revenue_growth": 0.058,
+        "sample_size": 5
+      }
+    ],
+    "outliers": [
+      {
+        "sector": "Communication Services",
+        "etf": "XLC",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.7652,
+          "mean_log": 4.2259,
+          "std_log": 0.2979,
+          "z": 1.81
+        },
+        "trend": {
+          "latest": 117.36,
+          "ma200": 113.94,
+          "ma200_gap_pct": 3.0,
+          "ret_63d_pct": 0.4,
+          "ret_252d_pct": 28.59
+        },
+        "pe": 31.048955,
+        "pb": 9.7748375,
+        "roe": 0.35705003,
+        "earnings_growth": 0.311,
+        "revenue_growth": 0.18,
+        "sample_size": 2,
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Consumer Discretionary",
+        "etf": "XLY",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.7722,
+          "mean_log": 4.2616,
+          "std_log": 0.3256,
+          "z": 1.57
+        },
+        "trend": {
+          "latest": 118.18,
+          "ma200": 116.35,
+          "ma200_gap_pct": 1.57,
+          "ret_63d_pct": -4.85,
+          "ret_252d_pct": 24.58
+        },
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Consumer Staples",
+        "etf": "XLP",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.3952,
+          "mean_log": 4.1872,
+          "std_log": 0.1619,
+          "z": 1.28
+        },
+        "trend": {
+          "latest": 81.06,
+          "ma200": 81.02,
+          "ma200_gap_pct": 0.05,
+          "ret_63d_pct": -0.06,
+          "ret_252d_pct": 0.88
+        },
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Energy",
+        "etf": "XLE",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.0211,
+          "mean_log": 3.5384,
+          "std_log": 0.2915,
+          "z": 1.66
+        },
+        "trend": {
+          "latest": 55.76,
+          "ma200": 47.73,
+          "ma200_gap_pct": 16.83,
+          "ret_63d_pct": 18.64,
+          "ret_252d_pct": 41.36
+        },
+        "pe": 9.172932,
+        "pb": 2.1202643,
+        "roe": 0.2532,
+        "earnings_growth": -0.182,
+        "revenue_growth": -0.28,
+        "sample_size": 1,
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Financials",
+        "etf": "XLF",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.9545,
+          "mean_log": 3.4785,
+          "std_log": 0.2832,
+          "z": 1.68
+        },
+        "trend": {
+          "latest": 52.17,
+          "ma200": 52.7,
+          "ma200_gap_pct": -1.0,
+          "ret_63d_pct": -3.8,
+          "ret_252d_pct": 11.78
+        },
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Health Care",
+        "etf": "XLV",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.9957,
+          "mean_log": 4.7032,
+          "std_log": 0.2498,
+          "z": 1.17
+        },
+        "trend": {
+          "latest": 147.77,
+          "ma200": 146.34,
+          "ma200_gap_pct": 0.98,
+          "ret_63d_pct": -5.72,
+          "ret_252d_pct": 7.96
+        },
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Industrials",
+        "etf": "XLI",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 5.1427,
+          "mean_log": 4.5232,
+          "std_log": 0.2928,
+          "z": 2.12
+        },
+        "trend": {
+          "latest": 171.18,
+          "ma200": 158.09,
+          "ma200_gap_pct": 8.28,
+          "ret_63d_pct": 4.37,
+          "ret_252d_pct": 36.21
+        },
+        "pe": 22.1221505,
+        "pb": 5.427213350000001,
+        "roe": 0.326405,
+        "earnings_growth": 0.0345,
+        "revenue_growth": 0.0565,
+        "sample_size": 4,
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Materials",
+        "etf": "XLB",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.9392,
+          "mean_log": 3.5529,
+          "std_log": 0.2317,
+          "z": 1.67
+        },
+        "trend": {
+          "latest": 51.38,
+          "ma200": 46.69,
+          "ma200_gap_pct": 10.05,
+          "ret_63d_pct": 5.44,
+          "ret_252d_pct": 27.65
+        },
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Real Estate",
+        "etf": "XLRE",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.7707,
+          "mean_log": 3.6258,
+          "std_log": 0.1282,
+          "z": 1.13
+        },
+        "trend": {
+          "latest": 43.41,
+          "ma200": 41.66,
+          "ma200_gap_pct": 4.19,
+          "ret_63d_pct": 6.06,
+          "ret_252d_pct": 11.54
+        },
+        "pe": 32.775925,
+        "pb": 11.56013605,
+        "roe": 0.10211999999999999,
+        "earnings_growth": -0.332,
+        "revenue_growth": 0.0115,
+        "sample_size": 2,
+        "label": "insufficient_data",
+        "confidence": "low"
+      },
+      {
+        "sector": "Utilities",
+        "etf": "XLU",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 3.8291,
+          "mean_log": 3.4601,
+          "std_log": 0.1713,
+          "z": 2.15
+        },
+        "trend": {
+          "latest": 46.02,
+          "ma200": 43.92,
+          "ma200_gap_pct": 4.79,
+          "ret_63d_pct": 7.4,
+          "ret_252d_pct": 20.6
+        },
+        "pe": 20.699066,
+        "pb": 2.346913,
+        "roe": 0.11299,
+        "earnings_growth": -0.058,
+        "revenue_growth": 0.058,
+        "sample_size": 5,
+        "label": "expectations_only",
+        "confidence": "medium"
+      }
+    ],
+    "min_sample": 5,
+    "note": "PE/PB are cross-sectional medians, not 10y bands. ROE filtered for equity<=0 or extreme values.",
+    "confidence": "low"
+  },
+  "module3_flow_reversal": {
+    "candidates": [
+      {
+        "symbol": "APD",
+        "name": "Air Products and Chemicals, Inc",
+        "turnaround": true,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.7
+      },
+      {
+        "symbol": "ALB",
+        "name": "Albemarle Corporation",
+        "turnaround": true,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.7
+      },
+      {
+        "symbol": "MMM",
+        "name": "3M Company",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "AOS",
+        "name": "A.O. Smith Corporation",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ABT",
+        "name": "Abbott Laboratories",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ABBV",
+        "name": "AbbVie Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ACN",
+        "name": "Accenture plc",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ADBE",
+        "name": "Adobe Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "AMD",
+        "name": "Advanced Micro Devices, Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "AES",
+        "name": "The AES Corporation",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "AFL",
+        "name": "AFLAC Incorporated",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "A",
+        "name": "Agilent Technologies, Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ABNB",
+        "name": "Airbnb, Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "AKAM",
+        "name": "Akamai Technologies, Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ARE",
+        "name": "Alexandria Real Estate Equities",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ALGN",
+        "name": "Align Technology, Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ALLE",
+        "name": "Allegion plc",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "LNT",
+        "name": "Alliant Energy Corporation",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "ALL",
+        "name": "Allstate Corporation (The)",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      },
+      {
+        "symbol": "GOOGL",
+        "name": "Alphabet Inc.",
+        "turnaround": false,
+        "volume_surge": false,
+        "short_ok": true,
+        "probability": 0.3
+      }
+    ],
+    "note": "Institutional/foreign flow is proxied by fundamentals + volume + short data.",
+    "confidence": "low"
+  },
+  "module3b_short_interest": {
+    "top_short_interest": [
+      {
+        "symbol": "AAPL",
+        "short_interest": 126771284.0,
+        "days_to_cover": 2.96
+      },
+      {
+        "symbol": "AMZN",
+        "short_interest": 87641036.0,
+        "days_to_cover": 1.94
+      },
+      {
+        "symbol": "GOOGL",
+        "short_interest": 79660632.0,
+        "days_to_cover": 2.5
+      },
+      {
+        "symbol": "MO",
+        "short_interest": 44155513.0,
+        "days_to_cover": 3.86
+      },
+      {
+        "symbol": "GOOG",
+        "short_interest": 44038271.0,
+        "days_to_cover": 1.94
+      },
+      {
+        "symbol": "AMD",
+        "short_interest": 36423215.0,
+        "days_to_cover": 1.05
+      },
+      {
+        "symbol": "AMCR",
+        "short_interest": 32856439.0,
+        "days_to_cover": 3.63
+      },
+      {
+        "symbol": "APO",
+        "short_interest": 31106576.0,
+        "days_to_cover": 5.11
+      },
+      {
+        "symbol": "APA",
+        "short_interest": 28519372.0,
+        "days_to_cover": 2.49
+      },
+      {
+        "symbol": "AES",
+        "short_interest": 24520971.0,
+        "days_to_cover": 1.64
+      },
+      {
+        "symbol": "ABT",
+        "short_interest": 23825745.0,
+        "days_to_cover": 1.56
+      },
+      {
+        "symbol": "LNT",
+        "short_interest": 20712314.0,
+        "days_to_cover": 10.01
+      },
+      {
+        "symbol": "ABBV",
+        "short_interest": 20125180.0,
+        "days_to_cover": 2.45
+      },
+      {
+        "symbol": "AEP",
+        "short_interest": 19162113.0,
+        "days_to_cover": 4.71
+      },
+      {
+        "symbol": "ACN",
+        "short_interest": 18236022.0,
+        "days_to_cover": 1.95
+      },
+      {
+        "symbol": "AKAM",
+        "short_interest": 18044552.0,
+        "days_to_cover": 3.37
+      },
+      {
+        "symbol": "APH",
+        "short_interest": 14972313.0,
+        "days_to_cover": 1.47
+      },
+      {
+        "symbol": "ABNB",
+        "short_interest": 14401754.0,
+        "days_to_cover": 4.03
+      },
+      {
+        "symbol": "AMGN",
+        "short_interest": 13981275.0,
+        "days_to_cover": 4.72
+      },
+      {
+        "symbol": "AMAT",
+        "short_interest": 13021648.0,
+        "days_to_cover": 1.83
+      }
+    ],
+    "confidence": "medium"
+  },
+  "module4_industry_cycle": {
+    "industries": [
+      {
+        "industry": "Semiconductor",
+        "proxy_etf": "SOXX",
+        "stage": "overheat",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 5.9961,
+          "mean_log": 5.2299,
+          "std_log": 0.3101,
+          "z": 2.47
+        },
+        "trend": {
+          "latest": 401.86,
+          "ma200": 297.99,
+          "ma200_gap_pct": 34.86,
+          "ret_63d_pct": 20.57,
+          "ret_252d_pct": 133.29
+        }
+      },
+      {
+        "industry": "Auto",
+        "proxy_etf": "CARZ",
+        "stage": "overheat",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.521,
+          "mean_log": 4.0517,
+          "std_log": 0.1758,
+          "z": 2.67
+        },
+        "trend": {
+          "latest": 91.93,
+          "ma200": 76.08,
+          "ma200_gap_pct": 20.83,
+          "ret_63d_pct": 9.7,
+          "ret_252d_pct": 85.98
+        }
+      },
+      {
+        "industry": "Insurance",
+        "proxy_etf": "KIE",
+        "stage": "recovery",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.0497,
+          "mean_log": 3.8525,
+          "std_log": 0.1769,
+          "z": 1.11
+        },
+        "trend": {
+          "latest": 57.38,
+          "ma200": 58.06,
+          "ma200_gap_pct": -1.18,
+          "ret_63d_pct": -1.85,
+          "ret_252d_pct": 1.68
+        }
+      },
+      {
+        "industry": "Shipbuilding",
+        "proxy_etf": "ITA",
+        "stage": "overheat",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 5.4553,
+          "mean_log": 4.8919,
+          "std_log": 0.2688,
+          "z": 2.1
+        },
+        "trend": {
+          "latest": 234.0,
+          "ma200": 213.77,
+          "ma200_gap_pct": 9.46,
+          "ret_63d_pct": -1.49,
+          "ret_252d_pct": 56.93
+        }
+      },
+      {
+        "industry": "Nuclear",
+        "proxy_etf": "URA",
+        "stage": "overheat",
+        "price_band": {
+          "method": "log_price_z",
+          "latest_log": 4.0044,
+          "mean_log": 3.3144,
+          "std_log": 0.2971,
+          "z": 2.32
+        },
+        "trend": {
+          "latest": 54.84,
+          "ma200": 47.29,
+          "ma200_gap_pct": 15.97,
+          "ret_63d_pct": 8.02,
+          "ret_252d_pct": 142.12
+        }
+      }
+    ],
+    "note": "Industry cycle uses ETF price-band + trend proxy.",
+    "confidence": "low"
+  },
+  "module5_narrative_vs_numbers": {
+    "numbers": [
+      {
+        "symbol": "MMM",
+        "name": "3M Company",
+        "revenue_growth": 0.02,
+        "earnings_growth": -0.199,
+        "free_cash_flow": 1260249984.0,
+        "roe": 0.75501,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AOS",
+        "name": "A.O. Smith Corporation",
+        "revenue_growth": 0.0,
+        "earnings_growth": 0.191,
+        "free_cash_flow": 426162496.0,
+        "roe": 0.29197,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "ABT",
+        "name": "Abbott Laboratories",
+        "revenue_growth": 0.044,
+        "earnings_growth": -0.809,
+        "free_cash_flow": 6288999936.0,
+        "roe": 0.12961,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "ACN",
+        "name": "Accenture plc",
+        "revenue_growth": 0.083,
+        "earnings_growth": 0.04,
+        "free_cash_flow": 12164313088.0,
+        "roe": 0.24763,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "ADBE",
+        "name": "Adobe Inc.",
+        "revenue_growth": 0.12,
+        "earnings_growth": 0.111,
+        "free_cash_flow": 9321374720.0,
+        "roe": 0.58774,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AMD",
+        "name": "Advanced Micro Devices, Inc.",
+        "revenue_growth": 0.341,
+        "earnings_growth": 2.171,
+        "free_cash_flow": 4587250176.0,
+        "roe": 0.07082,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "A",
+        "name": "Agilent Technologies, Inc.",
+        "revenue_growth": 0.07,
+        "earnings_growth": -0.036,
+        "free_cash_flow": 855875008.0,
+        "roe": 0.19945998,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "ABNB",
+        "name": "Airbnb, Inc.",
+        "revenue_growth": 0.12,
+        "earnings_growth": -0.237,
+        "free_cash_flow": 3543000064.0,
+        "roe": 0.30233,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AKAM",
+        "name": "Akamai Technologies, Inc.",
+        "revenue_growth": 0.074,
+        "earnings_growth": -0.374,
+        "free_cash_flow": 578661888.0,
+        "roe": 0.091730006,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "ALGN",
+        "name": "Align Technology, Inc.",
+        "revenue_growth": 0.053,
+        "earnings_growth": 0.356,
+        "free_cash_flow": 483692384.0,
+        "roe": 0.103870004,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "ALLE",
+        "name": "Allegion plc",
+        "revenue_growth": 0.093,
+        "earnings_growth": 0.033,
+        "free_cash_flow": 505562496.0,
+        "roe": 0.36084,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "ALL",
+        "name": "Allstate Corporation (The)",
+        "revenue_growth": 0.051,
+        "earnings_growth": 1.032,
+        "free_cash_flow": 8924749824.0,
+        "roe": 0.39518002,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "GOOGL",
+        "name": "Alphabet Inc.",
+        "revenue_growth": 0.18,
+        "earnings_growth": 0.311,
+        "free_cash_flow": 38088376320.0,
+        "roe": 0.35705003,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "GOOG",
+        "name": "Alphabet Inc.",
+        "revenue_growth": 0.18,
+        "earnings_growth": 0.311,
+        "free_cash_flow": 38088376320.0,
+        "roe": 0.35705003,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AMZN",
+        "name": "Amazon.com, Inc.",
+        "revenue_growth": 0.136,
+        "earnings_growth": 0.05,
+        "free_cash_flow": 23793125376.0,
+        "roe": 0.22286,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AMCR",
+        "name": "Amcor plc",
+        "revenue_growth": 0.681,
+        "earnings_growth": -0.321,
+        "free_cash_flow": 446249984.0,
+        "roe": 0.07734,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AXP",
+        "name": "American Express Company",
+        "revenue_growth": 0.106,
+        "earnings_growth": 0.166,
+        "free_cash_flow": null,
+        "roe": 0.33992,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AMT",
+        "name": "American Tower Corporation (REI",
+        "revenue_growth": 0.075,
+        "earnings_growth": -0.332,
+        "free_cash_flow": 4508987392.0,
+        "roe": 0.2628,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AMP",
+        "name": "Ameriprise Financial, Inc.",
+        "revenue_growth": 0.086,
+        "earnings_growth": -0.011,
+        "free_cash_flow": 3568750080.0,
+        "roe": 0.60508,
+        "label": "numbers_proving"
+      },
+      {
+        "symbol": "AME",
+        "name": "AMETEK, Inc.",
+        "revenue_growth": 0.134,
+        "earnings_growth": 0.036,
+        "free_cash_flow": 1349580928.0,
+        "roe": 0.14594,
+        "label": "numbers_proving"
+      }
+    ],
+    "narrative": [
+      {
+        "symbol": "ABBV",
+        "name": "AbbVie Inc.",
+        "revenue_growth": 0.1,
+        "earnings_growth": null,
+        "free_cash_flow": 18337748992.0,
+        "roe": null,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "AES",
+        "name": "The AES Corporation",
+        "revenue_growth": 0.047,
+        "earnings_growth": -0.317,
+        "free_cash_flow": -3086125056.0,
+        "roe": 0.01954,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "AFL",
+        "name": "AFLAC Incorporated",
+        "revenue_growth": -0.099,
+        "earnings_growth": -0.229,
+        "free_cash_flow": 5175124992.0,
+        "roe": 0.13118,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "APD",
+        "name": "Air Products and Chemicals, Inc",
+        "revenue_growth": 0.058,
+        "earnings_growth": 0.097,
+        "free_cash_flow": -6148412416.0,
+        "roe": -0.01667,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "ALB",
+        "name": "Albemarle Corporation",
+        "revenue_growth": 0.159,
+        "earnings_growth": null,
+        "free_cash_flow": 453286368.0,
+        "roe": -0.04656,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "ARE",
+        "name": "Alexandria Real Estate Equities",
+        "revenue_growth": -0.052,
+        "earnings_growth": null,
+        "free_cash_flow": 1345210624.0,
+        "roe": -0.05856,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "LNT",
+        "name": "Alliant Energy Corporation",
+        "revenue_growth": 0.09,
+        "earnings_growth": -0.058,
+        "free_cash_flow": -1369250048.0,
+        "roe": 0.11299,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "MO",
+        "name": "Altria Group, Inc.",
+        "revenue_growth": -0.005,
+        "earnings_growth": -0.629,
+        "free_cash_flow": 9227249664.0,
+        "roe": null,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "AEE",
+        "name": "Ameren Corporation",
+        "revenue_growth": -0.088,
+        "earnings_growth": 0.195,
+        "free_cash_flow": -1484375040.0,
+        "roe": 0.11337,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "AEP",
+        "name": "American Electric Power Company",
+        "revenue_growth": 0.132,
+        "earnings_growth": -0.126,
+        "free_cash_flow": -5140375040.0,
+        "roe": 0.12486,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "AIG",
+        "name": "American International Group, I",
+        "revenue_growth": -0.072,
+        "earnings_growth": -0.056,
+        "free_cash_flow": 11258125312.0,
+        "roe": 0.07399,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "AWK",
+        "name": "American Water Works Company, I",
+        "revenue_growth": 0.058,
+        "earnings_growth": 0.0,
+        "free_cash_flow": -2340999936.0,
+        "roe": 0.10496,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "APA",
+        "name": "APA Corporation",
+        "revenue_growth": -0.28,
+        "earnings_growth": -0.182,
+        "free_cash_flow": 1960875008.0,
+        "roe": 0.2532,
+        "label": "narrative_only"
+      },
+      {
+        "symbol": "APO",
+        "name": "Apollo Global Management, Inc. ",
+        "revenue_growth": 0.877,
+        "earnings_growth": -0.573,
+        "free_cash_flow": null,
+        "roe": 0.14698,
+        "label": "narrative_only"
+      }
+    ],
+    "top_news": [],
+    "note": "News frequency uses GDELT (free). Fundamentals use yfinance. ROE filtered for equity<=0 or extreme values.",
+    "confidence": "low"
+  },
+  "module6_macro_scenarios": {
+    "rate_cuts_accelerate": 0.25,
+    "stagflation": 0.25,
+    "recession": 0.2,
+    "soft_landing": 0.3,
+    "confidence": "medium"
+  },
+  "module7_default_risk": {
+    "top10": [
+      {
+        "symbol": "AES",
+        "name": "The AES Corporation",
+        "free_cash_flow": -3086125056.0,
+        "debt_to_equity": 259.393,
+        "current_ratio": 0.766,
+        "beta": 1.008,
+        "risk_score": 0.85
+      },
+      {
+        "symbol": "LNT",
+        "name": "Alliant Energy Corporation",
+        "free_cash_flow": -1369250048.0,
+        "debt_to_equity": 168.08,
+        "current_ratio": 0.799,
+        "beta": 0.598,
+        "risk_score": 0.55
+      },
+      {
+        "symbol": "AEE",
+        "name": "Ameren Corporation",
+        "free_cash_flow": -1484375040.0,
+        "debt_to_equity": 147.125,
+        "current_ratio": 0.658,
+        "beta": 0.533,
+        "risk_score": 0.55
+      },
+      {
+        "symbol": "AEP",
+        "name": "American Electric Power Company",
+        "free_cash_flow": -5140375040.0,
+        "debt_to_equity": 154.237,
+        "current_ratio": 0.455,
+        "beta": 0.57,
+        "risk_score": 0.55
+      },
+      {
+        "symbol": "AWK",
+        "name": "American Water Works Company, I",
+        "free_cash_flow": -2340999936.0,
+        "debt_to_equity": 146.987,
+        "current_ratio": 0.462,
+        "beta": 0.734,
+        "risk_score": 0.55
+      },
+      {
+        "symbol": "AMT",
+        "name": "American Tower Corporation (REI",
+        "free_cash_flow": 4508987392.0,
+        "debt_to_equity": 434.211,
+        "current_ratio": 0.397,
+        "beta": 0.93,
+        "risk_score": 0.5
+      },
+      {
+        "symbol": "APD",
+        "name": "Air Products and Chemicals, Inc",
+        "free_cash_flow": -6148412416.0,
+        "debt_to_equity": 101.991,
+        "current_ratio": 1.459,
+        "beta": 0.808,
+        "risk_score": 0.35
+      },
+      {
+        "symbol": "MMM",
+        "name": "3M Company",
+        "free_cash_flow": 1260249984.0,
+        "debt_to_equity": 276.638,
+        "current_ratio": 1.708,
+        "beta": 1.158,
+        "risk_score": 0.3
+      },
+      {
+        "symbol": "AMGN",
+        "name": "Amgen Inc.",
+        "free_cash_flow": 7501875200.0,
+        "debt_to_equity": 640.275,
+        "current_ratio": 1.14,
+        "beta": 0.465,
+        "risk_score": 0.3
+      },
+      {
+        "symbol": "ABBV",
+        "name": "AbbVie Inc.",
+        "free_cash_flow": 18337748992.0,
+        "debt_to_equity": null,
+        "current_ratio": 0.671,
+        "beta": 0.364,
+        "risk_score": 0.2
+      }
+    ],
+    "note": "Proxy risk score (no direct interest coverage). debt_to_equity filtered when equity<=0.",
+    "confidence": "low"
+  },
+  "module8_13f_top_holdings": {
+    "top_holdings": [
+      {
+        "issuer": "SPDR S&P 500 ETF TR",
+        "cusip": "78462F103",
+        "value": 189466786187.0
+      },
+      {
+        "issuer": "NVIDIA CORPORATION",
+        "cusip": "67066G104",
+        "value": 95459101462.0
+      },
+      {
+        "issuer": "MICROSOFT CORP",
+        "cusip": "594918104",
+        "value": 87326638852.0
+      },
+      {
+        "issuer": "APPLE INC",
+        "cusip": "037833100",
+        "value": 69987319838.0
+      },
+      {
+        "issuer": "INVESCO QQQ TR",
+        "cusip": "46090E103",
+        "value": 58605660732.0
+      },
+      {
+        "issuer": "AMAZON COM INC",
+        "cusip": "023135106",
+        "value": 51470919589.0
+      },
+      {
+        "issuer": "ALPHABET INC",
+        "cusip": "02079K305",
+        "value": 47253793273.0
+      },
+      {
+        "issuer": "META PLATFORMS INC",
+        "cusip": "30303M102",
+        "value": 39638897464.0
+      },
+      {
+        "issuer": "BROADCOM INC",
+        "cusip": "11135F101",
+        "value": 38988739639.0
+      },
+      {
+        "issuer": "TESLA INC",
+        "cusip": "88160R101",
+        "value": 36848767822.0
+      },
+      {
+        "issuer": "VANGUARD INDEX FDS",
+        "cusip": "922908363",
+        "value": 31346971347.0
+      },
+      {
+        "issuer": "ALPHABET INC",
+        "cusip": "02079K107",
+        "value": 31191710455.0
+      },
+      {
+        "issuer": "ISHARES TR",
+        "cusip": "464287200",
+        "value": 28478997331.0
+      },
+      {
+        "issuer": "SPDR GOLD SHARES ETF",
+        "cusip": "78463V107",
+        "value": 24166529149.0
+      },
+      {
+        "issuer": "JPMORGAN CHASE & CO.",
+        "cusip": "46625H100",
+        "value": 21414123408.0
+      },
+      {
+        "issuer": "ISHARES TR",
+        "cusip": "464287655",
+        "value": 18864847756.0
+      },
+      {
+        "issuer": "ISHARES TR",
+        "cusip": "464287226",
+        "value": 15499682161.0
+      },
+      {
+        "issuer": "VISA INC",
+        "cusip": "92826C839",
+        "value": 15134641038.0
+      },
+      {
+        "issuer": "ISHARES TR",
+        "cusip": "464288513",
+        "value": 15008867775.0
+      },
+      {
+        "issuer": "BERKSHIRE HATHAWAY INC DEL",
+        "cusip": "084670702",
+        "value": 13811554220.0
+      }
+    ],
+    "dataset_id": "sec_13f_latest.zip",
+    "dataset_date": null,
+    "note": "Top 13F holdings aggregated by CUSIP.",
+    "confidence": "medium"
+  },
+  "data_gaps": [
+    "No paid sector PER/PBR 10y series; price-band proxy used (log-price).",
+    "No institutional/foreign flow dataset; flow is proxy-based.",
+    "ETF flow uses ETFGI press releases; latest scope may be non-global.",
+    "No direct interest coverage or short-term debt trend; default risk is proxy-based.",
+    "News frequency uses GDELT; may miss paywalled sources."
+  ],
+  "ai_summary": {
+    "error": "Codex login is required. Run: codex login",
+    "mode": "codex-cli",
+    "model": "gpt-5.4"
+  }
+}

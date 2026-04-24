@@ -1,0 +1,201 @@
+{
+  "generatedAt": "2026-04-20T03:25:51.889765+00:00",
+  "app": {
+    "name": "autostock-nautilus",
+    "mode": "local-telegram",
+    "profile": "tsla",
+    "symbol": "TSLA"
+  },
+  "runtime": {
+    "profile": "tsla",
+    "generatedAt": "2026-04-19T23:59:48.977321+00:00",
+    "symbol": "TSLA",
+    "action": "WATCH",
+    "confidence": 0.55,
+    "eventSignal": "bearish",
+    "eventStrength": "moderate",
+    "price": 400.62,
+    "chartState": "overheat",
+    "volumeRatio": 2.05,
+    "reasons": [
+      "실적 발표를 앞두고 부정적 프리뷰와 대형 투자은행의 하방 전망이 심리를 압박하고 있습니다.",
+      "장중 거래는 VWAP 상회와 거래량 확대가 보이지만 차트 구조가 혼조라 강한 상방 확인으로 이어지지 않았습니다."
+    ],
+    "nextKnownEvents": [
+      {
+        "symbol": "TSLA",
+        "type": "earnings",
+        "priority": "high",
+        "days_until": 3,
+        "expected_date": "2026-04-22",
+        "headline": "TSLA earnings in 3 day(s)",
+        "source": "calendar"
+      },
+      {
+        "symbol": "TSLA",
+        "type": "earnings",
+        "priority": "high",
+        "days_until": 3,
+        "expected_date": "2026-04-22",
+        "headline": "Tesla Q1 2026 earnings release and Q&A webcast",
+        "source": "calendar"
+      }
+    ],
+    "rawEvents": [
+      {
+        "symbol": "TSLA",
+        "scope": "stock",
+        "sentiment": "neutral",
+        "category": "product",
+        "source": "wire",
+        "magnitude": 1.0,
+        "confirmed": true,
+        "headline": "Tesla Earnings Preview: Why The Dream Is Breaking Down (NASDAQ:TSLA) - Seeking Alpha",
+        "published_at": "2026-04-16T14:16:59+00:00",
+        "tags": [],
+        "link": "https://news.google.com/rss/articles/CBMimgFBVV95cUxQU2kwZ0dORHkxRUNSZHBfM2xsd2VidWNOdFU5bFFOVUZ3dUVxYlNNOEdFVHRxLVdFRmxtNXNwUkpCVkllOTRHVXRjaGp3Ni0zUmZWOEFkWm1xX3JEQm5GRHNKSlBvM3BUNENzMFo3VVlpdTNrZUZ3aXo5SWhQeFp3bVJ0bVJVb1ZxWnpGTk45cVVRUnZLYWpCeEhn?oc=5"
+      },
+      {
+        "symbol": "TSLA",
+        "scope": "stock",
+        "sentiment": "neutral",
+        "category": "product",
+        "source": "wire",
+        "magnitude": 1.0,
+        "confirmed": true,
+        "headline": "Tesla (TSLA) Earnings Expected to Grow: Should You Buy? - Yahoo Finance",
+        "published_at": "2026-04-15T14:00:04+00:00",
+        "tags": [],
+        "link": "https://news.google.com/rss/articles/CBMinwFBVV95cUxOUFd3Rmo5eFVfa3NCZkx4N1ZEdkRUNENvSkpnZzI5UmZ3MEFSRTdMX1NsV2M0ZldsLWFkUmx2STBOUkpuQ29JSUNxSGVZdTdDRWoxbGVOZjJ5UGN0Vkwxdy1Fejd1ZmlKSXB0cUR4ZVRjNi1WeS03TlJrWGFpSVBJaDVFVDJmejBaQjZZRlpuTmJCS3d6SjY4UFliY1FOZWM?oc=5"
+      },
+      {
+        "symbol": "TSLA",
+        "scope": "stock",
+        "sentiment": "neutral",
+        "category": "product",
+        "source": "social",
+        "magnitude": 1.0,
+        "confirmed": true,
+        "headline": "Elon Musk says Tesla has taped out AI5 chip (TSLA:NASDAQ) - Seeking Alpha",
+        "published_at": "2026-04-15T09:33:38+00:00",
+        "tags": [],
+        "link": "https://news.google.com/rss/articles/CBMiiAFBVV95cUxQcUJQbHlJN2VSY1NOTlVfRjhYSlJXSEZ5VTlTVjBxLXU0Mm5xMTJXVHVjaE5zOUxnVEVUZ0dVV29Jb1FtMkw2SVhJcEhrMWxqb1VWV3ZPeDk5V0dOT01UZ1VVY3NJZ0tRQXZLT3JHVTRFV2lRV1RmSi14dTJoQUZHS2xRNl96eGFx?oc=5"
+      },
+      {
+        "symbol": "TSLA",
+        "scope": "stock",
+        "sentiment": "neutral",
+        "category": "product",
+        "source": "wire",
+        "magnitude": 1.0,
+        "confirmed": true,
+        "headline": "Tesla (TSLA) reportedly developing new smaller, cheaper EV after killing Model 2 - Electrek",
+        "published_at": "2026-04-09T07:00:00+00:00",
+        "tags": [],
+        "link": "https://news.google.com/rss/articles/CBMipwFBVV95cUxNX3VLeDRObThhN0NHTFpxeEJRRThnazRQNFlSZVptZzVWZzFUNUdfbmFPWjN3U0gzQWc5dGMtZ2NETi1TUlBXTVVVRlpwMHdORnJMSTFMWEdDWkEyNG9CeDdXVjFmRjdoRGMzWHBPNUlFR1Z0RmtWbk9fSWVlZno4Qk1qZVdCYUJhWXhwWHVQcXNuUjdqaUtLUmRiRzlQUFNSNzVYQ3BXdw?oc=5"
+      },
+      {
+        "symbol": "TSLA",
+        "scope": "stock",
+        "sentiment": "neutral",
+        "category": "product",
+        "source": "wire",
+        "magnitude": 1.0,
+        "confirmed": true,
+        "headline": "Tesla (TSLA) down 20% in 2026 — JPMorgan sees another 60% downside - Electrek",
+        "published_at": "2026-04-08T07:00:00+00:00",
+        "tags": [],
+        "link": "https://news.google.com/rss/articles/CBMiiwFBVV95cUxPNDhYcng4SVNLQXVlakl4bUx4Y29US3ZCVVdOakFETXZ4Ykg2Y0Z1QzB1MzdCaG1TSXB1UlZkLVZyVzZCSm9WWFdXcXFjRERpb29jSVdmcFNocEE5MFlJREU2RnB5Y2lERVFNN1BoeHhwbkVSQm9xUUFxSmItNm9rRkJYbjliQXNBTWtN?oc=5"
+      }
+    ],
+    "state": {
+      "lastRunAt": "2026-04-19T23:59:55.592847+00:00",
+      "lastAction": "WATCH",
+      "seenEventCount": 8
+    }
+  },
+  "nautilus": {
+    "profile": "tsla",
+    "bundleDir": "D:\\my\\autostock\\data\\nautilus_v2\\tsla\\2026-04-20",
+    "generatedAt": "2026-04-19T23:59:55.594847+00:00",
+    "signalSnapshot": {
+      "symbol": "TSLA",
+      "generated_at": "2026-04-19T23:59:55.594847+00:00",
+      "action": "WATCH",
+      "confidence": 0.55,
+      "event_signal": "bearish",
+      "event_strength": "moderate",
+      "chart_state": "overheat",
+      "volume_ratio": 2.05,
+      "macro_mode": "defensive",
+      "price": 400.62,
+      "rationale": "bearish_event_without_full_breakdown",
+      "reason_lines": [
+        "실적 발표를 앞두고 부정적 프리뷰와 대형 투자은행의 하방 전망이 심리를 압박하고 있습니다.",
+        "장중 거래는 VWAP 상회와 거래량 확대가 보이지만 차트 구조가 혼조라 강한 상방 확인으로 이어지지 않았습니다."
+      ]
+    },
+    "backtestSummary": {
+      "engine": "BacktestEngine",
+      "strategy": "official_ema_cross",
+      "bar_count": 312,
+      "news_count": 0,
+      "macro_count": 0,
+      "fast_ema_period": 10,
+      "slow_ema_period": 20,
+      "result_type": "BacktestResult",
+      "run_id": "151763c7-cf0c-4a47-ad86-0e3c87392558",
+      "run_config_id": "",
+      "instance_id": "5f29e1bb-4e79-48a3-8662-6c2797aa1394",
+      "stats_pnls": {
+        "USD": {
+          "PnL (total)": -43.7,
+          "PnL% (total)": -0.04369999999999709,
+          "Max Winner": 723.4,
+          "Avg Winner": 475.2,
+          "Min Winner": 227.0,
+          "Min Loser": 0.0,
+          "Avg Loser": -165.6833333333333,
+          "Max Loser": -479.7,
+          "Expectancy": -5.4624999999999915,
+          "Win Rate": 0.25
+        }
+      },
+      "stats_returns": {
+        "Returns Volatility (252 days)": 1.694690113071238,
+        "Average (Return)": 0.00222901340032832,
+        "Average Loss (Return)": -0.056649143535182286,
+        "Average Win (Return)": 0.14942440573910484,
+        "Sharpe Ratio (252 days)": 0.2900220228945975,
+        "Sortino Ratio (252 days)": 0.5500564624745345,
+        "Profit Factor": 1.0550867774112342,
+        "Risk Return Ratio": 0.018269670174071096
+      },
+      "repr": "BacktestResult(trader_id='BACKTESTER-001', machine_id='P22507', run_config_id=None, instance_id='5f29e1bb-4e79-48a3-8662-6c2797aa1394', run_id='151763c7-cf0c-4a47-ad86-0e3c87392558', run_started=1776643891784754000, run_finished=1776643892182751000, backtest_start=1737435600000000000, backtest_end=1776398400000000000, elapsed_time=38962800.0, iterations=312, total_events=342, total_orders=171, total_positions=1, stats_pnls={'USD': {'PnL (total)': -43.7, 'PnL% (total)': -0.04369999999999709, 'Max Winner': 723.4, 'Avg Winner': 475.2, 'Min Winner': 227.0, 'Min Loser': 0.0, 'Avg Loser': -165.6833333333333, 'Max Loser': -479.7, 'Expectancy': -5.4624999999999915, 'Win Rate': 0.25}}, stats_returns={'Returns Volatility (252 days)': 1.694690113071238, 'Average (Return)': 0.00222901340032832, 'Average Loss (Return)': -0.056649143535182286, 'Average Win (Return)': 0.14942440573910484, 'Sharpe Ratio (252 days)': 0.2900220228945975, 'Sortino Ratio (252 days)': 0.5500564624745345, 'Profit Factor': 1.0550867774112342, 'Risk Return Ratio': 0.018269670174071096})"
+    },
+    "catalogImport": {
+      "catalog_path": "D:\\my\\autostock\\data\\nautilus_v2\\tsla\\2026-04-20\\catalog",
+      "bar_count": 312,
+      "news_count": 0,
+      "macro_count": 0,
+      "instrument_id": "TSLA.XNAS",
+      "bar_type": "TSLA.XNAS-1-DAY-LAST-EXTERNAL"
+    }
+  },
+  "trade": {
+    "generatedAt": "2026-04-20T03:25:51.921764+00:00",
+    "available": false,
+    "reason": "codex_login_required",
+    "detail": "Codex CLI login is required and heuristic fallback is disabled.",
+    "actionableNow": [],
+    "waitPullback": [],
+    "avoid": [],
+    "all": [],
+    "summary": {
+      "actionableCount": 0,
+      "waitPullbackCount": 0,
+      "avoidCount": 0,
+      "cashPct": 100.0
+    }
+  }
+}
