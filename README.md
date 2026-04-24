@@ -86,12 +86,13 @@ configs/
 - 결과 화면에서는 inline 버튼으로 `요약 / 즉시 매수 / 눌림 대기 / 제외 / 포트폴리오 / 새로고침` 전환
 - 결과는 카드형 요약으로 편집 갱신
 - 긴 분석은 background worker에서 1개씩 실행되어 polling/menu 응답이 막히지 않습니다.
-- `/trade`와 `/tradefull`은 최근 `/chart` 결과를 재사용하고, 뉴스 분석 한도별 캐시를 따로 저장합니다.
+- `/trade`와 `/tradefull`은 전체 유니버스 뉴스/SEC를 먼저 훑고, 촉매 후보를 고른 뒤 차트/진입가를 검증합니다.
 - `/trade`와 `/tradefull`은 종목별 뉴스 해석 뒤 `gpt-5.5` + `xhigh` 최종 종합 단계를 한 번 더 실행해 전체 후보를 서로 비교합니다.
 
 봇은 최신 `rebalance_recommendation_*.json` 후보군 전체를 기준으로
-- all_us 우량주 유니버스 전체 차트 스캔
-- 상위권 종목 fresh SEC/RSS 뉴스 + Codex 정밀 해석
+- all_us 우량주 유니버스 전체 뉴스/SEC/RSS 탐색
+- 촉매 후보 fresh SEC/RSS 뉴스 + Codex 정밀 해석
+- 뉴스 촉매 후보의 차트/진입가 검증
 - 전체 후보 간 촉매/진입품질/리스크 상대 비교
 - 진입가/손절/1차 목표가
 - 현재가 대비 RR
@@ -113,8 +114,9 @@ configs/
 - Telegram 추천 추적 기록은 `outputs/telegram/shadow_journal.jsonl` 에 저장됩니다.
 - 자동 차트 수집은 기본 활성화이며 `.env`에서 `TELEGRAM_AUTO_COLLECT_ENABLED=false` 로 끌 수 있습니다.
 - 시작 시 메뉴 자동 전송은 기본 활성화이며 `.env`에서 `TELEGRAM_STARTUP_MENU_PUSH_ENABLED=false` 로 끌 수 있습니다.
-- 기본 동작은 `all_us` 전체 차트 스캔 후 상위 `120`개 뉴스/Codex 정밀분석입니다.
+- 기본 동작은 `all_us` 전체 뉴스/SEC/RSS 탐색 후 촉매 상위 `120`개 뉴스/Codex 정밀분석입니다.
 - 기본 Codex 모델은 `gpt-5.5`, reasoning effort는 `xhigh`입니다.
+- 뉴스 탐색 범위는 기본 전체 유니버스이며 `.env`에서 `TELEGRAM_NEWS_DISCOVERY_MAX_SYMBOLS`로 제한할 수 있습니다.
 - 최종 종합 단계 후보 수는 기본 `240`개이며 `.env`에서 `TELEGRAM_FINAL_SYNTHESIS_MAX_SYMBOLS`로 조정할 수 있습니다.
 - `--signal`, `--runtime`, `--nautilus-bundle`, `--all`, `--telegram-bot` 은 모델 기반 이벤트 해석 때문에 `codex login` 상태를 전제로 합니다.
 - 이 저장소에는 별도 테스트 스위트가 없습니다. 검증은 수동 실행과 스모크 체크 기준입니다.

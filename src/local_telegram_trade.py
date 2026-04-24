@@ -27,7 +27,7 @@ OUTPUT_ROOT = ROOT / "outputs" / "telegram"
 CACHE_PATH = OUTPUT_ROOT / "universe_trade_analysis.json"
 CHART_CACHE_PATH = OUTPUT_ROOT / "current_chart_analysis_full.json"
 CHART_SCHEMA_VERSION = "condition-gates-v1"
-TRADE_CACHE_SCHEMA_VERSION = "manual-synthesis-v1"
+TRADE_CACHE_SCHEMA_VERSION = "news-first-v1"
 REBALANCE_ROOT = ROOT / "data" / "rebalance"
 ALL_STOCKS_CACHE_PATH = ROOT / "data" / "all_stocks_cache.json"
 SP500_CACHE_PATH = ROOT / "data" / "sp500_cache.json"
@@ -122,6 +122,13 @@ def _final_synthesis_limit() -> int:
         return max(40, int(os.getenv("TELEGRAM_FINAL_SYNTHESIS_MAX_SYMBOLS", "240")))
     except Exception:
         return 240
+
+
+def _news_discovery_limit() -> int:
+    try:
+        return max(0, int(os.getenv("TELEGRAM_NEWS_DISCOVERY_MAX_SYMBOLS", "0")))
+    except Exception:
+        return 0
 
 
 def _generic_news_urls(symbol: str, company_name: str) -> list[str]:
@@ -271,7 +278,10 @@ def _scan_symbol(symbol: str, rebalance_hint: dict[str, Any] | None = None) -> d
 
 
 def _scan_full_universe(rebalance_hints: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    symbols = _load_all_us_symbols()
+    return _scan_symbols(_load_all_us_symbols(), rebalance_hints)
+
+
+def _scan_symbols(symbols: list[str], rebalance_hints: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     workers = _scan_workers()
     scanned: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -294,11 +304,9 @@ def _scan_full_universe(rebalance_hints: dict[str, dict[str, Any]]) -> list[dict
     return scanned
 
 
-def _select_news_symbols(
-    scanned_rows: list[dict[str, Any]],
-    selected_symbols: set[str],
-    news_limit: int,
-) -> list[str]:
+def _news_discovery_symbols(selected_symbols: set[str]) -> list[str]:
+    universe = _load_all_us_symbols()
+    limit = _news_discovery_limit()
     symbols: list[str] = []
     seen: set[str] = set()
 
@@ -311,14 +319,18 @@ def _select_news_symbols(
 
     for symbol in sorted(selected_symbols):
         _push(symbol)
-    for row in scanned_rows:
-        _push(_s(row.get("symbol")))
-        if len(symbols) >= max(len(selected_symbols), news_limit):
+    for symbol in universe:
+        _push(symbol)
+        if limit and len(symbols) >= max(len(selected_symbols), limit):
             break
     return symbols
 
 
-def _collect_symbol_news_bundle(symbol: str, chart_row: dict[str, Any], session: requests.Session | None = None) -> dict[str, Any]:
+def _collect_symbol_news_bundle(
+    symbol: str,
+    chart_row: dict[str, Any] | None = None,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
     info = get_stock_info(symbol)
     next_events = build_next_known_events(symbol, info, datetime.now(timezone.utc))
     raw_events: list[dict[str, Any]] = []
@@ -345,18 +357,21 @@ def _collect_symbol_news_bundle(symbol: str, chart_row: dict[str, Any], session:
         "info": info,
         "nextEvents": next_events,
         "events": _dedupe_events(raw_events)[:10],
-        "chartRow": chart_row,
+        "chartRow": chart_row or {"symbol": symbol},
     }
 
 
-def _collect_news_bundles(news_symbols: list[str], chart_rows_by_symbol: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _collect_news_bundles(
+    news_symbols: list[str],
+    chart_rows_by_symbol: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
     bundles: dict[str, dict[str, Any]] = {}
     workers = _news_workers()
+    chart_rows_by_symbol = chart_rows_by_symbol or {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_collect_symbol_news_bundle, symbol, chart_rows_by_symbol[symbol]): symbol
+            executor.submit(_collect_symbol_news_bundle, symbol, chart_rows_by_symbol.get(symbol)): symbol
             for symbol in news_symbols
-            if symbol in chart_rows_by_symbol
         }
         for future in as_completed(futures):
             bundle = future.result()
@@ -364,6 +379,115 @@ def _collect_news_bundles(news_symbols: list[str], chart_rows_by_symbol: dict[st
             if symbol:
                 bundles[symbol] = bundle
     return bundles
+
+
+def _event_date_key(value: Any) -> str:
+    raw = _s(value)
+    return raw[:10] if raw else ""
+
+
+def _bundle_has_news(bundle: dict[str, Any]) -> bool:
+    events = bundle.get("events") if isinstance(bundle.get("events"), list) else []
+    next_events = bundle.get("nextEvents") if isinstance(bundle.get("nextEvents"), list) else []
+    return bool(events or next_events)
+
+
+def _bundle_catalyst_flags(bundle: dict[str, Any]) -> set[str]:
+    text = " ".join(
+        [
+            _s(row.get("headline"))
+            for row in (bundle.get("events") or [])
+            if isinstance(row, dict)
+        ]
+    ).lower()
+    categories = {_s(row.get("category")).lower() for row in (bundle.get("events") or []) if isinstance(row, dict)}
+    form_types = {_s(row.get("form")).lower() for row in (bundle.get("events") or []) if isinstance(row, dict)}
+    flags: set[str] = set()
+    if {"earnings", "guidance", "contract", "partnership", "product", "mna", "analyst"} & categories:
+        flags.add("categorized_catalyst")
+    if {"8-k", "10-q", "10-k"} & form_types:
+        flags.add("sec_event")
+    keyword_groups = {
+        "ai_data_center": [" ai ", "nvidia", "data center", "datacenter", "accelerator", "server"],
+        "capital_event": ["investment", "financing", "debt", "offering", "buyback", "dividend"],
+        "fundamental_event": ["earnings", "guidance", "outlook", "raises", "raised", "beat", "miss", "q1", "q2", "q3", "q4"],
+        "deal_event": ["contract", "deal", "partnership", "collaboration", "wins", "order"],
+        "analyst_event": ["upgrade", "downgrade", "price target", "buy rating", "sell rating"],
+        "risk_event": ["lawsuit", "fraud", "probe", "investigation", "recall", "warning", "cut"],
+    }
+    padded = f" {text} "
+    for flag, keywords in keyword_groups.items():
+        if any(keyword in padded for keyword in keywords):
+            flags.add(flag)
+    next_events = bundle.get("nextEvents") if isinstance(bundle.get("nextEvents"), list) else []
+    if next_events:
+        flags.add("scheduled_event")
+    return flags
+
+
+def _news_bundle_key(bundle: dict[str, Any], selected_symbols: set[str]) -> tuple[int, int, str]:
+    symbol = _s(bundle.get("symbol")).upper()
+    events = bundle.get("events") if isinstance(bundle.get("events"), list) else []
+    next_events = bundle.get("nextEvents") if isinstance(bundle.get("nextEvents"), list) else []
+    flags = _bundle_catalyst_flags(bundle)
+    priority = 0
+    if symbol in selected_symbols:
+        priority += 50
+    priority += min(10, len(events))
+    priority += min(4, len(next_events))
+    priority += len(flags) * 4
+    if "sec_event" in flags:
+        priority += 8
+    if "ai_data_center" in flags or "deal_event" in flags:
+        priority += 8
+    latest_event_date = max((_event_date_key(row.get("published_at")) for row in events if isinstance(row, dict)), default="")
+    latest_event_rank = int(latest_event_date.replace("-", "") or "0")
+    return (-priority, -latest_event_rank, symbol)
+
+
+def _select_news_symbols_from_bundles(
+    bundles: dict[str, dict[str, Any]],
+    selected_symbols: set[str],
+    news_limit: int,
+) -> list[str]:
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    def _push(symbol: str) -> None:
+        sym = _s(symbol).upper()
+        if not sym or sym in seen or sym not in bundles:
+            return
+        seen.add(sym)
+        selected.append(sym)
+
+    for symbol in sorted(selected_symbols):
+        if _bundle_has_news(bundles.get(symbol, {})):
+            _push(symbol)
+
+    ranked = sorted(
+        [bundle for bundle in bundles.values() if isinstance(bundle, dict) and _bundle_has_news(bundle)],
+        key=lambda bundle: _news_bundle_key(bundle, selected_symbols),
+    )
+    for bundle in ranked:
+        _push(_s(bundle.get("symbol")))
+        if len(selected) >= max(len(selected_symbols), news_limit):
+            break
+
+    if not selected:
+        for symbol in sorted(bundles):
+            _push(symbol)
+            if len(selected) >= news_limit:
+                break
+    return selected
+
+
+def _attach_chart_rows_to_bundles(
+    bundles: dict[str, dict[str, Any]],
+    chart_rows_by_symbol: dict[str, dict[str, Any]],
+) -> None:
+    for symbol, row in chart_rows_by_symbol.items():
+        if symbol in bundles:
+            bundles[symbol]["chartRow"] = row
 
 
 def _batched_ai_news_analysis(bundles: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]] | dict[str, str]:
@@ -916,6 +1040,7 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     ttl_minutes = _event_cache_minutes()
     analysis_limit = max(10, int(news_limit)) if news_limit is not None else _analysis_limit()
+    timings: dict[str, Any] = {}
     if not force_refresh:
         cached = _load_trade_cache(analysis_limit, ttl_minutes)
         if cached is not None:
@@ -930,6 +1055,10 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
             "aiModel": ai.model,
             "aiReasoningEffort": ai.reasoning_effort,
             "newsAnalysisLimit": analysis_limit,
+            "universeNewsScannedCount": 0,
+            "newsCandidateCount": 0,
+            "newsAnalyzedCount": 0,
+            "chartScannedCount": 0,
             "actionableNow": [],
             "waitPullback": [],
             "avoid": [],
@@ -957,20 +1086,34 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
     market_ctx = get_market_condition()
     fear_greed = get_fear_greed_index()
 
-    timings: dict[str, float | bool] = {}
+    news_started = time.perf_counter()
+    discovery_symbols = _news_discovery_symbols(selected_symbols)
+    discovery_bundles = _collect_news_bundles(discovery_symbols)
+    news_symbols = _select_news_symbols_from_bundles(discovery_bundles, selected_symbols, analysis_limit)
+    timings["newsCollectSec"] = round(time.perf_counter() - news_started, 3)
+    timings["newsFirst"] = True
+
+    timings["newsDiscoveryCount"] = len(discovery_symbols)
+    timings["newsCandidateCount"] = len([bundle for bundle in discovery_bundles.values() if _bundle_has_news(bundle)])
+
     scan_started = time.perf_counter()
-    scanned_rows = None if force_refresh else _load_cached_chart_rows(ttl_minutes)
-    chart_cache_hit = scanned_rows is not None
-    if scanned_rows is None:
-        scanned_rows = _scan_full_universe(rebalance_hints)
+    cached_chart_rows = None if force_refresh else _load_cached_chart_rows(ttl_minutes)
+    chart_cache_hit = cached_chart_rows is not None
+    if cached_chart_rows is not None:
+        cached_by_symbol = {_s(row.get("symbol")).upper(): row for row in cached_chart_rows if _s(row.get("symbol"))}
+        scanned_rows = [cached_by_symbol[symbol] for symbol in news_symbols if symbol in cached_by_symbol]
+        missing_symbols = [symbol for symbol in news_symbols if symbol not in cached_by_symbol]
+        if missing_symbols:
+            scanned_rows.extend(_scan_symbols(missing_symbols, rebalance_hints))
+    else:
+        scanned_rows = _scan_symbols(news_symbols, rebalance_hints)
     timings["chartCacheHit"] = chart_cache_hit
     timings["chartRowsSec"] = round(time.perf_counter() - scan_started, 3)
 
     chart_rows_by_symbol = {_s(row.get("symbol")).upper(): row for row in scanned_rows if _s(row.get("symbol"))}
-    news_symbols = _select_news_symbols(scanned_rows, selected_symbols, analysis_limit)
-    news_started = time.perf_counter()
-    bundles = _collect_news_bundles(news_symbols, chart_rows_by_symbol)
-    timings["newsCollectSec"] = round(time.perf_counter() - news_started, 3)
+    _attach_chart_rows_to_bundles(discovery_bundles, chart_rows_by_symbol)
+    bundles = {symbol: discovery_bundles[symbol] for symbol in news_symbols if symbol in discovery_bundles and symbol in chart_rows_by_symbol}
+    news_symbols = [symbol for symbol in news_symbols if symbol in bundles]
     ai_started = time.perf_counter()
     news_analysis = _batched_ai_news_analysis(bundles)
     timings["codexAnalysisSec"] = round(time.perf_counter() - ai_started, 3)
@@ -983,6 +1126,10 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
             "aiModel": ai.model,
             "aiReasoningEffort": ai.reasoning_effort,
             "newsAnalysisLimit": analysis_limit,
+            "universeNewsScannedCount": len(discovery_symbols),
+            "newsCandidateCount": int(timings.get("newsCandidateCount", 0)),
+            "newsAnalyzedCount": len(news_symbols),
+            "chartScannedCount": len(scanned_rows),
             "actionableNow": [],
             "waitPullback": [],
             "avoid": [],
@@ -1017,6 +1164,10 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
                 "aiModel": ai.model,
                 "aiReasoningEffort": ai.reasoning_effort,
                 "newsAnalysisLimit": analysis_limit,
+                "universeNewsScannedCount": len(discovery_symbols),
+                "newsCandidateCount": int(timings.get("newsCandidateCount", 0)),
+                "newsAnalyzedCount": len(news_symbols),
+                "chartScannedCount": len(scanned_rows),
                 "actionableNow": [],
                 "waitPullback": [],
                 "avoid": [],
@@ -1165,6 +1316,10 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
             "aiModel": ai.model,
             "aiReasoningEffort": ai.reasoning_effort,
             "newsAnalysisLimit": analysis_limit,
+            "universeNewsScannedCount": len(discovery_symbols),
+            "newsCandidateCount": int(timings.get("newsCandidateCount", 0)),
+            "newsAnalyzedCount": len(news_symbols),
+            "chartScannedCount": len(scanned_rows),
             "actionableNow": [],
             "waitPullback": [],
             "avoid": [],
@@ -1210,7 +1365,10 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
             "fearGreed": fear_greed,
         },
         "newsAnalysisLimit": analysis_limit,
-        "universeScannedCount": len(scanned_rows),
+        "universeScannedCount": len(discovery_symbols),
+        "universeNewsScannedCount": len(discovery_symbols),
+        "newsCandidateCount": int(timings.get("newsCandidateCount", 0)),
+        "chartScannedCount": len(scanned_rows),
         "newsAnalyzedCount": len(news_symbols),
         "selectedCount": len(selected_symbols),
         "actionableNow": actionable,
@@ -1406,7 +1564,8 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         "<b>Autostock Trade Desk</b>",
         f"<code>{escape(_fmt_asof(payload.get('generatedAt')))}</code>",
         f"시장 {_s(market_condition.get('message'))} | 공포탐욕 {fear_greed.get('score', '-')}",
-        f"차트 스캔 {payload.get('universeScannedCount', '-')} | 뉴스/Codex {payload.get('newsAnalyzedCount', '-')}",
+        f"뉴스 탐색 {payload.get('universeNewsScannedCount', payload.get('universeScannedCount', '-'))} | 촉매후보 {payload.get('newsCandidateCount', '-')} | Codex {payload.get('newsAnalyzedCount', '-')}",
+        f"차트 검증 {payload.get('chartScannedCount', payload.get('universeScannedCount', '-'))}",
         f"모델 {escape(_s(payload.get('aiModel') or ai.model))} / {escape(_s(payload.get('aiReasoningEffort') or ai.reasoning_effort))}",
         f"즉시 {summary.get('actionableCount', 0)} | 대기 {summary.get('waitPullbackCount', 0)} | 제외 {summary.get('avoidCount', 0)} | 현금 {_format_pct(summary.get('cashPct'))}",
     ]
