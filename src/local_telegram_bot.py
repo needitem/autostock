@@ -252,9 +252,22 @@ class LocalTelegramBot:
         lowered = text.lower()
         return "/tradefull" in lowered or "전체 정밀" in text or "전체 종목" in text or "all_us" in lowered or "전종목" in text
 
+    def _is_news_chart_request(self, text: str) -> bool:
+        lowered = text.lower()
+        compact = "".join(text.split())
+        is_quick_trade_command = "/trade" in lowered and "/tradefull" not in lowered
+        return (
+            is_quick_trade_command
+            or "뉴스+차트" in compact
+            or "뉴스차트" in compact
+            or "차트+뉴스" in compact
+            or "차트뉴스" in compact
+            or "빠른 분석" in text
+        )
+
     def _is_chart_request(self, text: str) -> bool:
         lowered = text.lower()
-        return "/chart" in lowered or "차트 분석" in text or "차트만" in text
+        return "/chart" in lowered or "차트만" in text or ("차트 분석" in text and not self._is_news_chart_request(text))
 
     def _is_journal_request(self, text: str) -> bool:
         lowered = text.lower()
@@ -285,11 +298,15 @@ class LocalTelegramBot:
         return any(word in lowered if word.startswith("/") else word in text for word in trigger_words)
 
     def _analysis_mode(self, text: str) -> str:
+        if self._is_full_request(text):
+            return "f"
+        if self._is_news_chart_request(text):
+            return "q"
         if self._is_chart_request(text):
             return "c"
         if "새로고침" in text:
             return _s(self.state.get("last_mode") or "c")
-        return "f" if self._is_full_request(text) else "q"
+        return "q"
 
     def _run_analysis_payload(self, mode: str, force_refresh: bool) -> dict[str, Any]:
         if mode == "c":
