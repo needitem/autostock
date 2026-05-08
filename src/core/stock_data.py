@@ -288,6 +288,8 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
         "name": info.get("shortName", symbol),
         "sector": info.get("sector", "N/A"),
         "industry": info.get("industry", "N/A"),
+        "currency": info.get("currency", ""),
+        "financial_currency": info.get("financialCurrency", ""),
         "price": price,
         "market_cap": _to_float(info.get("marketCap"), 0.0),
         "avg_volume": _to_float(info.get("averageVolume") or info.get("averageDailyVolume10Day"), 0.0),
