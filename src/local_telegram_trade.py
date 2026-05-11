@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from io import StringIO
 from pathlib import Path
-from statistics import median
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -27,7 +26,7 @@ OUTPUT_ROOT = ROOT / "outputs" / "telegram"
 CACHE_PATH = OUTPUT_ROOT / "universe_trade_analysis.json"
 CHART_CACHE_PATH = OUTPUT_ROOT / "current_chart_analysis_full.json"
 CHART_SCHEMA_VERSION = "raw-evidence-v2"
-TRADE_CACHE_SCHEMA_VERSION = "raw-evidence-v2"
+TRADE_CACHE_SCHEMA_VERSION = "raw-evidence-v3"
 REBALANCE_ROOT = ROOT / "data" / "rebalance"
 ALL_STOCKS_CACHE_PATH = ROOT / "data" / "all_stocks_cache.json"
 SP500_CACHE_PATH = ROOT / "data" / "sp500_cache.json"
@@ -458,65 +457,7 @@ def _scan_fundamentals(symbols: list[str]) -> list[dict[str, Any]]:
     return rows
 
 
-def _median_metric(rows: list[dict[str, Any]], key: str, *, positive_only: bool = False) -> float | None:
-    values: list[float] = []
-    for row in rows:
-        raw = row.get(key)
-        if raw is None:
-            continue
-        value = _f(raw, 0.0)
-        if positive_only and value <= 0:
-            continue
-        values.append(value)
-    if not values:
-        return None
-    return float(median(values))
-
-
-def _valuation_benchmarks(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | None]]:
-    keys = {
-        "pFcf": True,
-        "fcfYieldPct": True,
-        "pe": True,
-        "forwardPe": True,
-        "pb": True,
-        "earningsYieldPct": True,
-        "roePct": False,
-        "profitMarginPct": False,
-        "operatingMarginPct": False,
-        "revenueGrowthPct": False,
-        "earningsGrowthPct": False,
-        "forwardEpsGrowthPct": False,
-        "debtToEquity": True,
-        "currentRatio": True,
-    }
-    sectors = sorted({_s(row.get("sector")) or "N/A" for row in rows})
-    grouped: dict[str, list[dict[str, Any]]] = {"__UNIVERSE__": rows}
-    for sector in sectors:
-        grouped[sector] = [row for row in rows if (_s(row.get("sector")) or "N/A") == sector]
-
-    out: dict[str, dict[str, float | None]] = {}
-    for sector, sector_rows in grouped.items():
-        out[sector] = {
-            key: _median_metric(sector_rows, key, positive_only=positive_only)
-            for key, positive_only in keys.items()
-        }
-    return out
-
-
-def _bench_value(
-    row: dict[str, Any],
-    benchmarks: dict[str, dict[str, float | None]],
-    key: str,
-) -> float | None:
-    sector = _s(row.get("sector")) or "N/A"
-    value = (benchmarks.get(sector) or {}).get(key)
-    if value is None:
-        value = (benchmarks.get("__UNIVERSE__") or {}).get(key)
-    return value
-
-
-def _valuation_assessment(row: dict[str, Any], benchmarks: dict[str, dict[str, float | None]]) -> dict[str, Any]:
+def _valuation_assessment(row: dict[str, Any]) -> dict[str, Any]:
     valuation_lines = [
         (
             f"P/FCF {_format_multiple(row.get('pFcf'))}, FCF yield {_format_pct(row.get('fcfYieldPct'))}, "
@@ -541,19 +482,14 @@ def _valuation_assessment(row: dict[str, Any], benchmarks: dict[str, dict[str, f
         "qualityReasons": [],
         "growthReasons": [],
         "riskReasons": [],
-        "sectorBenchmarks": {
-            key: _bench_value(row, benchmarks, key)
-            for key in ("pFcf", "fcfYieldPct", "pe", "forwardPe", "pb", "roePct", "profitMarginPct", "revenueGrowthPct")
-        },
     }
 
 
 def _value_decision(
     row: dict[str, Any],
-    benchmarks: dict[str, dict[str, float | None]],
     news: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    assessment = _valuation_assessment(row, benchmarks)
+    assessment = _valuation_assessment(row)
     news_signal = _s((news or {}).get("signal")).lower()
     news_strength = _s((news or {}).get("strength")).lower()
     state = "REVIEW"
@@ -584,38 +520,6 @@ def _value_rank_key(row: dict[str, Any]) -> tuple[int, float, str]:
         -_f(row.get("marketCap"), 0.0),
         _s(row.get("symbol")),
     )
-
-
-def _value_synthesis_payload(evaluated: list[dict[str, Any]], universe_count: int) -> dict[str, Any]:
-    actionable = [row for row in evaluated if _s(row.get("actionBucket")) == "actionable_now"]
-    watch = [row for row in evaluated if _s(row.get("actionBucket")) == "wait_pullback"]
-    rejected = [row for row in evaluated if _s(row.get("actionBucket")) == "avoid"]
-    summary = "하드코딩 점수/임계값 판정은 제거했다. 표는 정량 원자료와 Codex 뉴스 요약을 수동 검토용으로만 제공한다."
-    return {
-        "summary": summary,
-        "decisionEngine": "raw-evidence-v2",
-        "universeCount": universe_count,
-        "candidateCount": len(evaluated),
-        "stateCounts": {
-            "REVIEW": len(watch),
-            "AUTO_ACTIONABLE": len(actionable),
-            "AUTO_REJECTED": len(rejected),
-        },
-        "items": [
-            {
-                "symbol": _s(row.get("symbol")),
-                "decisionState": _s(row.get("decisionState")),
-                "finalBucket": _s(row.get("actionBucket")),
-                "valueState": _s(row.get("valueState")),
-                "qualityState": _s(row.get("qualityState")),
-                "growthState": _s(row.get("growthState")),
-                "balanceState": _s(row.get("balanceState")),
-                "portfolioWeightPct": row.get("portfolioWeightPct"),
-                "decisionReason": _s(row.get("actionReason")),
-            }
-            for row in evaluated
-        ],
-    }
 
 
 def _batch_rows_from_json(value: Any) -> list[dict[str, Any]] | None:
@@ -1011,7 +915,6 @@ def _build_raw_evidence_row(
     news: dict[str, Any],
     selected_symbols: set[str],
     executed_weights_pct: dict[str, Any],
-    benchmarks: dict[str, dict[str, float | None]],
 ) -> dict[str, Any]:
     latest_price = round(_f(chart_row.get("latestClosePrice"), _f(fundamental.get("latestClosePrice"), 0.0)), 2)
     row = {
@@ -1036,7 +939,7 @@ def _build_raw_evidence_row(
         **_news_context(bundle, news),
         **_price_plan_context(chart_row, latest_price),
     }
-    row.update(_value_decision(row, benchmarks, news))
+    row.update(_value_decision(row, news))
     return row
 
 
@@ -1061,27 +964,16 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
     universe_symbols = sorted(set(_load_all_us_symbols()) | selected_symbols)
     fundamental_started = time.perf_counter()
     fundamental_rows = _scan_fundamentals(universe_symbols)
-    benchmarks = _valuation_benchmarks(fundamental_rows)
-    preliminary: list[dict[str, Any]] = []
-    for row in fundamental_rows:
-        assessed = {**row}
-        assessed.update(_value_decision(assessed, benchmarks, None))
-        preliminary.append(assessed)
-    preliminary.sort(key=_value_rank_key)
-    candidate_rows = [row for row in preliminary if _s(row.get("actionBucket")) != "avoid"][:analysis_limit]
-    if len(candidate_rows) < analysis_limit:
-        seen = {_s(row.get("symbol")) for row in candidate_rows}
-        for row in preliminary:
-            symbol = _s(row.get("symbol"))
-            if symbol in seen:
-                continue
-            candidate_rows.append(row)
-            seen.add(symbol)
-            if len(candidate_rows) >= analysis_limit:
-                break
+    candidate_rows = sorted(
+        fundamental_rows,
+        key=lambda row: (
+            0 if _s(row.get("symbol")).upper() in selected_symbols else 1,
+            -_f(row.get("marketCap"), 0.0),
+            _s(row.get("symbol")),
+        ),
+    )[:analysis_limit]
     candidate_symbols = [_s(row.get("symbol")) for row in candidate_rows if _s(row.get("symbol"))]
     timings["fundamentalScanSec"] = round(time.perf_counter() - fundamental_started, 3)
-    timings["valueFirst"] = True
 
     news_started = time.perf_counter()
     bundles = _collect_news_bundles(candidate_symbols)
@@ -1157,17 +1049,13 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
                 news=news,
                 selected_symbols=selected_symbols,
                 executed_weights_pct=executed_weights_pct,
-                benchmarks=benchmarks,
             )
         )
     timings["evaluateSec"] = round(time.perf_counter() - eval_started, 3)
 
-    synth_started = time.perf_counter()
     evaluated.sort(key=_value_rank_key)
     for idx, row in enumerate(evaluated, start=1):
         row["finalRank"] = idx
-    final_synthesis = _value_synthesis_payload(evaluated, len(fundamental_rows))
-    timings["finalSynthesisSec"] = round(time.perf_counter() - synth_started, 3)
 
     actionable = [row for row in evaluated if _s(row.get("actionBucket")) == "actionable_now"]
     wait_pullback = [row for row in evaluated if _s(row.get("actionBucket")) == "wait_pullback"]
@@ -1200,7 +1088,6 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
         "avoid": avoid,
         "all": evaluated,
         "chartLeaders": scanned_rows[:20],
-        "finalSynthesis": final_synthesis,
         "summary": {
             "actionableCount": len(actionable),
             "waitPullbackCount": len(wait_pullback),
@@ -1415,7 +1302,6 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         )
 
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    final_synthesis = payload.get("finalSynthesis") if isinstance(payload.get("finalSynthesis"), dict) else {}
     market_condition = ((payload.get("marketStatus") or {}).get("marketCondition") or {}) if isinstance(payload.get("marketStatus"), dict) else {}
     fear_greed = ((payload.get("marketStatus") or {}).get("fearGreed") or {}) if isinstance(payload.get("marketStatus"), dict) else {}
     actionable = _bucket_rows(payload, "actionable")
@@ -1443,8 +1329,6 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
 
     if view == "summary":
         lines = header[:]
-        if _s(final_synthesis.get("summary")):
-            lines.extend(["<b>최종 종합</b>", escape(_s(final_synthesis.get("summary"))), ""])
         lines.append("<b>자동 편입 후보</b>" if raw_mode else "<b>지금 진입 가능</b>")
         if actionable:
             lines.extend(_compact_row(row) for row in actionable[:3])
