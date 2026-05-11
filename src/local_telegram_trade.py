@@ -18,15 +18,21 @@ import requests
 from ai.analyzer import ai
 from core.indicators import calculate_indicators
 from core.news_collectors import build_next_known_events, fetch_rss_events, fetch_sec_submission_events
-from core.stock_data import get_fear_greed_index, get_market_condition, get_stock_data, get_stock_info
+from core.stock_data import (
+    get_fear_greed_index,
+    get_market_condition,
+    get_realtime_stock_snapshots,
+    get_stock_data,
+    get_stock_info,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_ROOT = ROOT / "outputs" / "telegram"
 CACHE_PATH = OUTPUT_ROOT / "universe_trade_analysis.json"
 CHART_CACHE_PATH = OUTPUT_ROOT / "current_chart_analysis_full.json"
-CHART_SCHEMA_VERSION = "raw-evidence-v2"
-TRADE_CACHE_SCHEMA_VERSION = "raw-evidence-v3"
+CHART_SCHEMA_VERSION = "raw-evidence-v3"
+TRADE_CACHE_SCHEMA_VERSION = "raw-evidence-v4"
 REBALANCE_ROOT = ROOT / "data" / "rebalance"
 ALL_STOCKS_CACHE_PATH = ROOT / "data" / "all_stocks_cache.json"
 SP500_CACHE_PATH = ROOT / "data" / "sp500_cache.json"
@@ -42,6 +48,18 @@ def _f(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _round_optional(value: Any, digits: int = 2) -> float | None:
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    if out != out or out in {float("inf"), float("-inf")}:
+        return None
+    return round(out, digits)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -225,8 +243,12 @@ def _daily_price_context(bars: pd.DataFrame, indicators: dict[str, Any]) -> dict
     open_price = _f(last.get("Open"), close)
     high = _f(last.get("High"), close)
     low = _f(last.get("Low"), close)
-    volume = _f(last.get("Volume"), 0.0)
-    volume_avg_20 = _f(bars["Volume"].tail(20).mean(), volume) if "Volume" in bars else volume
+    volume_avg_20 = 0.0
+    if "Volume" in bars:
+        history_volume = bars["Volume"].iloc[:-1].tail(20) if len(bars) > 1 else bars["Volume"].tail(20)
+        volume_avg_20 = _f(history_volume.mean(), 0.0)
+        if volume_avg_20 != volume_avg_20:
+            volume_avg_20 = 0.0
     atr = _f(indicators.get("atr"), 0.0)
     atr_pct = _f(indicators.get("atr_pct"), 0.0)
     if atr_pct <= 0 and close > 0 and atr > 0:
@@ -244,7 +266,6 @@ def _daily_price_context(bars: pd.DataFrame, indicators: dict[str, Any]) -> dict
     gap_atr = 0.0
     if atr_pct > 0 and gap_pct is not None:
         gap_atr = gap_pct / atr_pct
-    volume_ratio_daily = volume / volume_avg_20 if volume_avg_20 > 0 else 1.0
     return {
         "previousClosePrice": round(prev_close, 2),
         "latestOpenPrice": round(open_price, 2),
@@ -258,9 +279,12 @@ def _daily_price_context(bars: pd.DataFrame, indicators: dict[str, Any]) -> dict
         "eventMoveAtr": round(move_atr, 2),
         "gapAtr": round(gap_atr, 2),
         "atrPct": round(atr_pct, 2),
-        "dailyVolume": int(max(0.0, volume)),
+        "realtimeVolume": None,
+        "lastMinuteVolume": None,
         "dailyVolumeAvg20": int(max(0.0, volume_avg_20)),
-        "dailyVolumeRatio": round(volume_ratio_daily, 2),
+        "volumeRatio": None,
+        "volumeSource": "massive_snapshot_missing",
+        "volumeAsOf": "",
     }
 
 
@@ -276,7 +300,8 @@ def _scan_symbol(symbol: str, rebalance_hint: dict[str, Any] | None = None) -> d
         "latestClosePrice": round(_f(indicators.get("price"), 0.0), 2),
         "latestCloseAsOf": bars.tail(1).index[0].isoformat() if len(bars.index) else "",
         "chartState": "reference_only",
-        "volumeRatio": round(_f(indicators.get("volume_ratio"), 0.0), 2),
+        "volumeRatio": None,
+        "volumeSource": "massive_snapshot_missing",
         "rsi": round(_f(indicators.get("rsi"), 0.0), 1),
         "adx": round(_f(indicators.get("adx"), 0.0), 1),
         "atr": round(_f(indicators.get("atr"), 0.0), 2),
@@ -290,6 +315,50 @@ def _scan_symbol(symbol: str, rebalance_hint: dict[str, Any] | None = None) -> d
         "rebalanceHint": bool(rebalance_hint),
     }
     payload.update(_daily_price_context(bars, indicators))
+    return payload
+
+
+def _apply_realtime_volume(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    symbols = [_s(row.get("symbol")).upper() for row in rows if _s(row.get("symbol"))]
+    snapshots = get_realtime_stock_snapshots(symbols)
+    for row in rows:
+        symbol = _s(row.get("symbol")).upper()
+        snapshot = snapshots.get(symbol)
+        if not snapshot:
+            row["volumeRatio"] = None
+            row["realtimeVolume"] = None
+            row["lastMinuteVolume"] = None
+            row["volumeSource"] = "massive_snapshot_missing"
+            row["volumeAsOf"] = ""
+            continue
+
+        realtime_volume = _f(snapshot.get("sessionVolume"), 0.0)
+        avg_volume = _f(row.get("dailyVolumeAvg20"), 0.0)
+        row["realtimeVolume"] = int(realtime_volume) if realtime_volume > 0 else None
+        row["lastMinuteVolume"] = int(_f(snapshot.get("lastMinuteVolume"), 0.0)) or None
+        row["volumeRatio"] = round(realtime_volume / avg_volume, 2) if realtime_volume > 0 and avg_volume > 0 else None
+        row["volumeSource"] = _s(snapshot.get("source")) or "massive_snapshot"
+        row["volumeAsOf"] = _s(snapshot.get("updatedAt"))
+        if _f(snapshot.get("closePrice"), 0.0) > 0:
+            row["realtimePrice"] = round(_f(snapshot.get("closePrice"), 0.0), 2)
+    return rows
+
+
+def _refresh_payload_realtime_volume(payload: dict[str, Any]) -> dict[str, Any]:
+    all_rows = payload.get("all") if isinstance(payload.get("all"), list) else []
+    rows = [row for row in all_rows if isinstance(row, dict)]
+    if not rows:
+        return payload
+
+    _apply_realtime_volume(rows)
+    by_symbol = {_s(row.get("symbol")).upper(): row for row in rows if _s(row.get("symbol"))}
+    for key in ("strictBuyable", "actionableNow", "priceReady", "buyable", "waitPullback", "avoid", "chartLeaders", "overextended"):
+        bucket = payload.get(key)
+        if not isinstance(bucket, list):
+            continue
+        for row in bucket:
+            if isinstance(row, dict):
+                row.update(by_symbol.get(_s(row.get("symbol")).upper(), {}))
     return payload
 
 
@@ -309,6 +378,7 @@ def _scan_symbols(symbols: list[str], rebalance_hints: dict[str, dict[str, Any]]
             row = future.result()
             if row:
                 scanned.append(row)
+    _apply_realtime_volume(scanned)
     scanned.sort(
         key=lambda row: (
             -_f(row.get("return63d"), 0.0),
@@ -812,7 +882,6 @@ def _chart_gate_reasons(row: dict[str, Any]) -> list[str]:
     current_vs_entry = _f(row.get("currentVsEntryPct"), 999.0)
     reward = _f(row.get("rewardToTp1Pct"), 0.0)
     rsi = _f(row.get("rsi"), 50.0)
-    volume_ratio = _f(row.get("volumeRatio"), 0.0)
     chart_state = _s(row.get("chartState"))
     if _s(row.get("tradeVerdict")) == "plan_active":
         reasons.append("현재가가 관측 진입 기준")
@@ -827,7 +896,7 @@ def _chart_gate_reasons(row: dict[str, Any]) -> list[str]:
     reasons.append(f"TP1 여력 {reward:.2f}%")
     reasons.append(f"손절 리스크 {_f(row.get('riskToStopPct')):.2f}%")
     reasons.append(f"RSI {rsi:.1f}")
-    reasons.append(f"거래량 {volume_ratio:.2f}x")
+    reasons.append(f"거래량 {_format_volume_ratio(row.get('volumeRatio'))}")
     return reasons
 
 
@@ -903,7 +972,7 @@ def _load_cached_chart_rows(ttl_minutes: int) -> list[dict[str, Any]] | None:
     payload = _load_json(CHART_CACHE_PATH)
     rows = payload.get("all") if isinstance(payload.get("all"), list) else []
     out = [row for row in rows if isinstance(row, dict)]
-    return out or None
+    return _apply_realtime_volume(out) if out else None
 
 
 def _build_raw_evidence_row(
@@ -933,7 +1002,12 @@ def _build_raw_evidence_row(
         "dayRangePct": chart_row.get("dayRangePct"),
         "closeLocationPct": chart_row.get("closeLocationPct"),
         "chartState": _s(chart_row.get("chartState")),
-        "volumeRatio": round(_f(chart_row.get("volumeRatio"), 0.0), 2),
+        "volumeRatio": _round_optional(chart_row.get("volumeRatio"), 2),
+        "realtimeVolume": chart_row.get("realtimeVolume"),
+        "lastMinuteVolume": chart_row.get("lastMinuteVolume"),
+        "dailyVolumeAvg20": chart_row.get("dailyVolumeAvg20"),
+        "volumeSource": _s(chart_row.get("volumeSource")),
+        "volumeAsOf": _s(chart_row.get("volumeAsOf")),
         "rsi": round(_f(chart_row.get("rsi"), 0.0), 1),
         "adx": round(_f(chart_row.get("adx"), 0.0), 1),
         **_news_context(bundle, news),
@@ -1112,7 +1186,7 @@ def analyze_current_charts(force_refresh: bool = False) -> dict[str, Any]:
         and _cache_is_fresh(CHART_CACHE_PATH, _event_cache_minutes())
         and _chart_cache_matches_schema(CHART_CACHE_PATH)
     ):
-        return _load_json(CHART_CACHE_PATH)
+        return _refresh_payload_realtime_volume(_load_json(CHART_CACHE_PATH))
 
     rebalance_path = _latest_rebalance_result_path()
     rebalance = _load_json(rebalance_path) if rebalance_path is not None else {}
@@ -1207,6 +1281,13 @@ def _format_multiple(value: Any) -> str:
     if value is None:
         return "-"
     return f"{_f(value):.2f}x"
+
+
+def _format_volume_ratio(value: Any) -> str:
+    ratio = _round_optional(value, 2)
+    if ratio is None:
+        return "-"
+    return f"{ratio:.2f}x"
 
 
 def _bucket_rows(payload: dict[str, Any], bucket: str) -> list[dict[str, Any]]:
@@ -1423,7 +1504,7 @@ def _chart_reason(row: dict[str, Any]) -> str:
         f"TP1 여력 {_f(row.get('rewardToTp1Pct')):.2f}% | "
         f"손절 리스크 {_f(row.get('riskToStopPct')):.2f}% | "
         f"RSI {_f(row.get('rsi')):.1f} | "
-        f"거래량 {_f(row.get('volumeRatio')):.2f}x"
+        f"거래량 {_format_volume_ratio(row.get('volumeRatio'))}"
     )
 
 

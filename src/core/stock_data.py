@@ -30,6 +30,7 @@ from urllib3.util.retry import Retry
 
 REQUEST_TIMEOUT = 10
 _RETRYABLE = [429, 500, 502, 503, 504]
+MASSIVE_API_BASE_URL = "https://api.massive.com"
 
 
 def _build_session() -> requests.Session:
@@ -114,6 +115,21 @@ def _cache_bucket_seconds(env_key: str, default_seconds: int) -> int:
     return int(time.time() // ttl)
 
 
+def _env_int(key: str, default: int, minimum: int = 1, maximum: int | None = None) -> int:
+    try:
+        value = int(os.getenv(key, str(default)))
+    except Exception:
+        value = int(default)
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def _chunks(values: list[str], size: int) -> list[list[str]]:
+    return [values[idx : idx + size] for idx in range(0, len(values), size)]
+
+
 def _days_until_ts(value: Any) -> int | None:
     ts = int(_to_float(value, 0))
     if ts <= 0:
@@ -124,6 +140,170 @@ def _days_until_ts(value: Any) -> int | None:
         return (event_dt.date() - today).days
     except Exception:
         return None
+
+
+def _massive_api_key() -> str:
+    return str(os.getenv("MASSIVE_API_KEY") or os.getenv("POLYGON_API_KEY") or "").strip()
+
+
+def _massive_base_url() -> str:
+    return str(os.getenv("MASSIVE_API_BASE_URL") or MASSIVE_API_BASE_URL).rstrip("/")
+
+
+def _timestamp_to_iso(value: Any) -> str:
+    if value in {None, ""}:
+        return ""
+    try:
+        ts = int(value)
+    except Exception:
+        try:
+            ts = int(float(str(value)))
+        except Exception:
+            return ""
+    if ts <= 0:
+        return ""
+    if ts > 10**16:
+        seconds = ts / 1_000_000_000
+    elif ts > 10**13:
+        seconds = ts / 1_000_000
+    elif ts > 10**10:
+        seconds = ts / 1_000
+    else:
+        seconds = ts
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
+def _first_positive(*values: Any) -> float:
+    for value in values:
+        out = _to_float(value, 0.0)
+        if out > 0:
+            return out
+    return 0.0
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _normalize_massive_snapshot(row: dict[str, Any]) -> dict[str, Any] | None:
+    symbol = _clean_symbol(row.get("ticker") or row.get("symbol"))
+    if not symbol:
+        return None
+
+    day = row.get("day") if isinstance(row.get("day"), dict) else {}
+    session = row.get("session") if isinstance(row.get("session"), dict) else {}
+    minute = row.get("min") if isinstance(row.get("min"), dict) else row.get("last_minute")
+    minute = minute if isinstance(minute, dict) else {}
+    prev_day = row.get("prevDay") if isinstance(row.get("prevDay"), dict) else row.get("prev_day")
+    prev_day = prev_day if isinstance(prev_day, dict) else {}
+    last_trade = row.get("lastTrade") if isinstance(row.get("lastTrade"), dict) else row.get("last_trade")
+    last_trade = last_trade if isinstance(last_trade, dict) else {}
+
+    close_price = _first_positive(
+        session.get("close"),
+        session.get("c"),
+        day.get("close"),
+        day.get("c"),
+        last_trade.get("price"),
+        last_trade.get("p"),
+        minute.get("close"),
+        minute.get("c"),
+    )
+    session_volume = _first_positive(
+        session.get("volume"),
+        session.get("v"),
+        day.get("volume"),
+        day.get("v"),
+        minute.get("accumulated_volume"),
+        minute.get("av"),
+    )
+    minute_volume = _first_positive(minute.get("volume"), minute.get("v"))
+    updated_at = _timestamp_to_iso(
+        row.get("updated")
+        or row.get("fmv_last_updated")
+        or last_trade.get("sip_timestamp")
+        or last_trade.get("participant_timestamp")
+        or last_trade.get("t")
+        or minute.get("t")
+        or day.get("t")
+    )
+
+    return {
+        "symbol": symbol,
+        "closePrice": close_price,
+        "openPrice": _first_positive(session.get("open"), session.get("o"), day.get("open"), day.get("o")),
+        "highPrice": _first_positive(session.get("high"), session.get("h"), day.get("high"), day.get("h")),
+        "lowPrice": _first_positive(session.get("low"), session.get("l"), day.get("low"), day.get("l")),
+        "previousClosePrice": _first_positive(prev_day.get("close"), prev_day.get("c")),
+        "sessionVolume": session_volume,
+        "lastMinuteVolume": minute_volume,
+        "lastTradePrice": _first_positive(last_trade.get("price"), last_trade.get("p")),
+        "lastTradeSize": _first_positive(last_trade.get("size"), last_trade.get("s")),
+        "marketStatus": _first_text(row.get("market_status"), row.get("marketStatus")),
+        "updatedAt": updated_at,
+        "source": "massive_snapshot",
+    }
+
+
+@lru_cache(maxsize=128)
+def _get_massive_stock_snapshots_cached(symbols_key: str, bucket: int) -> dict[str, dict[str, Any]]:
+    _ = bucket
+    api_key = _massive_api_key()
+    if not api_key or not symbols_key:
+        return {}
+
+    symbols = [symbol for symbol in symbols_key.split(",") if symbol]
+    if not symbols:
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+    batch_size = _env_int("MASSIVE_SNAPSHOT_BATCH_SIZE", 200, minimum=1, maximum=250)
+    url = f"{_massive_base_url()}/v2/snapshot/locale/us/markets/stocks/tickers"
+    headers = {"User-Agent": "autostock/2.0"}
+    for batch in _chunks(symbols, batch_size):
+        try:
+            resp = _SESSION.get(
+                url,
+                params={"tickers": ",".join(batch), "apiKey": api_key},
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                continue
+            payload = resp.json()
+        except Exception:
+            continue
+        rows = payload.get("tickers") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            continue
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            normalized = _normalize_massive_snapshot(raw)
+            if normalized:
+                out[normalized["symbol"]] = normalized
+    return out
+
+
+def get_realtime_stock_snapshots(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    Fetch current stock snapshots from Massive.com.
+
+    Returns an empty mapping when MASSIVE_API_KEY/POLYGON_API_KEY is unavailable
+    or the snapshot request fails. Callers should treat volume as unavailable.
+    """
+    clean_symbols = sorted({_clean_symbol(symbol).replace(".", "-") for symbol in symbols if _clean_symbol(symbol)})
+    if not clean_symbols:
+        return {}
+    bucket = _cache_bucket_seconds("MASSIVE_SNAPSHOT_CACHE_TTL_SECONDS", 45)
+    return _get_massive_stock_snapshots_cached(",".join(clean_symbols), bucket)
 
 
 @lru_cache(maxsize=512)
@@ -485,6 +665,7 @@ def get_fear_greed_index() -> dict[str, Any]:
 
 __all__ = [
     "get_stock_data",
+    "get_realtime_stock_snapshots",
     "get_stock_info",
     "get_finviz_data",
     "get_market_condition",
