@@ -1,11 +1,12 @@
 {
-  "offset": 167834575,
-  "next_auto_collect_check_at": 1777033277.1776137,
-  "last_auto_chart_close_date": "2026-04-23",
-  "last_auto_collect_at": "2026-04-24T09:21:16.791900",
+  "offset": 167834606,
+  "next_auto_collect_check_at": 1778472661.5689495,
+  "last_auto_chart_close_date": "2026-05-08",
+  "last_auto_collect_at": "2026-05-09T01:09:26.183956",
   "last_auto_collect_record": {
-    "recorded": 14,
-    "runId": "82d903438fe03418",
-    "path": "D:\\my\\autostock\\outputs\\telegram\\shadow_journal.jsonl"
-  }
+    "recorded": 0,
+    "skipped": "no_recommendations"
+  },
+  "last_chat_id": 8452236401,
+  "last_mode": "q"
 }

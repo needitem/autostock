@@ -1,122 +1,125 @@
 {
-  "generatedAt": "2026-04-24T06:21:36.994364+00:00",
+  "generatedAt": "2026-05-10T22:12:11.414700+00:00",
   "schemaVersion": "shadow-journal-v1",
-  "journalPath": "D:\\my\\autostock\\outputs\\telegram\\shadow_journal.jsonl",
+  "journalPath": "/home/taeho/autostock/outputs/telegram/shadow_journal.jsonl",
   "horizonDays": 10,
   "summary": {
     "recommendationCount": 28,
-    "filledCount": 0,
-    "closedCount": 0,
-    "tp1Count": 0,
-    "stoppedCount": 0,
-    "unfilledCount": 0,
-    "pendingCount": 28,
-    "fillRatePct": 0.0,
-    "tp1RateFilledPct": 0.0,
-    "stopRateFilledPct": 0.0,
+    "filledCount": 26,
+    "closedCount": 14,
+    "tp1Count": 4,
+    "stoppedCount": 10,
+    "unfilledCount": 2,
+    "pendingCount": 0,
+    "fillRatePct": 92.86,
+    "tp1RateFilledPct": 15.38,
+    "stopRateFilledPct": 38.46,
     "statusCounts": {
-      "pending_no_future_bars": 28
+      "filled_open": 12,
+      "tp1_hit": 4,
+      "stopped": 10,
+      "unfilled": 2
     }
   },
   "conditionStats": {
     "entry_near_1pct": {
       "count": 28,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 28,
-      "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "filled": 26,
+      "tp1": 4,
+      "stopped": 10,
+      "pending": 0,
+      "unfilled": 2,
+      "fillRatePct": 92.86,
+      "tp1RateFilledPct": 15.38,
+      "stopRateFilledPct": 38.46
     },
     "entry_near_2pct": {
       "count": 28,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 28,
-      "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "filled": 26,
+      "tp1": 4,
+      "stopped": 10,
+      "pending": 0,
+      "unfilled": 2,
+      "fillRatePct": 92.86,
+      "tp1RateFilledPct": 15.38,
+      "stopRateFilledPct": 38.46
     },
     "tp1_reward_ge_4pct": {
       "count": 18,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 18,
-      "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "filled": 16,
+      "tp1": 4,
+      "stopped": 4,
+      "pending": 0,
+      "unfilled": 2,
+      "fillRatePct": 88.89,
+      "tp1RateFilledPct": 25.0,
+      "stopRateFilledPct": 25.0
     },
     "rr1_ge_1": {
       "count": 26,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 26,
-      "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "filled": 24,
+      "tp1": 4,
+      "stopped": 8,
+      "pending": 0,
+      "unfilled": 2,
+      "fillRatePct": 92.31,
+      "tp1RateFilledPct": 16.67,
+      "stopRateFilledPct": 33.33
     },
     "rr1_ge_1_2": {
       "count": 8,
-      "filled": 0,
-      "tp1": 0,
+      "filled": 8,
+      "tp1": 2,
       "stopped": 0,
-      "pending": 8,
+      "pending": 0,
       "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
+      "fillRatePct": 100.0,
+      "tp1RateFilledPct": 25.0,
       "stopRateFilledPct": 0.0
     },
     "rsi_42_70": {
       "count": 28,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 28,
-      "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "filled": 26,
+      "tp1": 4,
+      "stopped": 10,
+      "pending": 0,
+      "unfilled": 2,
+      "fillRatePct": 92.86,
+      "tp1RateFilledPct": 15.38,
+      "stopRateFilledPct": 38.46
     },
     "volume_ge_0_9": {
       "count": 10,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 10,
+      "filled": 10,
+      "tp1": 2,
+      "stopped": 2,
+      "pending": 0,
       "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "fillRatePct": 100.0,
+      "tp1RateFilledPct": 20.0,
+      "stopRateFilledPct": 20.0
     },
     "no_severe_warning": {
       "count": 28,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 28,
-      "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "filled": 26,
+      "tp1": 4,
+      "stopped": 10,
+      "pending": 0,
+      "unfilled": 2,
+      "fillRatePct": 92.86,
+      "tp1RateFilledPct": 15.38,
+      "stopRateFilledPct": 38.46
     },
     "constructive_chart": {
       "count": 14,
-      "filled": 0,
-      "tp1": 0,
-      "stopped": 0,
-      "pending": 14,
+      "filled": 14,
+      "tp1": 4,
+      "stopped": 4,
+      "pending": 0,
       "unfilled": 0,
-      "fillRatePct": 0.0,
-      "tp1RateFilledPct": 0.0,
-      "stopRateFilledPct": 0.0
+      "fillRatePct": 100.0,
+      "tp1RateFilledPct": 28.57,
+      "stopRateFilledPct": 28.57
     }
   },
   "recent": [
@@ -179,8 +182,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 1418.19,
+      "lastClose": 1516.6,
+      "unrealizedPct": 6.94,
+      "maxFavorablePct": 9.29,
+      "maxAdversePct": -3.76
     },
     {
       "actionBucket": "",
@@ -241,8 +250,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 142.24,
+      "lastClose": 141.09,
+      "unrealizedPct": -0.81,
+      "maxFavorablePct": 5.08,
+      "maxAdversePct": -4.79
     },
     {
       "actionBucket": "",
@@ -303,8 +318,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 78.63,
+      "exitPrice": 83.83,
+      "realizedPct": 6.61,
+      "maxFavorablePct": 12.72,
+      "maxAdversePct": -1.49
     },
     {
       "actionBucket": "",
@@ -365,8 +387,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 207.32,
+      "lastClose": 212.95,
+      "unrealizedPct": 2.72,
+      "maxFavorablePct": 5.92,
+      "maxAdversePct": -1.11
     },
     {
       "actionBucket": "",
@@ -427,8 +455,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-06",
+      "fillPrice": 202.24,
+      "exitPrice": 200.64,
+      "realizedPct": -0.79,
+      "maxFavorablePct": 0.69,
+      "maxAdversePct": -0.98
     },
     {
       "actionBucket": "",
@@ -489,8 +524,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 93.48,
+      "lastClose": 92.43,
+      "unrealizedPct": -1.12,
+      "maxFavorablePct": 4.19,
+      "maxAdversePct": -1.63
     },
     {
       "actionBucket": "",
@@ -552,8 +593,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 205.41,
+      "exitPrice": 218.37,
+      "realizedPct": 6.31,
+      "maxFavorablePct": 8.98,
+      "maxAdversePct": -0.95
     },
     {
       "actionBucket": "",
@@ -614,8 +662,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 186.68,
+      "exitPrice": 181.06,
+      "realizedPct": -3.01,
+      "maxFavorablePct": 2.58,
+      "maxAdversePct": -3.21
     },
     {
       "actionBucket": "",
@@ -676,8 +731,12 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "unfilled",
+      "barsEvaluated": 10,
+      "minLow": 75.79,
+      "maxHigh": 81.59,
+      "lastClose": 78.82,
+      "distanceToEntryPct": 0.26
     },
     {
       "actionBucket": "",
@@ -738,8 +797,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 346.47,
+      "exitPrice": 333.58,
+      "realizedPct": -3.72,
+      "maxFavorablePct": 0.89,
+      "maxAdversePct": -7.49
     },
     {
       "actionBucket": "",
@@ -800,8 +866,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 68.33,
+      "lastClose": 67.04,
+      "unrealizedPct": -1.89,
+      "maxFavorablePct": 5.02,
+      "maxAdversePct": -2.72
     },
     {
       "actionBucket": "",
@@ -862,8 +934,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 127.22,
+      "lastClose": 124.87,
+      "unrealizedPct": -1.85,
+      "maxFavorablePct": 2.74,
+      "maxAdversePct": -2.49
     },
     {
       "actionBucket": "",
@@ -921,8 +999,15 @@
       "trigger": "auto",
       "volumeRatio": 1.04,
       "warnings": [],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-24",
+      "fillPrice": 138.63,
+      "exitPrice": 135.78,
+      "realizedPct": -2.06,
+      "maxFavorablePct": 0.9,
+      "maxAdversePct": -4.72
     },
     {
       "actionBucket": "",
@@ -983,8 +1068,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 58.59,
+      "exitPrice": 56.31,
+      "realizedPct": -3.89,
+      "maxFavorablePct": 3.74,
+      "maxAdversePct": -5.15
     },
     {
       "actionBucket": "",
@@ -1033,8 +1125,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 1418.19,
+      "lastClose": 1516.6,
+      "unrealizedPct": 6.94,
+      "maxFavorablePct": 9.29,
+      "maxAdversePct": -3.76
     },
     {
       "actionBucket": "",
@@ -1083,8 +1181,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 142.24,
+      "lastClose": 141.09,
+      "unrealizedPct": -0.81,
+      "maxFavorablePct": 5.08,
+      "maxAdversePct": -4.79
     },
     {
       "actionBucket": "",
@@ -1133,8 +1237,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 78.63,
+      "exitPrice": 83.83,
+      "realizedPct": 6.61,
+      "maxFavorablePct": 12.72,
+      "maxAdversePct": -1.49
     },
     {
       "actionBucket": "",
@@ -1183,8 +1294,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 207.32,
+      "lastClose": 212.95,
+      "unrealizedPct": 2.72,
+      "maxFavorablePct": 5.92,
+      "maxAdversePct": -1.11
     },
     {
       "actionBucket": "",
@@ -1233,8 +1350,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-06",
+      "fillPrice": 202.24,
+      "exitPrice": 200.64,
+      "realizedPct": -0.79,
+      "maxFavorablePct": 0.69,
+      "maxAdversePct": -0.98
     },
     {
       "actionBucket": "",
@@ -1283,8 +1407,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 93.48,
+      "lastClose": 92.43,
+      "unrealizedPct": -1.12,
+      "maxFavorablePct": 4.19,
+      "maxAdversePct": -1.63
     },
     {
       "actionBucket": "",
@@ -1334,8 +1464,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 205.41,
+      "exitPrice": 218.37,
+      "realizedPct": 6.31,
+      "maxFavorablePct": 8.98,
+      "maxAdversePct": -0.95
     },
     {
       "actionBucket": "",
@@ -1384,8 +1521,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 186.68,
+      "exitPrice": 181.06,
+      "realizedPct": -3.01,
+      "maxFavorablePct": 2.58,
+      "maxAdversePct": -3.21
     },
     {
       "actionBucket": "",
@@ -1434,8 +1578,12 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "unfilled",
+      "barsEvaluated": 10,
+      "minLow": 75.79,
+      "maxHigh": 81.59,
+      "lastClose": 78.82,
+      "distanceToEntryPct": 0.26
     },
     {
       "actionBucket": "",
@@ -1484,8 +1632,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 346.47,
+      "exitPrice": 333.58,
+      "realizedPct": -3.72,
+      "maxFavorablePct": 0.89,
+      "maxAdversePct": -7.49
     },
     {
       "actionBucket": "",
@@ -1534,8 +1689,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 68.33,
+      "lastClose": 67.04,
+      "unrealizedPct": -1.89,
+      "maxFavorablePct": 5.02,
+      "maxAdversePct": -2.72
     },
     {
       "actionBucket": "",
@@ -1584,8 +1745,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 127.22,
+      "lastClose": 124.87,
+      "unrealizedPct": -1.85,
+      "maxFavorablePct": 2.74,
+      "maxAdversePct": -2.49
     },
     {
       "actionBucket": "",
@@ -1631,8 +1798,15 @@
       "trigger": "smoke",
       "volumeRatio": 1.04,
       "warnings": [],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-24",
+      "fillPrice": 138.63,
+      "exitPrice": 135.78,
+      "realizedPct": -2.06,
+      "maxFavorablePct": 0.9,
+      "maxAdversePct": -4.72
     },
     {
       "actionBucket": "",
@@ -1681,8 +1855,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 58.59,
+      "exitPrice": 56.31,
+      "realizedPct": -3.89,
+      "maxFavorablePct": 3.74,
+      "maxAdversePct": -5.15
     }
   ],
   "all": [
@@ -1733,8 +1914,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 1418.19,
+      "lastClose": 1516.6,
+      "unrealizedPct": 6.94,
+      "maxFavorablePct": 9.29,
+      "maxAdversePct": -3.76
     },
     {
       "actionBucket": "",
@@ -1783,8 +1970,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 142.24,
+      "lastClose": 141.09,
+      "unrealizedPct": -0.81,
+      "maxFavorablePct": 5.08,
+      "maxAdversePct": -4.79
     },
     {
       "actionBucket": "",
@@ -1833,8 +2026,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 78.63,
+      "exitPrice": 83.83,
+      "realizedPct": 6.61,
+      "maxFavorablePct": 12.72,
+      "maxAdversePct": -1.49
     },
     {
       "actionBucket": "",
@@ -1883,8 +2083,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 207.32,
+      "lastClose": 212.95,
+      "unrealizedPct": 2.72,
+      "maxFavorablePct": 5.92,
+      "maxAdversePct": -1.11
     },
     {
       "actionBucket": "",
@@ -1933,8 +2139,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-06",
+      "fillPrice": 202.24,
+      "exitPrice": 200.64,
+      "realizedPct": -0.79,
+      "maxFavorablePct": 0.69,
+      "maxAdversePct": -0.98
     },
     {
       "actionBucket": "",
@@ -1983,8 +2196,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 93.48,
+      "lastClose": 92.43,
+      "unrealizedPct": -1.12,
+      "maxFavorablePct": 4.19,
+      "maxAdversePct": -1.63
     },
     {
       "actionBucket": "",
@@ -2034,8 +2253,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 205.41,
+      "exitPrice": 218.37,
+      "realizedPct": 6.31,
+      "maxFavorablePct": 8.98,
+      "maxAdversePct": -0.95
     },
     {
       "actionBucket": "",
@@ -2084,8 +2310,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 186.68,
+      "exitPrice": 181.06,
+      "realizedPct": -3.01,
+      "maxFavorablePct": 2.58,
+      "maxAdversePct": -3.21
     },
     {
       "actionBucket": "",
@@ -2134,8 +2367,12 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "unfilled",
+      "barsEvaluated": 10,
+      "minLow": 75.79,
+      "maxHigh": 81.59,
+      "lastClose": 78.82,
+      "distanceToEntryPct": 0.26
     },
     {
       "actionBucket": "",
@@ -2184,8 +2421,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 346.47,
+      "exitPrice": 333.58,
+      "realizedPct": -3.72,
+      "maxFavorablePct": 0.89,
+      "maxAdversePct": -7.49
     },
     {
       "actionBucket": "",
@@ -2234,8 +2478,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 68.33,
+      "lastClose": 67.04,
+      "unrealizedPct": -1.89,
+      "maxFavorablePct": 5.02,
+      "maxAdversePct": -2.72
     },
     {
       "actionBucket": "",
@@ -2284,8 +2534,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 127.22,
+      "lastClose": 124.87,
+      "unrealizedPct": -1.85,
+      "maxFavorablePct": 2.74,
+      "maxAdversePct": -2.49
     },
     {
       "actionBucket": "",
@@ -2331,8 +2587,15 @@
       "trigger": "smoke",
       "volumeRatio": 1.04,
       "warnings": [],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-24",
+      "fillPrice": 138.63,
+      "exitPrice": 135.78,
+      "realizedPct": -2.06,
+      "maxFavorablePct": 0.9,
+      "maxAdversePct": -4.72
     },
     {
       "actionBucket": "",
@@ -2381,8 +2644,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 58.59,
+      "exitPrice": 56.31,
+      "realizedPct": -3.89,
+      "maxFavorablePct": 3.74,
+      "maxAdversePct": -5.15
     },
     {
       "actionBucket": "",
@@ -2443,8 +2713,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 1418.19,
+      "lastClose": 1516.6,
+      "unrealizedPct": 6.94,
+      "maxFavorablePct": 9.29,
+      "maxAdversePct": -3.76
     },
     {
       "actionBucket": "",
@@ -2505,8 +2781,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 142.24,
+      "lastClose": 141.09,
+      "unrealizedPct": -0.81,
+      "maxFavorablePct": 5.08,
+      "maxAdversePct": -4.79
     },
     {
       "actionBucket": "",
@@ -2567,8 +2849,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 78.63,
+      "exitPrice": 83.83,
+      "realizedPct": 6.61,
+      "maxFavorablePct": 12.72,
+      "maxAdversePct": -1.49
     },
     {
       "actionBucket": "",
@@ -2629,8 +2918,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-27",
+      "fillPrice": 207.32,
+      "lastClose": 212.95,
+      "unrealizedPct": 2.72,
+      "maxFavorablePct": 5.92,
+      "maxAdversePct": -1.11
     },
     {
       "actionBucket": "",
@@ -2691,8 +2986,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-06",
+      "fillPrice": 202.24,
+      "exitPrice": 200.64,
+      "realizedPct": -0.79,
+      "maxFavorablePct": 0.69,
+      "maxAdversePct": -0.98
     },
     {
       "actionBucket": "",
@@ -2753,8 +3055,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 93.48,
+      "lastClose": 92.43,
+      "unrealizedPct": -1.12,
+      "maxFavorablePct": 4.19,
+      "maxAdversePct": -1.63
     },
     {
       "actionBucket": "",
@@ -2816,8 +3124,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "tp1_hit",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 205.41,
+      "exitPrice": 218.37,
+      "realizedPct": 6.31,
+      "maxFavorablePct": 8.98,
+      "maxAdversePct": -0.95
     },
     {
       "actionBucket": "",
@@ -2878,8 +3193,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 186.68,
+      "exitPrice": 181.06,
+      "realizedPct": -3.01,
+      "maxFavorablePct": 2.58,
+      "maxAdversePct": -3.21
     },
     {
       "actionBucket": "",
@@ -2940,8 +3262,12 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "unfilled",
+      "barsEvaluated": 10,
+      "minLow": 75.79,
+      "maxHigh": 81.59,
+      "lastClose": 78.82,
+      "distanceToEntryPct": 0.26
     },
     {
       "actionBucket": "",
@@ -3002,8 +3328,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-29",
+      "fillPrice": 346.47,
+      "exitPrice": 333.58,
+      "realizedPct": -3.72,
+      "maxFavorablePct": 0.89,
+      "maxAdversePct": -7.49
     },
     {
       "actionBucket": "",
@@ -3064,8 +3397,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 68.33,
+      "lastClose": 67.04,
+      "unrealizedPct": -1.89,
+      "maxFavorablePct": 5.02,
+      "maxAdversePct": -2.72
     },
     {
       "actionBucket": "",
@@ -3126,8 +3465,14 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "filled_open",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "fillPrice": 127.22,
+      "lastClose": 124.87,
+      "unrealizedPct": -1.85,
+      "maxFavorablePct": 2.74,
+      "maxAdversePct": -2.49
     },
     {
       "actionBucket": "",
@@ -3185,8 +3530,15 @@
       "trigger": "auto",
       "volumeRatio": 1.04,
       "warnings": [],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-04-24",
+      "fillPrice": 138.63,
+      "exitPrice": 135.78,
+      "realizedPct": -2.06,
+      "maxFavorablePct": 0.9,
+      "maxAdversePct": -4.72
     },
     {
       "actionBucket": "",
@@ -3247,8 +3599,15 @@
         "volume_below_warn_threshold",
         "volume_below_regime_min"
       ],
-      "evalStatus": "pending_no_future_bars",
-      "barsEvaluated": 0
+      "evalStatus": "stopped",
+      "barsEvaluated": 10,
+      "fillDate": "2026-04-24",
+      "exitDate": "2026-05-07",
+      "fillPrice": 58.59,
+      "exitPrice": 56.31,
+      "realizedPct": -3.89,
+      "maxFavorablePct": 3.74,
+      "maxAdversePct": -5.15
     }
   ]
 }

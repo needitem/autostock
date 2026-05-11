@@ -158,26 +158,37 @@ class AIAnalyzer:
                 break
         return cut.rstrip() + "\n\n[output truncated to token budget]"
 
-    def _extract_json_object(self, text: str) -> dict[str, Any] | None:
+    def _clean_json_text(self, text: str) -> str:
         if not text:
+            return ""
+        cleaned = self._strip_cli_noise(text).strip()
+        cleaned = re.sub(r"^\s*```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+        return cleaned.strip()
+
+    def _extract_json_value(self, text: str) -> Any | None:
+        cleaned = self._clean_json_text(text)
+        if not cleaned:
             return None
-        cleaned = self._strip_cli_noise(text).strip().replace("```json", "").replace("```", "")
         try:
-            obj = json.loads(cleaned)
-            return obj if isinstance(obj, dict) else None
+            return json.loads(cleaned)
         except Exception:
             pass
+
         decoder = json.JSONDecoder()
         for idx, ch in enumerate(cleaned):
-            if ch != "{":
+            if ch not in "{[":
                 continue
             try:
                 obj, _ = decoder.raw_decode(cleaned[idx:])
             except Exception:
                 continue
-            if isinstance(obj, dict):
-                return obj
+            return obj
         return None
+
+    def _extract_json_object(self, text: str) -> dict[str, Any] | None:
+        obj = self._extract_json_value(text)
+        return obj if isinstance(obj, dict) else None
 
     def _strip_cli_noise(self, text: str) -> str:
         if not text:
