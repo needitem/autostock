@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.data_collector import DataCollector
 from core.event_watchlist import load_event_feed
-from core.news_collectors import fetch_rss_events, fetch_sec_submission_events, load_calendar_events, load_manual_events
+from core.news_collectors import load_calendar_events, load_manual_events
+
+
+_DATA_COLLECTOR = DataCollector()
 
 
 def _s(value: Any) -> str:
@@ -28,12 +32,12 @@ def collect_profile_events(
     for symbol in watchlist:
         if sec_enabled:
             try:
-                events.extend(fetch_sec_submission_events(symbol, limit=sec_limit, max_age_days=sec_max_age))
+                events.extend(_DATA_COLLECTOR.fetch_sec_submission_events(symbol, limit=sec_limit, max_age_days=sec_max_age))
             except Exception:
                 pass
         if rss_urls:
             try:
-                events.extend(fetch_rss_events(rss_urls, symbol=symbol))
+                events.extend(_DATA_COLLECTOR.fetch_rss_events(rss_urls, symbol=symbol))
             except Exception:
                 pass
         for cfg in profile_sources.get("rss", []) if isinstance(profile_sources, dict) else []:
@@ -44,7 +48,7 @@ def collect_profile_events(
                 continue
             try:
                 events.extend(
-                    fetch_rss_events(
+                    _DATA_COLLECTOR.fetch_rss_events(
                         [str(url) for url in urls if str(url).strip()],
                         symbol=symbol,
                         max_per_feed=int(cfg.get("max_per_feed", 10)),

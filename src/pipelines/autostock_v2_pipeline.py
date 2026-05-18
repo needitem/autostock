@@ -9,16 +9,16 @@ from typing import Any
 import pandas as pd
 
 from ai.analyzer import ai
+from core.data_collector import DataCollector
 from core.earnings_pit import EarningsEventStore
 from core.event_watchlist import chart_volume_gate, classify_action, macro_overlay
 from core.indicators import calculate_indicators, calculate_intraday_snapshot
-from core.news_collectors import build_next_known_events
 from core.sec_pit import SecPointInTimeStore
-from core.stock_data import get_fear_greed_index, get_intraday_stock_data, get_market_condition, get_stock_data, get_stock_info
 from event_runtime.collect import collect_profile_calendar_events, collect_profile_events, fresh_symbol_events
 
 
 ROOT = Path(__file__).resolve().parents[2]
+_DATA_COLLECTOR = DataCollector(root=ROOT)
 OUTPUT_DIR = ROOT / "data" / "autostock_v2"
 MARKET_INDICATOR = (os.getenv("AI_MARKET_INDICATOR", "QQQ").strip().upper() or "QQQ")
 DEFAULT_WATCHLIST = [
@@ -187,8 +187,8 @@ def run_autostock_v2(
         rss_urls=rss_urls,
     )
     extra_calendar_events = collect_profile_calendar_events(profile=profile, watchlist=watchlist)
-    market_ctx = get_market_condition()
-    fear_greed = get_fear_greed_index()
+    market_ctx = _DATA_COLLECTOR.get_market_condition()
+    fear_greed = _DATA_COLLECTOR.get_fear_greed_index()
     market_events = [event for event in event_feed if _s(event.get("scope")).lower() == "market"]
     macro = macro_overlay(market_ctx, fear_greed, market_events)
 
@@ -200,13 +200,13 @@ def run_autostock_v2(
     recommendations: list[dict[str, Any]] = []
     next_known_events: list[dict[str, Any]] = []
     for symbol in watchlist:
-        df = get_stock_data(symbol)
+        df = _DATA_COLLECTOR.get_stock_data(symbol)
         indicators = calculate_indicators(df) if df is not None else None
-        intraday_df = get_intraday_stock_data(symbol, period="5d", interval="5m")
+        intraday_df = _DATA_COLLECTOR.get_intraday_stock_data(symbol, period="5d", interval="5m")
         intraday = calculate_intraday_snapshot(intraday_df, interval_label="5m") if intraday_df is not None else None
-        info = get_stock_info(symbol)
+        info = _DATA_COLLECTOR.get_stock_info(symbol)
         raw_symbol_events = fresh_symbol_events(event_feed, symbol)
-        next_known_events.extend(build_next_known_events(symbol, info, generated_at))
+        next_known_events.extend(_DATA_COLLECTOR.build_next_known_events(symbol, info, generated_at))
         next_known_events.extend([row for row in extra_calendar_events if _s(row.get("symbol")).upper() == symbol])
         if indicators is None:
             recommendations.append(

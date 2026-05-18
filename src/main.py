@@ -17,10 +17,11 @@ from event_profile import load_event_profile, symbol_slug
 from event_runtime.engine import run_runtime_cycle, run_runtime_loop
 from nautilus_v2.bridge import export_symbol_bundle
 from pipelines.autostock_v2_pipeline import run_autostock_v2
-from core.stock_data import get_stock_data
+from core.data_collector import DataCollector
 
 
 DATA_ROOT = ROOT / "data" / "nautilus_v2"
+_DATA_COLLECTOR = DataCollector(root=ROOT)
 
 
 def _configure_console_output() -> None:
@@ -99,7 +100,11 @@ def export_nautilus_bundle(profile_name: str | None) -> dict[str, Any]:
     print(f"[{datetime.now()}] nautilus bundle export started...")
     result = run_autostock_v2(profile=profile, watchlist_override=list(profile.get("symbols", [symbol])))
     payload = result.get("payload", {}) if isinstance(result, dict) else {}
-    bars_df = get_stock_data(symbol, period=str(os.getenv("AI_EVENT_BARS_PERIOD", "15mo") or "15mo"), auto_adjust=False)
+    bars_df = _DATA_COLLECTOR.get_stock_data(
+        symbol,
+        period=str(os.getenv("AI_EVENT_BARS_PERIOD", "15mo") or "15mo"),
+        auto_adjust=False,
+    )
     out_dir = _bundle_dir(profile)
     paths = export_symbol_bundle(
         payload=payload if isinstance(payload, dict) else {},

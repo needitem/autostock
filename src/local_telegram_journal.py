@@ -10,10 +10,11 @@ from typing import Any
 
 import pandas as pd
 
-from core.stock_data import get_stock_data
+from core.data_collector import DataCollector
 
 
 ROOT = Path(__file__).resolve().parents[1]
+_DATA_COLLECTOR = DataCollector(root=ROOT)
 OUTPUT_ROOT = ROOT / "outputs" / "telegram"
 JOURNAL_PATH = OUTPUT_ROOT / "shadow_journal.jsonl"
 EVAL_PATH = OUTPUT_ROOT / "shadow_journal_eval.json"
@@ -227,7 +228,7 @@ def _evaluate_recommendation(record: dict[str, Any], horizon_days: int) -> dict[
     if basis_date is None:
         return {**record, "evalStatus": "invalid_date"}
 
-    bars = get_stock_data(symbol, period="6mo", auto_adjust=False)
+    bars = _DATA_COLLECTOR.get_stock_data(symbol, period="6mo", auto_adjust=False)
     if bars is None or bars.empty:
         return {**record, "evalStatus": "no_price_data"}
 
@@ -491,7 +492,7 @@ def render_journal_html(payload: dict[str, Any]) -> str:
     )
     recent = payload.get("recent") if isinstance(payload.get("recent"), list) else []
     if not recent:
-        lines.append("아직 기록이 없습니다. /chart 또는 /trade를 먼저 실행하세요.")
+        lines.append("아직 기록이 없습니다. /trade를 먼저 실행하세요.")
         return "\n".join(lines)
     for row in recent[:12]:
         status = _status_ko(_s(row.get("evalStatus")))

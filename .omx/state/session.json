@@ -1,9 +1,0 @@
-{
-  "session_id": "omx-1772757685405-t2vqq0",
-  "started_at": "2026-03-06T00:41:25.444Z",
-  "cwd": "/mnt/d/my/autostock",
-  "pid": 3453442,
-  "platform": "linux",
-  "pid_start_ticks": 15055398,
-  "pid_cmdline": "node /home/taeho/.nvm/versions/node/v22.22.0/bin/omx --xhigh --madmax"
-}

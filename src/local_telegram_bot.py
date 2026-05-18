@@ -4,7 +4,6 @@ import json
 import os
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -13,17 +12,15 @@ import requests
 
 from local_telegram_journal import evaluate_shadow_journal, record_recommendation_run, render_journal_html
 from local_telegram_trade import (
-    analyze_current_charts,
     analyze_rebalance_universe,
     full_news_analysis_limit,
-    render_chart_view_html,
     render_trade_view_html,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / "outputs" / "telegram" / "bot_state.json"
-MENU_BOOTSTRAP_VERSION = "2026-04-24-v1"
+MENU_BOOTSTRAP_VERSION = "2026-05-15-no-chart-route-v1"
 
 
 def _s(value: Any) -> str:
@@ -33,13 +30,6 @@ def _s(value: Any) -> str:
 def _env_bool(key: str, default: bool) -> bool:
     raw = _s(os.getenv(key, "1" if default else "0")).lower()
     return raw in {"1", "true", "yes", "on", "y"}
-
-
-def _env_int(key: str, default: int, minimum: int = 1) -> int:
-    try:
-        return max(minimum, int(os.getenv(key, str(default))))
-    except Exception:
-        return max(minimum, int(default))
 
 
 class LocalTelegramBot:
@@ -153,61 +143,13 @@ class LocalTelegramBot:
     def _main_reply_keyboard(self) -> dict[str, Any]:
         return {
             "keyboard": [
-                ["차트 분석", "뉴스+차트 분석"],
-                ["전체 정밀 분석", "기록 평가"],
-                ["새로고침", "도움말"],
+                ["뉴스+차트 분석", "전체 정밀 분석"],
+                ["기록 평가", "새로고침"],
+                ["도움말"],
             ],
             "resize_keyboard": True,
             "is_persistent": True,
             "one_time_keyboard": False,
-        }
-
-    def _menu_keyboard(self) -> dict[str, Any]:
-        return {
-            "inline_keyboard": [
-                [
-                    {"text": "차트 분석", "callback_data": "run:c"},
-                    {"text": "빠른 분석", "callback_data": "run:q"},
-                ],
-                [
-                    {"text": "전체 분석", "callback_data": "run:f"},
-                    {"text": "기록 평가", "callback_data": "journal"},
-                ],
-                [
-                    {"text": "도움말", "callback_data": "menu:help"},
-                ],
-            ]
-        }
-
-    def _result_keyboard(self, mode: str) -> dict[str, Any]:
-        return {
-            "inline_keyboard": [
-                [
-                    {"text": "차트 분석", "callback_data": "run:c"},
-                    {"text": "빠른 분석", "callback_data": "run:q"},
-                ],
-                [
-                    {"text": "전체 분석", "callback_data": "run:f"},
-                ],
-                [
-                    {"text": "요약", "callback_data": f"view:{mode}:summary"},
-                    {"text": "즉시 매수", "callback_data": f"view:{mode}:actionable"},
-                ],
-                [
-                    {"text": "눌림 대기", "callback_data": f"view:{mode}:wait"},
-                    {"text": "제외", "callback_data": f"view:{mode}:avoid"},
-                ],
-                [
-                    {"text": "포트폴리오", "callback_data": f"view:{mode}:portfolio"},
-                    {"text": "새로고침", "callback_data": f"refresh:{mode}"},
-                ],
-                [
-                    {"text": "기록 평가", "callback_data": "journal"},
-                ],
-                [
-                    {"text": "도움말", "callback_data": "menu:help"},
-                ],
-            ]
         }
 
     def _help_text(self) -> str:
@@ -215,12 +157,11 @@ class LocalTelegramBot:
             [
                 "<b>Autostock Telegram</b>",
                 "",
-                "버튼으로 바로 분석할 수 있습니다.",
+                "하단 고정 키보드로 바로 분석할 수 있습니다.",
                 "",
                 "<b>명령</b>",
                 "/trade  빠른 요약",
                 "/tradefull  all_us 전체 뉴스/Codex 풀분석",
-                "/chart  현재 차트 전수 스캔",
                 "/journal  추천 체결/성과 기록 평가",
                 "/refresh  캐시 무시하고 다시 계산",
                 "/menu  메인 메뉴",
@@ -235,22 +176,30 @@ class LocalTelegramBot:
             [
                 "<b>Autostock Trade Menu</b>",
                 "",
-                "차트 분석: all_us 전체 차트 스캔, 조건 통과 종목만 압축",
-                "빠른 분석: 전체 차트 스캔 + 상위권 뉴스/Codex 분석",
-                "전체 분석: all_us 전체 뉴스/Codex 풀분석",
+                "뉴스+차트 분석: 후보를 차트+뉴스/Codex 기준으로 빠르게 분석",
+                "전체 정밀 분석: all_us 전체 뉴스/Codex 풀분석",
                 "기록 평가: 추천 이후 실제 체결 가능성/TP1/손절 추적",
                 "",
-                "아래 고정 키보드나 Telegram 메뉴 명령을 눌러 시작하세요.",
+                "아래 하단 고정 키보드나 Telegram 메뉴 명령을 눌러 시작하세요.",
             ]
         )
 
     def _is_force_refresh(self, text: str) -> bool:
         lowered = text.lower()
-        return "/refresh" in lowered or "다시" in text or "refresh" in lowered or "최신으로" in text
+        return "/refresh" in lowered or "새로고침" in text or "다시" in text or "refresh" in lowered or "최신으로" in text
 
     def _is_full_request(self, text: str) -> bool:
         lowered = text.lower()
-        return "/tradefull" in lowered or "전체 정밀" in text or "전체 종목" in text or "all_us" in lowered or "전종목" in text
+        compact = "".join(text.split())
+        return (
+            "/tradefull" in lowered
+            or "전체정밀" in compact
+            or "정밀분석" in compact
+            or "전체분석" in compact
+            or "전체종목" in compact
+            or "all_us" in lowered
+            or "전종목" in text
+        )
 
     def _is_news_chart_request(self, text: str) -> bool:
         lowered = text.lower()
@@ -265,9 +214,9 @@ class LocalTelegramBot:
             or "빠른 분석" in text
         )
 
-    def _is_chart_request(self, text: str) -> bool:
-        lowered = text.lower()
-        return "/chart" in lowered or "차트만" in text or ("차트 분석" in text and not self._is_news_chart_request(text))
+    def _is_removed_chart_request(self, text: str) -> bool:
+        compact = "".join(text.split())
+        return not self._is_news_chart_request(text) and ("차트만" in compact or ("차트" in text and "분석" in text))
 
     def _is_journal_request(self, text: str) -> bool:
         lowered = text.lower()
@@ -278,9 +227,14 @@ class LocalTelegramBot:
         return text.startswith("/help") or "도움말" in text or lowered == "help"
 
     def _should_run_trade_analysis(self, text: str) -> bool:
+        if (
+            self._is_force_refresh(text)
+            or self._is_full_request(text)
+            or self._is_news_chart_request(text)
+        ):
+            return True
         lowered = text.lower()
         trigger_words = [
-            "/chart",
             "/journal",
             "/trade",
             "/tradefull",
@@ -291,7 +245,7 @@ class LocalTelegramBot:
             "포트폴리오",
             "뉴스",
             "종목",
-            "차트",
+            "분석",
             "매도가",
             "손절",
         ]
@@ -302,23 +256,17 @@ class LocalTelegramBot:
             return "f"
         if self._is_news_chart_request(text):
             return "q"
-        if self._is_chart_request(text):
-            return "c"
         if "새로고침" in text:
-            return _s(self.state.get("last_mode") or "c")
+            return "f" if _s(self.state.get("last_mode")) == "f" else "q"
         return "q"
 
     def _run_analysis_payload(self, mode: str, force_refresh: bool) -> dict[str, Any]:
-        if mode == "c":
-            return analyze_current_charts(force_refresh=force_refresh)
         return analyze_rebalance_universe(
             force_refresh=force_refresh,
             news_limit=full_news_analysis_limit() if mode == "f" else None,
         )
 
     def _render_payload(self, mode: str, payload: dict[str, Any], view: str = "summary") -> str:
-        if mode == "c":
-            return render_chart_view_html(payload, view=view)
         return render_trade_view_html(payload, view=view)
 
     def _analysis_busy(self) -> bool:
@@ -334,7 +282,7 @@ class LocalTelegramBot:
             [
                 "<b>분석 작업이 이미 실행 중입니다.</b>",
                 "",
-                "전체 차트/뉴스 분석은 오래 걸릴 수 있어서 동시에 1개만 돌립니다.",
+                "전체 뉴스/차트 분석은 오래 걸릴 수 있어서 동시에 1개만 돌립니다.",
                 "완료되면 이 채팅방에 결과가 자동으로 올라옵니다.",
             ]
         )
@@ -351,7 +299,7 @@ class LocalTelegramBot:
     ) -> None:
         if self._analysis_busy():
             if edit_message_id is not None:
-                self.edit_message(chat_id, edit_message_id, self._busy_text(), reply_markup=self._result_keyboard(mode))
+                self.edit_message(chat_id, edit_message_id, self._busy_text())
             else:
                 self.send_message(
                     chat_id,
@@ -362,26 +310,33 @@ class LocalTelegramBot:
             return
 
         def _job() -> None:
+            job_started = time.perf_counter()
+            print(f"telegram analysis job started: mode={mode} force_refresh={force_refresh} trigger={trigger}")
             try:
                 payload = self._run_analysis_payload(mode, force_refresh)
                 self._record_payload(mode, payload, trigger=trigger)
                 self._mark_last_mode(mode)
                 rendered = self._render_payload(mode, payload, view="summary")
                 if edit_message_id is not None:
-                    self.edit_message(chat_id, edit_message_id, rendered, reply_markup=self._result_keyboard(mode))
+                    self.edit_message(chat_id, edit_message_id, rendered)
                 else:
                     self.send_message(
                         chat_id,
                         rendered,
                         reply_to_message_id=message_id,
-                        reply_markup=self._result_keyboard(mode),
+                        reply_markup=self._main_reply_keyboard(),
                     )
+                print(
+                    "telegram analysis job finished: "
+                    f"mode={mode} available={bool(payload.get('available'))} "
+                    f"elapsed={time.perf_counter() - job_started:.2f}s"
+                )
             except Exception as exc:
                 error_text = f"분석 실패: {type(exc).__name__}: {exc}"
                 print(f"telegram analysis job error: {error_text}")
                 try:
                     if edit_message_id is not None:
-                        self.edit_message(chat_id, edit_message_id, error_text, reply_markup=self._menu_keyboard())
+                        self.edit_message(chat_id, edit_message_id, error_text)
                     else:
                         self.send_message(
                             chat_id,
@@ -392,17 +347,8 @@ class LocalTelegramBot:
                 except Exception as send_exc:
                     print(f"telegram analysis error send failed: {type(send_exc).__name__}: {send_exc}")
 
+        print(f"telegram analysis queued: mode={mode} force_refresh={force_refresh} trigger={trigger}")
         self.analysis_future = self.analysis_executor.submit(_job)
-
-    def _latest_close_date(self, payload: dict[str, Any]) -> str:
-        raw = _s(payload.get("latestCloseMax") or payload.get("latestCloseAsOf"))
-        if raw:
-            return raw[:10]
-        rows = payload.get("actionableNow") if isinstance(payload.get("actionableNow"), list) else []
-        for row in rows:
-            if isinstance(row, dict) and _s(row.get("latestCloseAsOf")):
-                return _s(row.get("latestCloseAsOf"))[:10]
-        return ""
 
     def _record_payload(self, mode: str, payload: dict[str, Any], trigger: str) -> None:
         try:
@@ -421,14 +367,11 @@ class LocalTelegramBot:
 
     def _wait_text(self, mode: str, force_refresh: bool) -> str:
         prefix = "다시 계산 중입니다." if force_refresh else "분석 중입니다."
-        if mode == "c":
-            suffix = "all_us 전체 차트를 스캔하고 조건 통과 종목만 추리는 중입니다."
-        else:
-            suffix = (
-                "all_us 전체를 차트 스캔 후 뉴스/Codex까지 풀분석 중입니다. 시간이 조금 걸릴 수 있습니다."
-                if mode == "f"
-                else "전체 후보를 차트+뉴스 기준으로 다시 분석 중입니다. 잠시만 기다려주세요."
-            )
+        suffix = (
+            "all_us 전체를 차트 스캔 후 뉴스/Codex까지 풀분석 중입니다. 시간이 조금 걸릴 수 있습니다."
+            if mode == "f"
+            else "전체 후보를 차트+뉴스 기준으로 다시 분석 중입니다. 잠시만 기다려주세요."
+        )
         return f"{prefix}\n\n{suffix}"
 
     def _reply_with_analysis(self, chat_id: int, message_id: int, text: str) -> None:
@@ -441,13 +384,13 @@ class LocalTelegramBot:
             chat_id,
             self._wait_text(mode, force_refresh),
             reply_to_message_id=message_id,
+            reply_markup=self._main_reply_keyboard(),
         )
         self._submit_analysis(chat_id, message_id, mode, force_refresh, trigger="message")
 
     def _configure_bot_ui(self) -> None:
         commands = [
             {"command": "menu", "description": "메인 메뉴"},
-            {"command": "chart", "description": "현재 차트 전수 스캔"},
             {"command": "trade", "description": "차트+뉴스 빠른 분석"},
             {"command": "tradefull", "description": "전체 뉴스/Codex 정밀 분석"},
             {"command": "journal", "description": "추천 체결/성과 평가"},
@@ -469,105 +412,26 @@ class LocalTelegramBot:
             return
         try:
             self.send_message(int(chat_id), self._menu_text(), reply_markup=self._main_reply_keyboard())
-            self.send_message(int(chat_id), "상세 화면 전환은 아래 inline 버튼도 사용할 수 있습니다.", reply_markup=self._menu_keyboard())
             self.state["last_menu_bootstrap_version"] = MENU_BOOTSTRAP_VERSION
             self._save_state()
             print(f"startup menu pushed: chat_id={chat_id}")
         except Exception as exc:
             print(f"startup menu push error: {type(exc).__name__}: {exc}")
 
-    def _auto_collect_if_due(self) -> None:
-        if not _env_bool("TELEGRAM_AUTO_COLLECT_ENABLED", True):
-            return
-        now = time.time()
-        next_check = float(self.state.get("next_auto_collect_check_at") or 0.0)
-        if now < next_check:
-            return
-        interval_sec = _env_int("TELEGRAM_AUTO_COLLECT_INTERVAL_MINUTES", 360, minimum=5) * 60
-        self.state["next_auto_collect_check_at"] = now + interval_sec
-        self._save_state()
-
-        try:
-            payload = analyze_current_charts(force_refresh=True)
-            close_date = self._latest_close_date(payload)
-            if close_date and self.state.get("last_auto_chart_close_date") != close_date:
-                record_info = record_recommendation_run("c", payload, trigger="auto")
-                eval_payload = evaluate_shadow_journal()
-                self.state["last_auto_chart_close_date"] = close_date
-                self.state["last_auto_collect_at"] = datetime.now().isoformat()
-                self.state["last_auto_collect_record"] = record_info
-                self._save_state()
-                print(f"auto chart collection recorded: close_date={close_date} {record_info}")
-
-                chat_id = self.state.get("last_chat_id")
-                if chat_id and _env_bool("TELEGRAM_AUTO_NOTIFY_ENABLED", True):
-                    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-                    eval_summary = eval_payload.get("summary") if isinstance(eval_payload.get("summary"), dict) else {}
-                    text = "\n".join(
-                        [
-                            "<b>자동 차트 수집 완료</b>",
-                            f"기준가 {close_date} | 스캔 {payload.get('universeScannedCount', '-')}",
-                            f"조건통과 {summary.get('actionableCount', 0)} | 후보 {summary.get('buyableCount', 0)} | 대기 {summary.get('waitPullbackCount', 0)}",
-                            f"Journal 기록 {eval_summary.get('recommendationCount', 0)} | 체결률 {eval_summary.get('fillRatePct', 0):.2f}%",
-                            "",
-                            "자세히 보려면 `기록 평가`를 누르세요.",
-                        ]
-                    )
-                    self.send_message(int(chat_id), text, reply_markup=self._main_reply_keyboard())
-            else:
-                evaluate_shadow_journal()
-                print(f"auto journal evaluation refreshed: close_date={close_date or '-'}")
-        except Exception as exc:
-            print(f"auto collect error: {type(exc).__name__}: {exc}")
-
     def _handle_callback(self, callback_query: dict[str, Any]) -> None:
         callback_id = _s(callback_query.get("id"))
-        data = _s(callback_query.get("data"))
         message = callback_query.get("message") if isinstance(callback_query.get("message"), dict) else {}
         chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
         chat_id = chat.get("id")
-        message_id = int(message.get("message_id") or 0)
-        if not callback_id or not chat_id or not message_id:
+        if not callback_id or not chat_id:
             return
-
-        if data == "menu:help":
-            self.answer_callback(callback_id)
-            self._track_chat(int(chat_id))
-            self.edit_message(int(chat_id), message_id, self._help_text(), reply_markup=self._menu_keyboard())
-            self.send_message(int(chat_id), "하단 고정 키보드도 사용할 수 있습니다.", reply_markup=self._main_reply_keyboard())
-            return
-
-        if data == "journal":
-            self.answer_callback(callback_id)
-            self._track_chat(int(chat_id))
-            payload = evaluate_shadow_journal()
-            self.edit_message(int(chat_id), message_id, render_journal_html(payload), reply_markup=self._menu_keyboard())
-            self.send_message(int(chat_id), "하단 고정 키보드가 활성화되어 있습니다.", reply_markup=self._main_reply_keyboard())
-            return
-
-        if data.startswith("run:"):
-            mode = data.split(":", 1)[1] or "q"
-            self.answer_callback(callback_id, "분석 시작")
-            self._track_chat(int(chat_id))
-            self.edit_message(int(chat_id), message_id, self._wait_text(mode, False), reply_markup=self._result_keyboard(mode))
-            self._submit_analysis(int(chat_id), message_id, mode, False, trigger="button", edit_message_id=message_id)
-            return
-
-        if data.startswith("refresh:"):
-            mode = data.split(":", 1)[1] or "q"
-            self.answer_callback(callback_id, "새로 계산")
-            self._track_chat(int(chat_id))
-            self.edit_message(int(chat_id), message_id, self._wait_text(mode, True), reply_markup=self._result_keyboard(mode))
-            self._submit_analysis(int(chat_id), message_id, mode, True, trigger="refresh", edit_message_id=message_id)
-            return
-
-        if data.startswith("view:"):
-            _, mode, view = (data.split(":", 2) + ["summary", "summary"])[:3]
-            self.answer_callback(callback_id)
-            self._track_chat(int(chat_id))
-            payload = self._run_analysis_payload(mode, False)
-            self.edit_message(int(chat_id), message_id, self._render_payload(mode, payload, view=view), reply_markup=self._result_keyboard(mode))
-            return
+        self.answer_callback(callback_id, "하단 메뉴를 사용해주세요.")
+        self._track_chat(int(chat_id))
+        self.send_message(
+            int(chat_id),
+            "이전 메시지 버튼은 더 이상 사용하지 않습니다. 하단 고정 키보드로 실행해주세요.",
+            reply_markup=self._main_reply_keyboard(),
+        )
 
     def handle_update(self, update: dict[str, Any]) -> None:
         callback_query = update.get("callback_query")
@@ -586,7 +450,6 @@ class LocalTelegramBot:
 
         if text.startswith("/start") or text.startswith("/menu"):
             self.send_message(int(chat_id), self._menu_text(), reply_to_message_id=message_id, reply_markup=self._main_reply_keyboard())
-            self.send_message(int(chat_id), "상세 화면 전환은 아래 inline 버튼도 사용할 수 있습니다.", reply_markup=self._menu_keyboard())
             return
 
         if self._is_help_request(text):
@@ -595,6 +458,15 @@ class LocalTelegramBot:
 
         if self._is_journal_request(text):
             self._reply_with_journal(int(chat_id), message_id)
+            return
+
+        if self._is_removed_chart_request(text):
+            self.send_message(
+                int(chat_id),
+                "차트 단독 분석 경로는 제거했습니다. `뉴스+차트 분석` 또는 /trade를 사용해주세요.",
+                reply_to_message_id=message_id,
+                reply_markup=self._main_reply_keyboard(),
+            )
             return
 
         if self._should_run_trade_analysis(text):
@@ -614,7 +486,6 @@ class LocalTelegramBot:
         print("Local Telegram bot polling started.")
         while True:
             try:
-                self._auto_collect_if_due()
                 updates = self.get_updates()
                 for update in updates:
                     update_id = int(update.get("update_id") or 0)

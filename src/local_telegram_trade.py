@@ -2,41 +2,25 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from html import escape
-from io import StringIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
-
-import pandas as pd
-import requests
 
 from ai.analyzer import ai
-from core.indicators import calculate_indicators
-from core.news_collectors import build_next_known_events, fetch_rss_events, fetch_sec_submission_events
-from core.stock_data import (
-    get_fear_greed_index,
-    get_market_condition,
-    get_realtime_stock_snapshots,
-    get_stock_data,
-    get_stock_info,
-)
+from core.data_collector import DataCollector
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_ROOT = ROOT / "outputs" / "telegram"
 CACHE_PATH = OUTPUT_ROOT / "universe_trade_analysis.json"
 CHART_CACHE_PATH = OUTPUT_ROOT / "current_chart_analysis_full.json"
-CHART_SCHEMA_VERSION = "raw-evidence-v3"
-TRADE_CACHE_SCHEMA_VERSION = "raw-evidence-v4"
+CHART_SCHEMA_VERSION = "chart-structure-v4"
+TRADE_CACHE_SCHEMA_VERSION = "ai-evidence-v7"
 REBALANCE_ROOT = ROOT / "data" / "rebalance"
-ALL_STOCKS_CACHE_PATH = ROOT / "data" / "all_stocks_cache.json"
-SP500_CACHE_PATH = ROOT / "data" / "sp500_cache.json"
-NASDAQ100_CACHE_PATH = ROOT / "data" / "nasdaq100_cache.json"
+_DATA_COLLECTOR = DataCollector(root=ROOT)
 
 
 def _s(value: Any) -> str:
@@ -104,7 +88,15 @@ def _event_cache_minutes() -> int:
 
 def _analysis_limit() -> int:
     try:
-        return max(10, int(os.getenv("TELEGRAM_NEWS_ANALYSIS_MAX_SYMBOLS", os.getenv("TELEGRAM_ANALYSIS_MAX_SYMBOLS", "120"))))
+        return max(
+            10,
+            int(
+                os.getenv(
+                    "TELEGRAM_RESEARCH_ANALYSIS_MAX_SYMBOLS",
+                    os.getenv("TELEGRAM_NEWS_ANALYSIS_MAX_SYMBOLS", os.getenv("TELEGRAM_ANALYSIS_MAX_SYMBOLS", "120")),
+                )
+            ),
+        )
     except Exception:
         return 120
 
@@ -113,25 +105,11 @@ def full_news_analysis_limit() -> int:
     return max(_analysis_limit(), len(_load_all_us_symbols()))
 
 
-def _scan_workers() -> int:
+def _final_synthesis_max_symbols() -> int:
     try:
-        return max(4, int(os.getenv("TELEGRAM_SCAN_WORKERS", "12")))
+        return max(10, int(os.getenv("TELEGRAM_FINAL_SYNTHESIS_MAX_SYMBOLS", "240")))
     except Exception:
-        return 12
-
-
-def _news_workers() -> int:
-    try:
-        return max(2, int(os.getenv("TELEGRAM_NEWS_WORKERS", "8")))
-    except Exception:
-        return 8
-
-
-def _fundamental_workers() -> int:
-    try:
-        return max(4, int(os.getenv("TELEGRAM_FUNDAMENTAL_WORKERS", "12")))
-    except Exception:
-        return 12
+        return 240
 
 
 def _codex_batch_size() -> int:
@@ -141,225 +119,35 @@ def _codex_batch_size() -> int:
         return 12
 
 
-def _generic_news_urls(symbol: str, company_name: str) -> list[str]:
-    company = re.sub(r"\s+", " ", company_name or symbol).strip()
-    base = f'"{symbol}" OR "{company}"'
-    queries = [
-        f"{base} earnings OR guidance OR outlook OR contract OR partnership when:21d",
-        f"{base} Reuters OR \"Business Wire\" OR \"PR Newswire\" OR investor relations OR analyst upgrade OR downgrade OR price target when:21d",
-    ]
-    return [
-        f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=en-US&gl=US&ceid=US:en"
-        for query in queries
-    ]
-
-
-def _dedupe_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str, str]] = set()
-    out: list[dict[str, Any]] = []
-    for row in events:
-        if not isinstance(row, dict):
-            continue
-        key = (
-            _s(row.get("symbol")).upper(),
-            _s(row.get("headline")).lower(),
-            _s(row.get("published_at")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(row)
-    out.sort(key=lambda item: _s(item.get("published_at")), reverse=True)
-    return out
-
-
-def _load_symbol_list(path: Path) -> list[str]:
-    if not path.exists():
-        return []
+def _codex_news_batch_workers() -> int:
     try:
-        payload = _load_json(path)
+        return max(1, min(8, int(os.getenv("TELEGRAM_CODEX_NEWS_BATCH_WORKERS", "2"))))
     except Exception:
-        return []
-    rows = payload.get("symbols") if isinstance(payload, dict) else []
-    if not isinstance(rows, list):
-        return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for row in rows:
-        symbol = _s(row).upper().replace(".", "-")
-        if not symbol or symbol in seen:
-            continue
-        seen.add(symbol)
-        out.append(symbol)
-    return out
+        return 2
 
 
-def _fetch_table_symbols(url: str, columns: list[str]) -> list[str]:
+def _env_float(key: str, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
     try:
-        response = requests.get(url, headers={"User-Agent": "autostock/2.0"}, timeout=20)
-        response.raise_for_status()
-        tables = pd.read_html(StringIO(response.text))
+        value = float(os.getenv(key, str(default)))
     except Exception:
-        return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for table in tables:
-        for col in columns:
-            if col not in table.columns:
-                continue
-            for raw in table[col].tolist():
-                symbol = _s(raw).upper().replace(".", "-")
-                if not symbol or symbol in seen:
-                    continue
-                seen.add(symbol)
-                out.append(symbol)
-            if out:
-                return out
-    return out
+        value = float(default)
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
 
 
 def _load_all_us_symbols() -> list[str]:
-    cached = _load_symbol_list(ALL_STOCKS_CACHE_PATH)
-    if cached:
-        return cached
-    sp500 = _load_symbol_list(SP500_CACHE_PATH) or _fetch_table_symbols(
-        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-        ["Symbol", "Ticker", "Ticker symbol"],
-    )
-    nasdaq100 = _load_symbol_list(NASDAQ100_CACHE_PATH) or _fetch_table_symbols(
-        "https://en.wikipedia.org/wiki/Nasdaq-100",
-        ["Ticker", "Ticker symbol", "Symbol"],
-    )
-    return sorted(set(sp500 + nasdaq100))
-
-
-def _daily_price_context(bars: pd.DataFrame, indicators: dict[str, Any]) -> dict[str, Any]:
-    if bars is None or bars.empty:
-        return {}
-    last = bars.iloc[-1]
-    prev = bars.iloc[-2] if len(bars) >= 2 else last
-    close = _f(last.get("Close"), _f(indicators.get("price"), 0.0))
-    prev_close = _f(prev.get("Close"), close)
-    open_price = _f(last.get("Open"), close)
-    high = _f(last.get("High"), close)
-    low = _f(last.get("Low"), close)
-    volume_avg_20 = 0.0
-    if "Volume" in bars:
-        history_volume = bars["Volume"].iloc[:-1].tail(20) if len(bars) > 1 else bars["Volume"].tail(20)
-        volume_avg_20 = _f(history_volume.mean(), 0.0)
-        if volume_avg_20 != volume_avg_20:
-            volume_avg_20 = 0.0
-    atr = _f(indicators.get("atr"), 0.0)
-    atr_pct = _f(indicators.get("atr_pct"), 0.0)
-    if atr_pct <= 0 and close > 0 and atr > 0:
-        atr_pct = atr / close * 100.0
-    day_return_pct = _pct_change(close, prev_close)
-    gap_pct = _pct_change(open_price, prev_close)
-    intraday_return_pct = _pct_change(close, open_price)
-    day_range_pct = _pct_change(high, low)
-    close_location = 50.0
-    if high > low:
-        close_location = max(0.0, min(100.0, (close - low) / (high - low) * 100.0))
-    move_atr = 0.0
-    if atr_pct > 0 and day_return_pct is not None:
-        move_atr = day_return_pct / atr_pct
-    gap_atr = 0.0
-    if atr_pct > 0 and gap_pct is not None:
-        gap_atr = gap_pct / atr_pct
-    return {
-        "previousClosePrice": round(prev_close, 2),
-        "latestOpenPrice": round(open_price, 2),
-        "latestHighPrice": round(high, 2),
-        "latestLowPrice": round(low, 2),
-        "dayReturnPct": round(day_return_pct or 0.0, 2),
-        "gapPct": round(gap_pct or 0.0, 2),
-        "intradayReturnPct": round(intraday_return_pct or 0.0, 2),
-        "dayRangePct": round(day_range_pct or 0.0, 2),
-        "closeLocationPct": round(close_location, 1),
-        "eventMoveAtr": round(move_atr, 2),
-        "gapAtr": round(gap_atr, 2),
-        "atrPct": round(atr_pct, 2),
-        "realtimeVolume": None,
-        "lastMinuteVolume": None,
-        "dailyVolumeAvg20": int(max(0.0, volume_avg_20)),
-        "volumeRatio": None,
-        "volumeSource": "massive_snapshot_missing",
-        "volumeAsOf": "",
-    }
-
-
-def _scan_symbol(symbol: str, rebalance_hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    bars = get_stock_data(symbol, period="15mo", auto_adjust=False)
-    if bars is None or bars.empty:
-        return None
-    indicators = calculate_indicators(bars)
-    if indicators is None:
-        return None
-    payload = {
-        "symbol": symbol,
-        "latestClosePrice": round(_f(indicators.get("price"), 0.0), 2),
-        "latestCloseAsOf": bars.tail(1).index[0].isoformat() if len(bars.index) else "",
-        "chartState": "reference_only",
-        "volumeRatio": None,
-        "volumeSource": "massive_snapshot_missing",
-        "rsi": round(_f(indicators.get("rsi"), 0.0), 1),
-        "adx": round(_f(indicators.get("adx"), 0.0), 1),
-        "atr": round(_f(indicators.get("atr"), 0.0), 2),
-        "atrPct": round(_f(indicators.get("atr_pct"), 0.0), 2),
-        "support": indicators.get("support") if isinstance(indicators.get("support"), list) else [],
-        "resistance": indicators.get("resistance") if isinstance(indicators.get("resistance"), list) else [],
-        "ma50Gap": round(_f(indicators.get("ma50_gap"), 0.0), 2),
-        "ma200Gap": round(_f(indicators.get("ma200_gap"), 0.0), 2),
-        "return21d": round(_f(indicators.get("return_21d"), 0.0), 2),
-        "return63d": round(_f(indicators.get("return_63d"), 0.0), 2),
-        "rebalanceHint": bool(rebalance_hint),
-    }
-    payload.update(_daily_price_context(bars, indicators))
-    return payload
+    return _DATA_COLLECTOR.load_all_us_symbols()
 
 
 def _apply_realtime_volume(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    symbols = [_s(row.get("symbol")).upper() for row in rows if _s(row.get("symbol"))]
-    snapshots = get_realtime_stock_snapshots(symbols)
-    for row in rows:
-        symbol = _s(row.get("symbol")).upper()
-        snapshot = snapshots.get(symbol)
-        if not snapshot:
-            row["volumeRatio"] = None
-            row["realtimeVolume"] = None
-            row["lastMinuteVolume"] = None
-            row["volumeSource"] = "massive_snapshot_missing"
-            row["volumeAsOf"] = ""
-            continue
-
-        realtime_volume = _f(snapshot.get("sessionVolume"), 0.0)
-        avg_volume = _f(row.get("dailyVolumeAvg20"), 0.0)
-        row["realtimeVolume"] = int(realtime_volume) if realtime_volume > 0 else None
-        row["lastMinuteVolume"] = int(_f(snapshot.get("lastMinuteVolume"), 0.0)) or None
-        row["volumeRatio"] = round(realtime_volume / avg_volume, 2) if realtime_volume > 0 and avg_volume > 0 else None
-        row["volumeSource"] = _s(snapshot.get("source")) or "massive_snapshot"
-        row["volumeAsOf"] = _s(snapshot.get("updatedAt"))
-        if _f(snapshot.get("closePrice"), 0.0) > 0:
-            row["realtimePrice"] = round(_f(snapshot.get("closePrice"), 0.0), 2)
-    return rows
+    return _DATA_COLLECTOR.apply_realtime_volume(rows)
 
 
 def _refresh_payload_realtime_volume(payload: dict[str, Any]) -> dict[str, Any]:
-    all_rows = payload.get("all") if isinstance(payload.get("all"), list) else []
-    rows = [row for row in all_rows if isinstance(row, dict)]
-    if not rows:
-        return payload
-
-    _apply_realtime_volume(rows)
-    by_symbol = {_s(row.get("symbol")).upper(): row for row in rows if _s(row.get("symbol"))}
-    for key in ("strictBuyable", "actionableNow", "priceReady", "buyable", "waitPullback", "avoid", "chartLeaders", "overextended"):
-        bucket = payload.get(key)
-        if not isinstance(bucket, list):
-            continue
-        for row in bucket:
-            if isinstance(row, dict):
-                row.update(by_symbol.get(_s(row.get("symbol")).upper(), {}))
-    return payload
+    return _DATA_COLLECTOR.refresh_payload_realtime_volume(payload)
 
 
 def _scan_full_universe(rebalance_hints: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -367,81 +155,14 @@ def _scan_full_universe(rebalance_hints: dict[str, dict[str, Any]]) -> list[dict
 
 
 def _scan_symbols(symbols: list[str], rebalance_hints: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    workers = _scan_workers()
-    scanned: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_scan_symbol, symbol, rebalance_hints.get(symbol)): symbol
-            for symbol in symbols
-        }
-        for future in as_completed(futures):
-            row = future.result()
-            if row:
-                scanned.append(row)
-    _apply_realtime_volume(scanned)
-    scanned.sort(
-        key=lambda row: (
-            -_f(row.get("return63d"), 0.0),
-            -_f(row.get("return21d"), 0.0),
-            _s(row.get("symbol")),
-        )
-    )
-    return scanned
-
-
-def _collect_symbol_news_bundle(
-    symbol: str,
-    chart_row: dict[str, Any] | None = None,
-    session: requests.Session | None = None,
-) -> dict[str, Any]:
-    info = get_stock_info(symbol)
-    next_events = build_next_known_events(symbol, info, datetime.now(timezone.utc))
-    raw_events: list[dict[str, Any]] = []
-    sess = session or requests.Session()
-    try:
-        raw_events.extend(fetch_sec_submission_events(symbol, limit=8, max_age_days=21, session=sess))
-    except Exception:
-        pass
-    try:
-        raw_events.extend(
-            fetch_rss_events(
-                _generic_news_urls(symbol, _s(info.get("name") or symbol)),
-                symbol=symbol,
-                max_per_feed=5,
-                source_name="wire",
-                category_hint="product",
-                session=sess,
-            )
-        )
-    except Exception:
-        pass
-    return {
-        "symbol": symbol,
-        "info": info,
-        "nextEvents": next_events,
-        "events": _dedupe_events(raw_events)[:10],
-        "chartRow": chart_row or {"symbol": symbol},
-    }
+    return _DATA_COLLECTOR.scan_price_rows(symbols, rebalance_hints)
 
 
 def _collect_news_bundles(
     news_symbols: list[str],
     chart_rows_by_symbol: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    bundles: dict[str, dict[str, Any]] = {}
-    workers = _news_workers()
-    chart_rows_by_symbol = chart_rows_by_symbol or {}
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_collect_symbol_news_bundle, symbol, chart_rows_by_symbol.get(symbol)): symbol
-            for symbol in news_symbols
-        }
-        for future in as_completed(futures):
-            bundle = future.result()
-            symbol = _s(bundle.get("symbol")).upper()
-            if symbol:
-                bundles[symbol] = bundle
-    return bundles
+    return _DATA_COLLECTOR.collect_news_bundles(news_symbols, chart_rows_by_symbol)
 
 
 def _bundle_has_news(bundle: dict[str, Any]) -> bool:
@@ -450,81 +171,8 @@ def _bundle_has_news(bundle: dict[str, Any]) -> bool:
     return bool(events or next_events)
 
 
-def _ratio_pct(value: Any) -> float:
-    raw = _f(value, 0.0)
-    if -1.0 <= raw <= 1.0:
-        return round(raw * 100.0, 2)
-    return round(raw, 2)
-
-
-def _positive(value: Any) -> float | None:
-    raw = _f(value, 0.0)
-    return raw if raw > 0 else None
-
-
-def _fundamental_snapshot(symbol: str) -> dict[str, Any] | None:
-    info = get_stock_info(symbol)
-    if not isinstance(info, dict):
-        return None
-    price = _f(info.get("price"), 0.0)
-    market_cap = _f(info.get("market_cap"), 0.0)
-    if price <= 0 or market_cap <= 0:
-        return None
-
-    currency = _s(info.get("currency")).upper()
-    financial_currency = _s(info.get("financial_currency")).upper()
-    currency_mismatch = bool(currency and financial_currency and currency != financial_currency)
-    free_cash_flow = _f(info.get("free_cash_flow"), 0.0)
-    pe = _positive(info.get("pe"))
-    forward_pe = _positive(info.get("forward_pe"))
-    pb = _positive(info.get("pb"))
-    p_fcf = market_cap / free_cash_flow if free_cash_flow > 0 and not currency_mismatch else None
-    fcf_yield = free_cash_flow / market_cap * 100.0 if free_cash_flow > 0 and not currency_mismatch else None
-    earnings_yield = 100.0 / pe if pe and pe > 0 else None
-    return {
-        "symbol": symbol,
-        "name": _s(info.get("name") or symbol),
-        "sector": _s(info.get("sector") or "N/A"),
-        "industry": _s(info.get("industry") or "N/A"),
-        "currency": currency,
-        "financialCurrency": financial_currency,
-        "financialCurrencyMismatch": currency_mismatch,
-        "latestClosePrice": round(price, 2),
-        "marketCap": round(market_cap, 2),
-        "pe": round(pe, 2) if pe else None,
-        "forwardPe": round(forward_pe, 2) if forward_pe else None,
-        "pb": round(pb, 2) if pb else None,
-        "peg": round(_f(info.get("peg"), 0.0), 2) if _f(info.get("peg"), 0.0) > 0 else None,
-        "freeCashFlow": round(free_cash_flow, 2),
-        "pFcf": round(p_fcf, 2) if p_fcf else None,
-        "fcfYieldPct": round(fcf_yield, 2) if fcf_yield else None,
-        "earningsYieldPct": round(earnings_yield, 2) if earnings_yield else None,
-        "roePct": _ratio_pct(info.get("roe")),
-        "roaPct": _ratio_pct(info.get("roa")),
-        "profitMarginPct": _ratio_pct(info.get("profit_margin")),
-        "operatingMarginPct": _ratio_pct(info.get("operating_margin")),
-        "revenueGrowthPct": _ratio_pct(info.get("revenue_growth")),
-        "earningsGrowthPct": _ratio_pct(info.get("earnings_growth")),
-        "forwardEpsGrowthPct": round(_f(info.get("forward_eps_growth_pct"), 0.0), 2),
-        "debtToEquity": round(_f(info.get("debt_to_equity"), 0.0), 2),
-        "currentRatio": round(_f(info.get("current_ratio"), 0.0), 2),
-        "dividendYieldPct": _ratio_pct(info.get("dividend_yield")),
-        "targetPrice": round(_f(info.get("target_price"), 0.0), 2),
-        "targetUpsidePct": round(_f(info.get("target_upside_pct"), 0.0), 2),
-        "analystCount": int(_f(info.get("analyst_count"), 0.0)),
-        "recommendation": _s(info.get("recommendation")),
-    }
-
-
 def _scan_fundamentals(symbols: list[str]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=_fundamental_workers()) as executor:
-        futures = {executor.submit(_fundamental_snapshot, symbol): symbol for symbol in symbols}
-        for future in as_completed(futures):
-            row = future.result()
-            if row:
-                rows.append(row)
-    return rows
+    return _DATA_COLLECTOR.scan_fundamentals(symbols)
 
 
 def _valuation_assessment(row: dict[str, Any]) -> dict[str, Any]:
@@ -555,40 +203,288 @@ def _valuation_assessment(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _value_decision(
+def _reference_decision(
     row: dict[str, Any],
     news: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     assessment = _valuation_assessment(row)
     news_signal = _s((news or {}).get("signal")).lower()
     news_strength = _s((news or {}).get("strength")).lower()
-    state = "REVIEW"
-    bucket = "wait_pullback"
     if news_signal:
-        reason = f"Codex 뉴스 요약 {news_signal}/{news_strength or 'none'}; 자동 점수 판정 없이 수동 검토"
+        reason = f"Codex 뉴스 요약 {news_signal}/{news_strength or 'none'}; 최종 판단 대기"
     else:
-        reason = "정량 지표는 참고 데이터만 제공; 자동 점수 판정 없이 수동 검토"
+        reason = "뉴스/SEC 촉매 없음; 최종 판단 대기"
 
     reasons = [
         *[str(item) for item in assessment.get("valuationReasons") or []],
+        f"RR {_f(row.get('rrToTp1')):.2f}, TP1 여력 {_f(row.get('rewardToTp1Pct')):.2f}%, 손절 리스크 {_f(row.get('riskToStopPct')):.2f}%",
+        f"RS63 {_f(row.get('relativeStrength63dPct')):.2f}% vs {row.get('benchmarkSymbol') or 'benchmark'}, RSI {_f(row.get('rsi')):.1f}",
     ]
+    chart_structure = row.get("chartStructure") if isinstance(row.get("chartStructure"), dict) else {}
+    if chart_structure:
+        reasons.append(f"차트 구조 {chart_structure.get('state') or row.get('chartState')}")
     if news_signal:
         reasons.append(f"뉴스 {news_signal}/{news_strength}: {_s((news or {}).get('headline'))}")
     return {
         **assessment,
-        "decisionState": state,
-        "actionBucket": bucket,
+        "decisionState": "REFERENCE_ONLY",
+        "actionBucket": "reference_only",
         "actionReason": reason,
         "portfolioWeightPct": 0.0,
         "decisionReasons": [item for item in reasons if item][:8],
     }
 
 
-def _value_rank_key(row: dict[str, Any]) -> tuple[int, float, str]:
+def _value_rank_key(row: dict[str, Any]) -> tuple[int, float, float, str]:
+    bucket_rank = {
+        "actionable_now": 0,
+        "wait_pullback": 1,
+        "avoid": 2,
+        "reference_only": 3,
+    }.get(_s(row.get("actionBucket")), 9)
     return (
-        0 if bool(row.get("rebalanceSelected")) else 1,
+        bucket_rank,
+        -_f(row.get("portfolioWeightPct"), 0.0),
         -_f(row.get("marketCap"), 0.0),
         _s(row.get("symbol")),
+    )
+
+
+def _compact_dict(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if value not in (None, "", [], {})}
+
+
+def _data_quality_flags(row: dict[str, Any]) -> list[str]:
+    flags = row.get("dataQualityFlags") if isinstance(row.get("dataQualityFlags"), list) else []
+    quality = row.get("priceDataQuality") if isinstance(row.get("priceDataQuality"), dict) else {}
+    quality_flags = quality.get("flags") if isinstance(quality.get("flags"), list) else []
+    return sorted({str(item) for item in [*flags, *quality_flags] if _s(item)})
+
+
+def _compact_price_quality(row: dict[str, Any]) -> dict[str, Any]:
+    quality = row.get("priceDataQuality") if isinstance(row.get("priceDataQuality"), dict) else {}
+    checks = quality.get("checks") if isinstance(quality.get("checks"), list) else []
+    return _compact_dict(
+        {
+            "status": quality.get("status"),
+            "primarySource": quality.get("primarySource"),
+            "secondarySource": quality.get("secondarySource"),
+            "flags": _data_quality_flags(row)[:8],
+            "note": quality.get("note"),
+            "checks": [
+                _compact_dict(
+                    {
+                        "field": check.get("field"),
+                        "primaryValue": check.get("primaryValue"),
+                        "secondaryValue": check.get("secondaryValue"),
+                        "diffPct": check.get("diffPct"),
+                        "status": check.get("status"),
+                    }
+                )
+                for check in checks[:8]
+                if isinstance(check, dict)
+            ],
+        }
+    )
+
+
+def _compact_fundamental_item(row: dict[str, Any]) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "symbol": _s(row.get("symbol")).upper(),
+            "name": _s(row.get("name")),
+            "sector": _s(row.get("sector")),
+            "industry": _s(row.get("industry")),
+            "marketCap": row.get("marketCap"),
+            "latestClosePrice": row.get("latestClosePrice"),
+            "pFcf": row.get("pFcf"),
+            "fcfYieldPct": row.get("fcfYieldPct"),
+            "pe": row.get("pe"),
+            "forwardPe": row.get("forwardPe"),
+            "pb": row.get("pb"),
+            "peg": row.get("peg"),
+            "roePct": row.get("roePct"),
+            "profitMarginPct": row.get("profitMarginPct"),
+            "operatingMarginPct": row.get("operatingMarginPct"),
+            "revenueGrowthPct": row.get("revenueGrowthPct"),
+            "earningsGrowthPct": row.get("earningsGrowthPct"),
+            "forwardEpsGrowthPct": row.get("forwardEpsGrowthPct"),
+            "debtToEquity": row.get("debtToEquity"),
+            "currentRatio": row.get("currentRatio"),
+            "targetUpsidePct": row.get("targetUpsidePct"),
+            "analystCount": row.get("analystCount"),
+            "recommendation": _s(row.get("recommendation")),
+        }
+    )
+
+
+def _compact_market_context(market_bundle: dict[str, Any]) -> dict[str, Any]:
+    market_condition = market_bundle.get("marketCondition") if isinstance(market_bundle.get("marketCondition"), dict) else {}
+    fear_greed = market_bundle.get("fearGreed") if isinstance(market_bundle.get("fearGreed"), dict) else {}
+    macro = market_bundle.get("macro") if isinstance(market_bundle.get("macro"), dict) else {}
+    options_market = market_bundle.get("optionsMarket") if isinstance(market_bundle.get("optionsMarket"), dict) else {}
+    market_regime = market_bundle.get("marketRegime") if isinstance(market_bundle.get("marketRegime"), dict) else {}
+    series = macro.get("series") if isinstance(macro.get("series"), dict) else {}
+    ratios = options_market.get("ratios") if isinstance(options_market.get("ratios"), dict) else {}
+    benchmarks = market_regime.get("benchmarks") if isinstance(market_regime.get("benchmarks"), dict) else {}
+    compact_benchmarks = {
+        symbol: _compact_dict(
+            {
+                "latestClosePrice": row.get("latestClosePrice"),
+                "dayReturnPct": row.get("dayReturnPct"),
+                "return5dPct": row.get("return5dPct"),
+                "return21dPct": row.get("return21dPct"),
+                "return63dPct": row.get("return63dPct"),
+                "ma50GapPct": row.get("ma50GapPct"),
+                "ma200GapPct": row.get("ma200GapPct"),
+                "structureState": row.get("structureState"),
+                "nearestSupportZone": row.get("nearestSupportZone"),
+                "breakdowns": row.get("breakdowns")[:3] if isinstance(row.get("breakdowns"), list) else [],
+            }
+        )
+        for symbol, row in benchmarks.items()
+        if isinstance(row, dict)
+    }
+    return _compact_dict(
+        {
+            "marketCondition": _compact_dict(
+                {
+                    "message": market_condition.get("message"),
+                    "score": market_condition.get("score"),
+                    "state": market_condition.get("state"),
+                }
+            ),
+            "fearGreed": _compact_dict(
+                {
+                    "score": fear_greed.get("score"),
+                    "rating": fear_greed.get("rating"),
+                }
+            ),
+            "macro": {
+                key: _compact_dict(
+                    {
+                        "date": value.get("date"),
+                        "value": value.get("value"),
+                        "change": value.get("change"),
+                    }
+                )
+                for key, value in series.items()
+                if isinstance(value, dict)
+            },
+            "options": _compact_dict(
+                {
+                    "asOf": options_market.get("asOf"),
+                    "totalPutCallRatio": ratios.get("total_put_call_ratio"),
+                    "equityPutCallRatio": ratios.get("equity_put_call_ratio"),
+                    "indexPutCallRatio": ratios.get("index_put_call_ratio"),
+                }
+            ),
+            "marketRegime": _compact_dict(
+                {
+                    "label": market_regime.get("regimeLabel"),
+                    "primaryBenchmark": market_regime.get("primaryBenchmark"),
+                    "benchmarks": compact_benchmarks,
+                    "evidence": market_regime.get("evidence"),
+                }
+            ),
+        }
+    )
+
+
+def _compact_chart_structure(row: dict[str, Any]) -> dict[str, Any]:
+    structure = row.get("chartStructure") if isinstance(row.get("chartStructure"), dict) else {}
+    moving_averages = structure.get("movingAverages") if isinstance(structure.get("movingAverages"), dict) else {}
+    swing_structure = structure.get("swingStructure") if isinstance(structure.get("swingStructure"), dict) else {}
+    return _compact_dict(
+        {
+            "state": structure.get("state") or row.get("chartState"),
+            "movingAverageStack": moving_averages.get("stack"),
+            "ma20GapPct": moving_averages.get("ma20GapPct") or row.get("ma20Gap"),
+            "ma50GapPct": moving_averages.get("ma50GapPct") or row.get("ma50Gap"),
+            "ma200GapPct": moving_averages.get("ma200GapPct") or row.get("ma200Gap"),
+            "swingPhase": swing_structure.get("phase"),
+            "highPattern": swing_structure.get("highPattern"),
+            "lowPattern": swing_structure.get("lowPattern"),
+            "nearestSupportZone": structure.get("nearestSupportZone") or row.get("nearestSupportZone"),
+            "nearestResistanceZone": structure.get("nearestResistanceZone") or row.get("nearestResistanceZone"),
+            "breakdowns": structure.get("breakdowns")[:4] if isinstance(structure.get("breakdowns"), list) else [],
+            "retests": structure.get("retests")[:3] if isinstance(structure.get("retests"), list) else [],
+            "riskMap": structure.get("riskMap") if isinstance(structure.get("riskMap"), dict) else {},
+        }
+    )
+
+
+def _compact_evidence_item(row: dict[str, Any]) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "symbol": _s(row.get("symbol")).upper(),
+            "name": _s(row.get("name")),
+            "sector": _s(row.get("sector")),
+            "industry": _s(row.get("industry")),
+            "rebalanceSelected": bool(row.get("rebalanceSelected")),
+            "existingPortfolioWeightPct": row.get("existingPortfolioWeightPct"),
+            "marketCap": row.get("marketCap"),
+            "latestClosePrice": row.get("latestClosePrice"),
+            "latestCloseAsOf": _s(row.get("latestCloseAsOf")),
+            "pFcf": row.get("pFcf"),
+            "fcfYieldPct": row.get("fcfYieldPct"),
+            "pe": row.get("pe"),
+            "forwardPe": row.get("forwardPe"),
+            "pb": row.get("pb"),
+            "peg": row.get("peg"),
+            "roePct": row.get("roePct"),
+            "profitMarginPct": row.get("profitMarginPct"),
+            "operatingMarginPct": row.get("operatingMarginPct"),
+            "revenueGrowthPct": row.get("revenueGrowthPct"),
+            "earningsGrowthPct": row.get("earningsGrowthPct"),
+            "forwardEpsGrowthPct": row.get("forwardEpsGrowthPct"),
+            "debtToEquity": row.get("debtToEquity"),
+            "currentRatio": row.get("currentRatio"),
+            "targetUpsidePct": row.get("targetUpsidePct"),
+            "analystCount": row.get("analystCount"),
+            "recommendation": _s(row.get("recommendation")),
+            "return21d": row.get("return21d"),
+            "return63d": row.get("return63d"),
+            "relativeStrength21dPct": row.get("relativeStrength21dPct"),
+            "relativeStrength63dPct": row.get("relativeStrength63dPct"),
+            "benchmarkSymbol": _s(row.get("benchmarkSymbol")),
+            "dayReturnPct": row.get("dayReturnPct"),
+            "gapPct": row.get("gapPct"),
+            "intradayReturnPct": row.get("intradayReturnPct"),
+            "dayRangePct": row.get("dayRangePct"),
+            "closeLocationPct": row.get("closeLocationPct"),
+            "ma20Gap": row.get("ma20Gap"),
+            "ma50Gap": row.get("ma50Gap"),
+            "ma200Gap": row.get("ma200Gap"),
+            "rsi": row.get("rsi"),
+            "adx": row.get("adx"),
+            "volumeRatio": row.get("volumeRatio"),
+            "latestDailyVolume": row.get("latestDailyVolume"),
+            "realtimeVolume": row.get("realtimeVolume"),
+            "dollarVolumeAvg20": row.get("dollarVolumeAvg20"),
+            "dollarVolumeRealtime": row.get("dollarVolumeRealtime"),
+            "priceDataQuality": _compact_price_quality(row),
+            "averageEntryPrice": row.get("averageEntryPrice"),
+            "closeStopPrice": row.get("closeStopPrice"),
+            "tp1Price": row.get("tp1Price"),
+            "tp2Price": row.get("tp2Price"),
+            "stopBasis": row.get("stopBasis"),
+            "targetBasis": row.get("targetBasis"),
+            "riskToStopPct": row.get("riskToStopPct"),
+            "rewardToTp1Pct": row.get("rewardToTp1Pct"),
+            "rrToTp1": row.get("rrToTp1"),
+            "tradeVerdict": _s(row.get("tradeVerdict")),
+            "tradeReason": _s(row.get("tradeReason")),
+            "newsSignal": _s(row.get("newsSignal")),
+            "newsStrength": _s(row.get("newsStrength")),
+            "newsHeadline": _s(row.get("newsHeadline")),
+            "newsReasons": row.get("newsReasons")[:3] if isinstance(row.get("newsReasons"), list) else [],
+            "eventHeadlines": row.get("eventHeadlines")[:3] if isinstance(row.get("eventHeadlines"), list) else [],
+            "nextEvents": row.get("nextEvents")[:2] if isinstance(row.get("nextEvents"), list) else [],
+            "shortVolumePct": row.get("shortVolumePct"),
+            "shortVolumeAsOf": _s(row.get("shortVolumeAsOf")),
+            "chartStructure": _compact_chart_structure(row),
+        }
     )
 
 
@@ -649,59 +545,648 @@ def _extract_batch_rows(text: str, expected_symbols: set[str] | None = None) -> 
     return None
 
 
+def _symbols_from_json_value(value: Any) -> list[str] | None:
+    raw_rows: Any = None
+    if isinstance(value, dict):
+        for key in ("symbols", "items", "selectedSymbols", "candidates", "data"):
+            if isinstance(value.get(key), list):
+                raw_rows = value.get(key)
+                break
+    elif isinstance(value, list):
+        raw_rows = value
+
+    if not isinstance(raw_rows, list):
+        return None
+
+    symbols: list[str] = []
+    for item in raw_rows:
+        symbol = _s(item.get("symbol") if isinstance(item, dict) else item).upper()
+        if symbol:
+            symbols.append(symbol)
+    return symbols if symbols else None
+
+
+def _extract_symbol_selection(text: str, expected_symbols: set[str]) -> list[str] | None:
+    value = ai._extract_json_value(text)
+    symbols = _symbols_from_json_value(value)
+    if symbols:
+        filtered = [symbol for symbol in symbols if symbol in expected_symbols]
+        if filtered:
+            return filtered
+
+    cleaned = ai._clean_json_text(text)
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(cleaned):
+        if ch not in "{[":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(cleaned[idx:])
+        except Exception:
+            continue
+        symbols = _symbols_from_json_value(candidate)
+        if symbols:
+            filtered = [symbol for symbol in symbols if symbol in expected_symbols]
+            if filtered:
+                return filtered
+    return None
+
+
+def _decision_rows_from_json_value(value: Any) -> list[dict[str, Any]] | None:
+    if isinstance(value, dict):
+        for key in ("items", "decisions", "results", "data"):
+            rows = value.get(key)
+            if isinstance(rows, list):
+                parsed = [row for row in rows if isinstance(row, dict)]
+                return parsed if parsed else []
+        if _s(value.get("symbol")) and (_s(value.get("actionBucket")) or _s(value.get("decisionState"))):
+            return [value]
+        mapped_rows: list[dict[str, Any]] = []
+        for symbol, row in value.items():
+            if not isinstance(row, dict):
+                continue
+            parsed = dict(row)
+            parsed.setdefault("symbol", symbol)
+            if _s(parsed.get("symbol")) and (_s(parsed.get("actionBucket")) or _s(parsed.get("decisionState"))):
+                mapped_rows.append(parsed)
+        return mapped_rows if mapped_rows else None
+
+    if isinstance(value, list):
+        rows = [row for row in value if isinstance(row, dict)]
+        return rows if rows else []
+    return None
+
+
+def _extract_trade_decisions(text: str, expected_symbols: set[str]) -> list[dict[str, Any]] | None:
+    value = ai._extract_json_value(text)
+    rows = _decision_rows_from_json_value(value)
+    if rows is not None:
+        return [row for row in rows if _s(row.get("symbol")).upper() in expected_symbols]
+
+    cleaned = ai._clean_json_text(text)
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(cleaned):
+        if ch not in "{[":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(cleaned[idx:])
+        except Exception:
+            continue
+        rows = _decision_rows_from_json_value(candidate)
+        if rows is not None:
+            return [row for row in rows if _s(row.get("symbol")).upper() in expected_symbols]
+    return None
+
+
+def _select_research_symbols(
+    fundamental_rows: list[dict[str, Any]],
+    *,
+    selected_symbols: set[str],
+    limit: int,
+    market_bundle: dict[str, Any],
+) -> dict[str, Any]:
+    if not fundamental_rows:
+        return {"symbols": []}
+    if not ai.has_api_access:
+        return {"error": "codex_symbol_selection_unavailable", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+
+    known_symbols = {_s(row.get("symbol")).upper() for row in fundamental_rows if _s(row.get("symbol"))}
+    items = [_compact_fundamental_item(row) for row in sorted(fundamental_rows, key=lambda item: _s(item.get("symbol")))]
+    prompt_items = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+    selected_items = sorted(symbol for symbol in selected_symbols if symbol in known_symbols)
+    market_context = json.dumps(_compact_market_context(market_bundle), ensure_ascii=False, separators=(",", ":"))
+    prompt = (
+        "You are selecting public equities for deeper trade/investment research.\n"
+        "Output STRICT JSON only.\n"
+        "Do not use fixed numeric thresholds, point scores, pass/fail gates, or forced sector quotas.\n"
+        "Treat numbers as context and compare candidates relative to the provided universe.\n"
+        "Do not favor mega-cap stocks just because they are large; prefer names where fundamentals, valuation, quality, growth, "
+        "balance-sheet risk, analyst context, and review value together justify deeper chart/news collection.\n"
+        "It is okay to return fewer symbols than the requested limit. Include currently held/rebalance-selected symbols only when "
+        "they still deserve review or need risk monitoring.\n\n"
+        f"Maximum symbols to select: {int(limit)}\n"
+        f"Current/rebalance symbols: {json.dumps(selected_items, ensure_ascii=False)}\n"
+        f"Market context JSON: {market_context}\n"
+        f"Universe fundamentals JSON: {prompt_items}\n\n"
+        'Return JSON only in this shape: {"symbols":["AAPL","MSFT"],"rationale":"one short Korean sentence"}'
+    )
+    text = ai._call(prompt, max_tokens=5000)
+    if not text:
+        return {"error": "codex_symbol_selection_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+    symbols = _extract_symbol_selection(text, known_symbols)
+    if symbols is None:
+        return {"error": "codex_symbol_selection_json_parse_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for symbol in [*selected_items, *symbols]:
+        if symbol not in known_symbols or symbol in seen:
+            continue
+        seen.add(symbol)
+        out.append(symbol)
+        if len(out) >= limit:
+            break
+    return {"symbols": out, "requestedLimit": limit, "selectedByCodexCount": len(symbols)}
+
+
+def _normalize_action_bucket(value: Any) -> str:
+    raw = _s(value).lower()
+    mapping = {
+        "actionable": "actionable_now",
+        "actionable_now": "actionable_now",
+        "buy": "actionable_now",
+        "buy_now": "actionable_now",
+        "immediate": "actionable_now",
+        "wait": "wait_pullback",
+        "wait_pullback": "wait_pullback",
+        "pullback": "wait_pullback",
+        "hold_for_pullback": "wait_pullback",
+        "reference": "reference_only",
+        "reference_only": "reference_only",
+        "watch": "reference_only",
+        "monitor": "reference_only",
+        "avoid": "avoid",
+        "exclude": "avoid",
+        "sell": "avoid",
+    }
+    if raw in mapping:
+        return mapping[raw]
+    if raw in {"actionable", "reference_only", "wait_pullback", "avoid"}:
+        return raw
+    return "reference_only"
+
+
+def _decision_state_for_bucket(bucket: str) -> str:
+    return {
+        "actionable_now": "ACTIONABLE",
+        "wait_pullback": "WAIT_PULLBACK",
+        "avoid": "AVOID",
+        "reference_only": "REFERENCE_ONLY",
+    }.get(bucket, "REFERENCE_ONLY")
+
+
+def _default_reason_for_bucket(bucket: str) -> str:
+    return {
+        "actionable_now": "Codex 최종 종합에서 현재 편입 후보로 판단",
+        "wait_pullback": "투자 근거는 있으나 현재 진입 구조는 대기",
+        "avoid": "Codex 최종 종합에서 현재 제외가 낫다고 판단",
+        "reference_only": "편입/제외 판단 근거가 충분하지 않아 참고 유지",
+    }.get(bucket, "편입/제외 판단 근거가 충분하지 않아 참고 유지")
+
+
+def _action_profile_flags(row: dict[str, Any]) -> list[str]:
+    flags: list[str] = []
+    for flag in _data_quality_flags(row):
+        flags.append(f"price_data:{flag}")
+    if row.get("relativeStrength63dPct") is not None and _f(row.get("relativeStrength63dPct")) < 0:
+        flags.append("negative_63d_relative_strength")
+    if row.get("ma200Gap") is not None and _f(row.get("ma200Gap")) < 0:
+        flags.append("below_200dma")
+    chart_state = _s(row.get("chartState") or (row.get("chartStructure") or {}).get("state"))
+    if chart_state in {"breakdown_or_distribution", "downtrend"}:
+        flags.append(f"chart_{chart_state}")
+    risk = row.get("riskToStopPct")
+    if risk is None or _f(risk) <= 0:
+        flags.append("incomplete_stop_risk")
+    return sorted({flag for flag in flags if flag})
+
+
+def _apply_action_profiles(evaluated: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    for row in evaluated:
+        bucket = _s(row.get("actionBucket"))
+        weight = _round_optional(row.get("portfolioWeightPct"), 2) or 0.0
+        flags = _action_profile_flags(row)
+        if bucket == "actionable_now":
+            if weight <= 1.0 or flags:
+                profile = "small_tactical_entry"
+                label = "소형 1차 전술 진입"
+                max_initial = round(min(weight if weight > 0 else 1.0, 1.0), 2)
+            elif weight <= 2.0:
+                profile = "starter_entry"
+                label = "1차 진입"
+                max_initial = weight
+            else:
+                profile = "core_entry"
+                label = "일반 편입"
+                max_initial = weight
+            row["entryDiscipline"] = {
+                "maxInitialWeightPct": max_initial,
+                "requiresPriceDataCheck": any(flag.startswith("price_data:") for flag in flags),
+                "addOnlyOn": [
+                    "눌림 지지 확인",
+                    "200일선 회복 또는 상대강도 개선",
+                ]
+                if profile == "small_tactical_entry"
+                else [],
+                "avoidChase": "급등 직후 1차 저항 접근 구간 추격 금지" if profile == "small_tactical_entry" else "",
+            }
+        elif bucket == "wait_pullback":
+            profile = "wait_pullback"
+            label = "눌림 대기"
+        elif bucket == "avoid":
+            profile = "avoid"
+            label = "제외"
+        else:
+            profile = "reference_only"
+            label = "참고"
+        row["actionProfile"] = profile
+        row["actionProfileLabel"] = label
+        row["actionProfileFlags"] = flags
+        counts[profile] = counts.get(profile, 0) + 1
+    return {"counts": counts}
+
+
+def _apply_final_synthesis(evaluated: list[dict[str, Any]], market_bundle: dict[str, Any]) -> dict[str, Any]:
+    if not evaluated:
+        return {"items": [], "symbolCount": 0}
+    if not ai.has_api_access:
+        return {"error": "codex_final_synthesis_unavailable", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+
+    max_symbols = _final_synthesis_max_symbols()
+    rows = evaluated[:max_symbols]
+    expected_symbols = {_s(row.get("symbol")).upper() for row in rows if _s(row.get("symbol"))}
+    prompt_items = json.dumps([_compact_evidence_item(row) for row in rows], ensure_ascii=False, separators=(",", ":"))
+    market_context = json.dumps(_compact_market_context(market_bundle), ensure_ascii=False, separators=(",", ":"))
+    prompt = (
+        "You are the final trade/investment synthesis layer for a US equity assistant.\n"
+        "Write concise Korean reasons, but output STRICT JSON only.\n"
+        "Do not use fixed numeric thresholds, point scores, mechanical pass/fail gates, or forced counts.\n"
+        "Use the numeric fields only as evidence. Compare each symbol contextually against the rest of the evidence, "
+        "its sector, market condition, valuation/quality/growth balance, news or SEC risk, relative strength, liquidity, "
+        "market regime, benchmark breakdown evidence, chart support/resistance zones, trend-line structure, retests, "
+        "and entry/risk/reward structure.\n"
+        "It is okay to return no actionable symbols. Do not promote mega-caps merely because they are familiar or liquid.\n"
+        "In risk-off or stressed regimes, prefer wait_pullback/reference_only unless the symbol clearly reconciles adverse "
+        "facts such as weak relative strength, price below long-term trend, nearby resistance, and limited reward/risk.\n"
+        "A quality company can still be a bad present entry; do not mark it actionable merely because the business is good.\n"
+        "Respect priceDataQuality. If OHLC verification is recommended or cross-source mismatches exist, treat tight stops, "
+        "same-day lows/highs, and reward/risk as provisional. Severe high/low mismatches should usually mean wait_pullback "
+        "until the regular-session OHLC is verified. A high-volatility single-source day may still be actionable only as a "
+        "small tactical starter, with conservative sizing and an explicit reason.\n"
+        "Choose actionBucket values only from: actionable_now, wait_pullback, reference_only, avoid.\n"
+        "Use actionable_now only when the combined evidence supports a present entry/investment. Use wait_pullback when the "
+        "case is interesting but entry structure is not attractive now. Use avoid when risk or valuation/catalyst damage dominates. "
+        "Use reference_only when evidence is ordinary, stale, incomplete, or not differentiated.\n"
+        "portfolioWeightPct is a suggested portfolio percent for actionable_now only; use 0 for other buckets. Keep sizing conservative "
+        "and do not force the portfolio to be fully invested.\n"
+        "You may omit pure reference_only symbols from the output; omitted symbols will remain reference_only.\n\n"
+        f"Market context JSON: {market_context}\n"
+        f"Evidence JSON: {prompt_items}\n\n"
+        "Return JSON only in this shape:\n"
+        '{"items":[{"symbol":"AAPL","actionBucket":"actionable_now|wait_pullback|reference_only|avoid","portfolioWeightPct":2.5,'
+        '"actionReason":"short Korean reason","decisionReasons":["Korean reason 1","Korean reason 2"]}]}'
+    )
+    text = ai._call(prompt, max_tokens=7000)
+    if not text:
+        return {"error": "codex_final_synthesis_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+    decisions = _extract_trade_decisions(text, expected_symbols)
+    if decisions is None:
+        return {"error": "codex_final_synthesis_json_parse_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+
+    by_symbol: dict[str, dict[str, Any]] = {}
+    for decision in decisions:
+        symbol = _s(decision.get("symbol")).upper()
+        if symbol in expected_symbols:
+            by_symbol[symbol] = decision
+
+    for row in rows:
+        symbol = _s(row.get("symbol")).upper()
+        decision = by_symbol.get(symbol)
+        row["decisionMode"] = "codex-final-synthesis"
+        if not decision:
+            row.update(
+                {
+                    "decisionState": "REFERENCE_ONLY",
+                    "actionBucket": "reference_only",
+                    "actionReason": "Codex 최종 종합에서 편입/제외 근거가 충분하지 않아 참고 유지",
+                    "portfolioWeightPct": 0.0,
+                }
+            )
+            continue
+
+        bucket = _normalize_action_bucket(decision.get("actionBucket") or decision.get("decisionState"))
+        weight = _round_optional(decision.get("portfolioWeightPct"), 2)
+        if bucket != "actionable_now":
+            weight = 0.0
+        elif weight is None:
+            weight = 0.0
+
+        raw_reasons = decision.get("decisionReasons")
+        reasons = [str(item) for item in raw_reasons[:5] if _s(item)] if isinstance(raw_reasons, list) else []
+        action_reason = _s(decision.get("actionReason") or decision.get("reason") or decision.get("rationale"))
+        row.update(
+            {
+                "decisionState": _decision_state_for_bucket(bucket),
+                "actionBucket": bucket,
+                "actionReason": action_reason or _default_reason_for_bucket(bucket),
+                "portfolioWeightPct": weight,
+                "decisionReasons": reasons or [action_reason or _default_reason_for_bucket(bucket)],
+            }
+        )
+
+    return {
+        "items": decisions,
+        "symbolCount": len(rows),
+        "decisionCount": len(by_symbol),
+        "maxSymbols": max_symbols,
+    }
+
+
+def _apply_risk_review(evaluated: list[dict[str, Any]], market_bundle: dict[str, Any]) -> dict[str, Any]:
+    actionables = [row for row in evaluated if _s(row.get("actionBucket")) == "actionable_now"]
+    if not actionables:
+        return {"items": [], "actionableReviewedCount": 0}
+    if not ai.has_api_access:
+        return {"error": "codex_risk_review_unavailable", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+
+    expected_symbols = {_s(row.get("symbol")).upper() for row in actionables if _s(row.get("symbol"))}
+    review_items = []
+    for row in actionables:
+        review_items.append(
+            _compact_dict(
+                {
+                    "currentDecision": {
+                        "symbol": _s(row.get("symbol")).upper(),
+                        "actionBucket": row.get("actionBucket"),
+                        "portfolioWeightPct": row.get("portfolioWeightPct"),
+                        "actionReason": row.get("actionReason"),
+                        "decisionReasons": row.get("decisionReasons"),
+                    },
+                    "evidence": _compact_evidence_item(row),
+                }
+            )
+        )
+
+    prompt_items = json.dumps(review_items, ensure_ascii=False, separators=(",", ":"))
+    market_context = json.dumps(_compact_market_context(market_bundle), ensure_ascii=False, separators=(",", ":"))
+    prompt = (
+        "You are a risk manager reviewing only the symbols already marked actionable_now by another model.\n"
+        "Write concise Korean reasons, but output STRICT JSON only.\n"
+        "Do not use fixed scores, fixed numeric thresholds, or mechanical pass/fail gates. Use judgment from the evidence.\n"
+        "Your job is to challenge weak actionables. Small position sizing is not enough to justify a poor setup.\n"
+        "Pay special attention to risk-off market regime, benchmark breakdown evidence, negative relative strength, "
+        "below-long-term-trend or breakdown/downtrend chart structure, nearby resistance, failed retests, and reward/risk that "
+        "does not compensate for the stop risk. If the original reason does not explicitly reconcile these adverse facts, "
+        "downgrade to wait_pullback, reference_only, or avoid.\n"
+        "If your review says the setup has unresolved long-term trend, relative-strength, nearby-resistance, or marginal "
+        "reward/risk problems, do not keep it actionable just because position size is small.\n"
+        "Challenge priceDataQuality too. Cross-source high/low mismatches or unverified high-volatility single-source OHLC can "
+        "make the stop and RR provisional; downgrade severe mismatches, and only keep high-volatility single-source setups as "
+        "small tactical starters when the rest of the evidence is unusually strong.\n"
+        "Keep actionable_now only when the evidence still supports a present entry after this adversarial review.\n"
+        "Use actionBucket values only from: actionable_now, wait_pullback, reference_only, avoid. "
+        "Use portfolioWeightPct only for actionable_now and 0 for the others.\n\n"
+        f"Market context JSON: {market_context}\n"
+        f"Actionable decisions to review JSON: {prompt_items}\n\n"
+        "Return JSON only in this shape:\n"
+        '{"items":[{"symbol":"AAPL","actionBucket":"wait_pullback|reference_only|avoid|actionable_now","portfolioWeightPct":0,'
+        '"actionReason":"short Korean risk-reviewed reason","decisionReasons":["Korean reason 1","Korean reason 2"],"riskReview":"short Korean audit note"}]}'
+    )
+    text = ai._call(prompt, max_tokens=5000)
+    if not text:
+        return {"error": "codex_risk_review_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+    decisions = _extract_trade_decisions(text, expected_symbols)
+    if decisions is None:
+        return {"error": "codex_risk_review_json_parse_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+
+    by_symbol: dict[str, dict[str, Any]] = {}
+    for decision in decisions:
+        symbol = _s(decision.get("symbol")).upper()
+        if symbol in expected_symbols:
+            by_symbol[symbol] = decision
+
+    for row in actionables:
+        symbol = _s(row.get("symbol")).upper()
+        decision = by_symbol.get(symbol)
+        if not decision:
+            row["riskReviewMode"] = "codex-risk-review"
+            row["riskReview"] = "리스크 리뷰 결과가 반환되지 않아 기존 편입 판단 유지"
+            continue
+        bucket = _normalize_action_bucket(decision.get("actionBucket") or decision.get("decisionState"))
+        weight = _round_optional(decision.get("portfolioWeightPct"), 2)
+        if bucket != "actionable_now":
+            weight = 0.0
+        elif weight is None:
+            weight = _round_optional(row.get("portfolioWeightPct"), 2) or 0.0
+        raw_reasons = decision.get("decisionReasons")
+        reasons = [str(item) for item in raw_reasons[:5] if _s(item)] if isinstance(raw_reasons, list) else []
+        action_reason = _s(decision.get("actionReason") or decision.get("reason") or decision.get("rationale"))
+        risk_review = _s(decision.get("riskReview") or decision.get("review"))
+        row.update(
+            {
+                "decisionState": _decision_state_for_bucket(bucket),
+                "actionBucket": bucket,
+                "actionReason": action_reason or _default_reason_for_bucket(bucket),
+                "portfolioWeightPct": weight,
+                "decisionReasons": reasons or [action_reason or _default_reason_for_bucket(bucket)],
+                "riskReview": risk_review,
+                "riskReviewMode": "codex-risk-review",
+            }
+        )
+
+    return {
+        "items": decisions,
+        "actionableReviewedCount": len(actionables),
+        "decisionCount": len(by_symbol),
+    }
+
+
+def _market_regime_label(market_bundle: dict[str, Any]) -> str:
+    market_regime = market_bundle.get("marketRegime") if isinstance(market_bundle.get("marketRegime"), dict) else {}
+    return _s(market_regime.get("regimeLabel") or market_regime.get("label"))
+
+
+def _actionable_integrity_flags(row: dict[str, Any], market_bundle: dict[str, Any]) -> list[str]:
+    flags: list[str] = []
+    regime_label = _market_regime_label(market_bundle)
+    adverse_regime = regime_label in {"risk_off_downtrend", "market_stress_or_breakdown"}
+    if adverse_regime:
+        flags.append(f"시장 체제 {regime_label}")
+    for flag in _data_quality_flags(row):
+        flags.append(f"가격 데이터 {flag}")
+
+    rs63 = row.get("relativeStrength63dPct")
+    if rs63 is not None and _f(rs63) < 0:
+        flags.append(f"63일 상대강도 {_f(rs63):.2f}%")
+
+    ma200_gap = row.get("ma200Gap")
+    if ma200_gap is None:
+        structure = row.get("chartStructure") if isinstance(row.get("chartStructure"), dict) else {}
+        moving_averages = structure.get("movingAverages") if isinstance(structure.get("movingAverages"), dict) else {}
+        ma200_gap = moving_averages.get("ma200GapPct")
+    if ma200_gap is not None and _f(ma200_gap) < 0:
+        flags.append(f"200일선 아래 {_f(ma200_gap):.2f}%")
+
+    chart_state = _s(row.get("chartState") or (row.get("chartStructure") or {}).get("state"))
+    if chart_state in {"breakdown_or_distribution", "downtrend"}:
+        flags.append(f"차트 구조 {chart_state}")
+
+    risk = row.get("riskToStopPct")
+    reward = row.get("rewardToTp1Pct")
+    rr = row.get("rrToTp1")
+    min_risk_off_rr = _env_float("TELEGRAM_ACTIONABLE_RISK_OFF_MIN_RR", 1.7, minimum=0.1)
+    min_tp1_reward = _env_float("TELEGRAM_ACTIONABLE_MIN_TP1_REWARD_PCT", 3.0, minimum=0.0)
+    if rr is None or _f(rr) <= 0:
+        flags.append("손익비 계산 불완전")
+    elif adverse_regime and _f(rr) < min_risk_off_rr:
+        flags.append(f"손익비 {_f(rr):.2f}x")
+    if reward is None or _f(reward) <= 0:
+        flags.append("1차 목표 보상폭 계산 불완전")
+    elif adverse_regime and _f(reward) < min_tp1_reward:
+        flags.append(f"1차 목표 보상폭 {_f(reward):.2f}%")
+    if risk is None or _f(risk) <= 0:
+        flags.append("손절 리스크 계산 불완전")
+
+    resistance = row.get("nearestResistanceZone") if isinstance(row.get("nearestResistanceZone"), dict) else {}
+    resistance_distance = resistance.get("distancePct")
+    if adverse_regime and resistance_distance is not None and 0 <= _f(resistance_distance) <= min_tp1_reward:
+        flags.append(f"근접 저항 {_f(resistance_distance):.2f}%")
+    return flags
+
+
+def _apply_actionable_integrity_audit(evaluated: list[dict[str, Any]], market_bundle: dict[str, Any]) -> dict[str, Any]:
+    audited: list[dict[str, Any]] = []
+    regime_label = _market_regime_label(market_bundle)
+    adverse_regime = regime_label in {"risk_off_downtrend", "market_stress_or_breakdown"}
+
+    for row in evaluated:
+        if _s(row.get("actionBucket")) != "actionable_now":
+            continue
+        flags = _actionable_integrity_flags(row, market_bundle)
+        raw_price_flags = _data_quality_flags(row)
+        severe_price_flags = [
+            flag
+            for flag in raw_price_flags
+            if flag
+            in {
+                "ohlc_verification_required",
+                "ohlc_cross_source_mismatch_high",
+                "ohlc_cross_source_mismatch_low",
+            }
+        ]
+        price_warning_flags = [
+            flag
+            for flag in raw_price_flags
+            if flag in {"ohlc_verification_recommended", "volatile_day_single_source"}
+        ]
+        adverse_flags = [flag for flag in flags if not flag.startswith("시장 체제 ") and not flag.startswith("가격 데이터 ")]
+        market_downgrade = adverse_regime and len(adverse_flags) >= (2 if regime_label == "market_stress_or_breakdown" else 3)
+        should_downgrade = bool(severe_price_flags) or market_downgrade
+        if not should_downgrade:
+            row["integrityAudit"] = {
+                "status": "passed_with_price_warning" if price_warning_flags else "passed",
+                "flags": flags,
+                "priceDataQualityFlags": raw_price_flags,
+            }
+            continue
+
+        symbol = _s(row.get("symbol")).upper()
+        old_bucket = _s(row.get("actionBucket"))
+        old_weight = _round_optional(row.get("portfolioWeightPct"), 2) or 0.0
+        if severe_price_flags:
+            reason = "가격 데이터 불일치 검증 전 편입 보류: " + ", ".join(severe_price_flags[:4])
+        else:
+            reason = "리스크 감사에서 편입 보류: " + ", ".join(adverse_flags[:4])
+        previous_reasons = row.get("decisionReasons") if isinstance(row.get("decisionReasons"), list) else []
+        row.update(
+            {
+                "decisionState": "WAIT_PULLBACK",
+                "actionBucket": "wait_pullback",
+                "actionReason": reason,
+                "portfolioWeightPct": 0.0,
+                "decisionReasons": [
+                    reason,
+                    *[str(item) for item in previous_reasons[:3] if _s(item)],
+                ][:5],
+                "integrityAudit": {
+                    "status": "downgraded",
+                    "fromBucket": old_bucket,
+                    "fromPortfolioWeightPct": old_weight,
+                    "flags": flags,
+                    "priceDataQualityFlags": raw_price_flags,
+                },
+            }
+        )
+        audited.append(
+            {
+                "symbol": symbol,
+                "fromBucket": old_bucket,
+                "toBucket": "wait_pullback",
+                "fromPortfolioWeightPct": old_weight,
+                "flags": flags,
+                "priceDataQualityFlags": raw_price_flags,
+            }
+        )
+    return {"items": audited, "adjustedCount": len(audited), "regimeLabel": regime_label}
+
+
+def _run_news_batch(
+    group_symbols: list[str],
+    bundles: dict[str, dict[str, Any]],
+) -> tuple[list[str], dict[str, Any] | None, list[dict[str, Any]] | None]:
+    """Run a single Codex news-batch call. Returns (group, error_payload, rows)."""
+    items = []
+    for symbol in group_symbols:
+        bundle = bundles[symbol]
+        chart_row = bundle["chartRow"]
+        items.append(
+            {
+                "symbol": symbol,
+                "chart_gate": {
+                    "state": chart_row.get("chartState"),
+                    "volume_ratio": chart_row.get("volumeRatio"),
+                    "rsi": chart_row.get("rsi"),
+                    "adx": chart_row.get("adx"),
+                },
+                "recent_events": [
+                    {
+                        "headline": row.get("headline"),
+                        "source": row.get("source"),
+                        "category": row.get("category"),
+                        "published_at": row.get("published_at"),
+                    }
+                    for row in bundle.get("events", [])[:8]
+                ],
+                "next_known_events": bundle.get("nextEvents", [])[:4],
+            }
+        )
+    prompt_items = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+    prompt = (
+        "You are a valuation risk analyst for public equities.\n"
+        "Write in Korean internally, but output STRICT JSON only.\n"
+        "For each symbol, classify whether recent events improve or impair the investment value case.\n"
+        "News must never promote a symbol by itself: bullish means value impairment risk is lower or fundamentals improved; "
+        "bearish means the value case may be impaired; neutral means no material value-case change.\n"
+        "Use enums only:\n"
+        "- signal: bullish | bearish | neutral\n"
+        "- strength: strong | moderate | weak | none\n\n"
+        f"Items JSON: {prompt_items}\n\n"
+        "Return JSON only in this shape:\n"
+        '{"items":[{"symbol":"AAPL","signal":"bullish|bearish|neutral","strength":"strong|moderate|weak|none","headline":"key headline","rationale":["short reason 1","short reason 2"]}]}'
+    )
+    text = ai._call(prompt, max_tokens=2200)
+    if not text:
+        return group_symbols, {"error": "codex_batch_analysis_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}, None
+    rows = _extract_batch_rows(text, set(group_symbols))
+    if rows is None:
+        return group_symbols, {"error": "codex_batch_json_parse_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}, None
+    return group_symbols, None, rows
+
+
 def _batched_ai_news_analysis(bundles: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]] | dict[str, str]:
     if not bundles:
         return {}
     batch_size = _codex_batch_size()
     symbols = sorted(bundles.keys())
+    groups = [symbols[idx : idx + batch_size] for idx in range(0, len(symbols), batch_size)]
+    if not groups:
+        return {}
+
+    workers = min(_codex_news_batch_workers(), len(groups))
     analyzed: dict[str, dict[str, Any]] = {}
-    for idx in range(0, len(symbols), batch_size):
-        group_symbols = symbols[idx : idx + batch_size]
-        items = []
-        for symbol in group_symbols:
-            bundle = bundles[symbol]
-            chart_row = bundle["chartRow"]
-            items.append(
-                {
-                    "symbol": symbol,
-                    "chart_gate": {
-                        "state": chart_row.get("chartState"),
-                        "volume_ratio": chart_row.get("volumeRatio"),
-                        "rsi": chart_row.get("rsi"),
-                        "adx": chart_row.get("adx"),
-                    },
-                    "recent_events": [
-                        {
-                            "headline": row.get("headline"),
-                            "source": row.get("source"),
-                            "category": row.get("category"),
-                            "published_at": row.get("published_at"),
-                        }
-                        for row in bundle.get("events", [])[:8]
-                    ],
-                    "next_known_events": bundle.get("nextEvents", [])[:4],
-                }
-            )
-        prompt_items = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-        prompt = (
-            "You are a valuation risk analyst for public equities.\n"
-            "Write in Korean internally, but output STRICT JSON only.\n"
-            "For each symbol, classify whether recent events improve or impair the investment value case.\n"
-            "News must never promote a symbol by itself: bullish means value impairment risk is lower or fundamentals improved; "
-            "bearish means the value case may be impaired; neutral means no material value-case change.\n"
-            "Use enums only:\n"
-            "- signal: bullish | bearish | neutral\n"
-            "- strength: strong | moderate | weak | none\n\n"
-            f"Items JSON: {prompt_items}\n\n"
-            "Return JSON only in this shape:\n"
-            '{"items":[{"symbol":"AAPL","signal":"bullish|bearish|neutral","strength":"strong|moderate|weak|none","headline":"key headline","rationale":["short reason 1","short reason 2"]}]}'
-        )
-        text = ai._call(prompt, max_tokens=2200)
-        if not text:
-            return {"error": "codex_batch_analysis_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
-        rows = _extract_batch_rows(text, set(group_symbols))
-        if rows is None:
-            return {"error": "codex_batch_json_parse_failed", "model": ai.model, "reasoningEffort": ai.reasoning_effort}
+    first_error: dict[str, Any] | None = None
+
+    def _record_rows(rows: list[dict[str, Any]]) -> None:
         for row in rows:
             symbol = _s(row.get("symbol")).upper()
             if not symbol:
@@ -720,12 +1205,60 @@ def _batched_ai_news_analysis(bundles: dict[str, dict[str, Any]]) -> dict[str, d
                 "mode": "codex-batch",
                 "ok": True,
             }
+
+    if workers <= 1:
+        for group in groups:
+            _group, error, rows = _run_news_batch(group, bundles)
+            if error is not None:
+                return error
+            _record_rows(rows or [])
+        return analyzed
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="codex-news") as executor:
+        futures = [executor.submit(_run_news_batch, group, bundles) for group in groups]
+        for future in as_completed(futures):
+            _group, error, rows = future.result()
+            if error is not None:
+                if first_error is None:
+                    first_error = error
+                continue
+            _record_rows(rows or [])
+
+    if first_error is not None:
+        return first_error
     return analyzed
+
+
+def _zone_price(zone: dict[str, Any], key: str, latest_price: float, *, below: bool) -> float:
+    price = _f(zone.get(key), 0.0) if isinstance(zone, dict) else 0.0
+    if price <= 0:
+        return 0.0
+    if below and price < latest_price:
+        return round(price, 2)
+    if not below and price > latest_price:
+        return round(price, 2)
+    return 0.0
+
+
+def _structure_zones(row: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    structure = row.get("chartStructure") if isinstance(row.get("chartStructure"), dict) else {}
+    zones = structure.get(key) if isinstance(structure.get(key), list) else []
+    return [zone for zone in zones if isinstance(zone, dict)]
 
 
 def _build_execution_plan(row: dict[str, Any], latest_price: float) -> dict[str, Any]:
     supports = row.get("support") if isinstance(row.get("support"), list) else []
     resistances = row.get("resistance") if isinstance(row.get("resistance"), list) else []
+    nearest_support_zone = row.get("nearestSupportZone") if isinstance(row.get("nearestSupportZone"), dict) else {}
+    nearest_resistance_zone = row.get("nearestResistanceZone") if isinstance(row.get("nearestResistanceZone"), dict) else {}
+    support_zones = [
+        nearest_support_zone,
+        *_structure_zones(row, "supportZones"),
+    ]
+    resistance_zones = [
+        nearest_resistance_zone,
+        *_structure_zones(row, "resistanceZones"),
+    ]
     support_candidates = sorted(
         {_f(value, 0.0) for value in supports if _f(value, 0.0) > 0 and _f(value, 0.0) < latest_price},
         reverse=True,
@@ -736,15 +1269,31 @@ def _build_execution_plan(row: dict[str, Any], latest_price: float) -> dict[str,
     support = support_candidates[0] if support_candidates else 0.0
     resistance = resistance_candidates[0] if resistance_candidates else 0.0
     resistance2 = resistance_candidates[1] if len(resistance_candidates) > 1 else 0.0
+    support_stop = next(
+        (price for price in (_zone_price(zone, "lower", latest_price, below=True) for zone in support_zones) if price > 0),
+        0.0,
+    )
+    resistance_target = next(
+        (price for price in (_zone_price(zone, "lower", latest_price, below=False) for zone in resistance_zones) if price > 0),
+        0.0,
+    )
+    next_resistance_target = next(
+        (
+            price
+            for price in (_zone_price(zone, "lower", latest_price, below=False) for zone in resistance_zones[1:])
+            if price > 0 and price != resistance_target
+        ),
+        0.0,
+    )
     average_entry = round(latest_price, 2) if latest_price > 0 else 0.0
-    close_stop = round(support, 2) if support > 0 else 0.0
+    close_stop = round(support_stop or support, 2) if (support_stop or support) > 0 else 0.0
     hard_stop = close_stop
-    tp1 = round(resistance, 2) if resistance > 0 else 0.0
-    tp2 = round(resistance2, 2) if resistance2 > 0 else 0.0
+    tp1 = round(resistance_target or resistance, 2) if (resistance_target or resistance) > 0 else 0.0
+    tp2 = round(next_resistance_target or resistance2, 2) if (next_resistance_target or resistance2) > 0 else 0.0
 
     return {
         "entryMode": "event_driven_current",
-        "activationReason": "current_price_with_observed_support_resistance",
+        "activationReason": "current_price_with_observed_support_resistance_zone",
         "entryLevels": [
             {"name": "current", "price": average_entry, "splitPct": 100.0},
         ],
@@ -755,6 +1304,10 @@ def _build_execution_plan(row: dict[str, Any], latest_price: float) -> dict[str,
         "tp2Price": tp2,
         "supportUsed": round(support, 2),
         "resistanceUsed": round(resistance, 2),
+        "supportZoneUsed": nearest_support_zone,
+        "resistanceZoneUsed": nearest_resistance_zone,
+        "stopBasis": "support_zone_lower" if support_stop > 0 else "support_midpoint_fallback",
+        "targetBasis": "resistance_zone_lower" if resistance_target > 0 else "resistance_midpoint_fallback",
     }
 
 
@@ -830,6 +1383,10 @@ def _price_plan_context(row: dict[str, Any], latest_price: float) -> dict[str, A
         "hardStopPrice": normalized_plan.get("hardStopPrice"),
         "tp1Price": normalized_plan.get("tp1Price"),
         "tp2Price": normalized_plan.get("tp2Price"),
+        "supportZoneUsed": normalized_plan.get("supportZoneUsed") if isinstance(normalized_plan.get("supportZoneUsed"), dict) else {},
+        "resistanceZoneUsed": normalized_plan.get("resistanceZoneUsed") if isinstance(normalized_plan.get("resistanceZoneUsed"), dict) else {},
+        "stopBasis": _s(normalized_plan.get("stopBasis")),
+        "targetBasis": _s(normalized_plan.get("targetBasis")),
         "currentVsEntryPct": _pct_change(latest_price, _f(normalized_plan.get("averageEntryPrice"), 0.0)),
         "riskToStopPct": risk_to_stop_pct,
         "rewardToTp1Pct": reward_to_tp1_pct,
@@ -943,7 +1500,9 @@ def _cache_matches_limit(path: Path, expected_limit: int) -> bool:
         payload = _load_json(path)
     except Exception:
         return False
-    return int(_f(payload.get("newsAnalysisLimit"), _f(payload.get("analysisLimit"), 0.0))) == int(expected_limit)
+    return int(
+        _f(payload.get("researchAnalysisLimit"), _f(payload.get("newsAnalysisLimit"), _f(payload.get("analysisLimit"), 0.0)))
+    ) == int(expected_limit)
 
 
 def _load_trade_cache(analysis_limit: int, ttl_minutes: int) -> dict[str, Any] | None:
@@ -982,6 +1541,7 @@ def _build_raw_evidence_row(
     chart_row: dict[str, Any],
     bundle: dict[str, Any],
     news: dict[str, Any],
+    short_volume: dict[str, Any] | None = None,
     selected_symbols: set[str],
     executed_weights_pct: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1001,19 +1561,45 @@ def _build_raw_evidence_row(
         "intradayReturnPct": chart_row.get("intradayReturnPct"),
         "dayRangePct": chart_row.get("dayRangePct"),
         "closeLocationPct": chart_row.get("closeLocationPct"),
+        "return21d": chart_row.get("return21d"),
+        "return63d": chart_row.get("return63d"),
+        "benchmarkSymbol": _s(chart_row.get("benchmarkSymbol")),
+        "benchmarkReturn21d": chart_row.get("benchmarkReturn21d"),
+        "benchmarkReturn63d": chart_row.get("benchmarkReturn63d"),
+        "relativeStrength21dPct": chart_row.get("relativeStrength21dPct"),
+        "relativeStrength63dPct": chart_row.get("relativeStrength63dPct"),
         "chartState": _s(chart_row.get("chartState")),
+        "ma20Gap": chart_row.get("ma20Gap"),
+        "ma50Gap": chart_row.get("ma50Gap"),
+        "ma200Gap": chart_row.get("ma200Gap"),
+        "nearestSupportZone": chart_row.get("nearestSupportZone") if isinstance(chart_row.get("nearestSupportZone"), dict) else {},
+        "nearestResistanceZone": chart_row.get("nearestResistanceZone") if isinstance(chart_row.get("nearestResistanceZone"), dict) else {},
+        "chartStructure": chart_row.get("chartStructure") if isinstance(chart_row.get("chartStructure"), dict) else {},
         "volumeRatio": _round_optional(chart_row.get("volumeRatio"), 2),
+        "latestDailyVolume": chart_row.get("latestDailyVolume"),
+        "dollarVolumeDaily": chart_row.get("dollarVolumeDaily"),
         "realtimeVolume": chart_row.get("realtimeVolume"),
         "lastMinuteVolume": chart_row.get("lastMinuteVolume"),
         "dailyVolumeAvg20": chart_row.get("dailyVolumeAvg20"),
+        "dollarVolumeAvg20": chart_row.get("dollarVolumeAvg20"),
+        "dollarVolumeRealtime": chart_row.get("dollarVolumeRealtime"),
         "volumeSource": _s(chart_row.get("volumeSource")),
         "volumeAsOf": _s(chart_row.get("volumeAsOf")),
+        "snapshotOpenPrice": chart_row.get("snapshotOpenPrice"),
+        "snapshotHighPrice": chart_row.get("snapshotHighPrice"),
+        "snapshotLowPrice": chart_row.get("snapshotLowPrice"),
+        "snapshotPreviousClosePrice": chart_row.get("snapshotPreviousClosePrice"),
+        "priceDataQuality": chart_row.get("priceDataQuality") if isinstance(chart_row.get("priceDataQuality"), dict) else {},
+        "dataQualityFlags": _data_quality_flags(chart_row),
         "rsi": round(_f(chart_row.get("rsi"), 0.0), 1),
         "adx": round(_f(chart_row.get("adx"), 0.0), 1),
+        "shortVolume": short_volume or {},
+        "shortVolumePct": (short_volume or {}).get("shortVolumePct"),
+        "shortVolumeAsOf": _s((short_volume or {}).get("tradeReportDate")),
         **_news_context(bundle, news),
         **_price_plan_context(chart_row, latest_price),
     }
-    row.update(_value_decision(row, news))
+    row.update(_reference_decision(row, news))
     return row
 
 
@@ -1032,22 +1618,76 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
     rebalance = _load_json(rebalance_path) if rebalance_path is not None else {}
     selected_symbols = {_s(symbol).upper() for symbol in (rebalance.get("final_selected_symbols") or []) if _s(symbol)}
     executed_weights_pct = rebalance.get("executed_weights_pct") if isinstance(rebalance.get("executed_weights_pct"), dict) else {}
-    market_ctx = get_market_condition()
-    fear_greed = get_fear_greed_index()
+    context_started = time.perf_counter()
+    market_bundle = _DATA_COLLECTOR.collect_market_context()
+    timings["marketContextSec"] = round(time.perf_counter() - context_started, 3)
+    market_ctx = market_bundle.get("marketCondition") if isinstance(market_bundle.get("marketCondition"), dict) else {}
+    fear_greed = market_bundle.get("fearGreed") if isinstance(market_bundle.get("fearGreed"), dict) else {}
+    macro_ctx = market_bundle.get("macro") if isinstance(market_bundle.get("macro"), dict) else {}
+    options_market = market_bundle.get("optionsMarket") if isinstance(market_bundle.get("optionsMarket"), dict) else {}
+    market_regime = market_bundle.get("marketRegime") if isinstance(market_bundle.get("marketRegime"), dict) else {}
 
     universe_symbols = sorted(set(_load_all_us_symbols()) | selected_symbols)
     fundamental_started = time.perf_counter()
     fundamental_rows = _scan_fundamentals(universe_symbols)
-    candidate_rows = sorted(
+    fundamental_by_symbol = {_s(row.get("symbol")).upper(): row for row in fundamental_rows if _s(row.get("symbol"))}
+    selection_limit = min(analysis_limit, len(fundamental_rows)) if news_limit is not None else min(analysis_limit, _final_synthesis_max_symbols())
+    selection_started = time.perf_counter()
+    selected_research = _select_research_symbols(
         fundamental_rows,
-        key=lambda row: (
-            0 if _s(row.get("symbol")).upper() in selected_symbols else 1,
-            -_f(row.get("marketCap"), 0.0),
-            _s(row.get("symbol")),
-        ),
-    )[:analysis_limit]
-    candidate_symbols = [_s(row.get("symbol")) for row in candidate_rows if _s(row.get("symbol"))]
+        selected_symbols=selected_symbols,
+        limit=selection_limit,
+        market_bundle=market_bundle,
+    )
+    timings["researchSelectionSec"] = round(time.perf_counter() - selection_started, 3)
+    if isinstance(selected_research, dict) and selected_research.get("error"):
+        payload = {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "available": False,
+            "reason": "codex_symbol_selection_failed",
+            "detail": f"{_s(selected_research.get('error'))} | model={_s(selected_research.get('model') or ai.model)} | reasoning={_s(selected_research.get('reasoningEffort') or ai.reasoning_effort)}",
+            "aiModel": ai.model,
+            "aiReasoningEffort": ai.reasoning_effort,
+            "marketStatus": {
+                "marketCondition": market_ctx,
+                "fearGreed": fear_greed,
+                "macro": macro_ctx,
+                "optionsMarket": options_market,
+                "marketRegime": market_regime,
+            },
+            "newsAnalysisLimit": analysis_limit,
+            "researchAnalysisLimit": analysis_limit,
+            "universeSymbolCount": len(universe_symbols),
+            "universeScannedCount": len(fundamental_rows),
+            "actionableNow": [],
+            "waitPullback": [],
+            "avoid": [],
+            "referenceOnly": [],
+            "all": [],
+            "summary": {
+                "actionableCount": 0,
+                "waitPullbackCount": 0,
+                "avoidCount": 0,
+                "referenceOnlyCount": 0,
+            },
+            "timingsSec": {
+                **timings,
+                "fundamentalScanSec": round(time.perf_counter() - fundamental_started, 3),
+                "total": round(time.perf_counter() - started, 3),
+            },
+        }
+        _write_trade_cache(payload, analysis_limit)
+        return payload
+    candidate_symbols = [
+        _s(symbol).upper()
+        for symbol in (selected_research.get("symbols") if isinstance(selected_research, dict) else [])
+        if _s(symbol).upper() in fundamental_by_symbol
+    ]
+    candidate_rows = [fundamental_by_symbol[symbol] for symbol in candidate_symbols]
+    candidate_symbols = [_s(row.get("symbol")).upper() for row in candidate_rows if _s(row.get("symbol"))]
     timings["fundamentalScanSec"] = round(time.perf_counter() - fundamental_started, 3)
+    timings["researchSelectionLimit"] = selection_limit
+    timings["researchSelectedCount"] = len(candidate_symbols)
 
     news_started = time.perf_counter()
     bundles = _collect_news_bundles(candidate_symbols)
@@ -1066,17 +1706,26 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
                 "detail": f"{_s(analyzed.get('error'))} | model={_s(analyzed.get('model') or ai.model)} | reasoning={_s(analyzed.get('reasoningEffort') or ai.reasoning_effort)}",
                 "aiModel": ai.model,
                 "aiReasoningEffort": ai.reasoning_effort,
+                "marketStatus": {
+                    "marketCondition": market_ctx,
+                    "fearGreed": fear_greed,
+                    "macro": macro_ctx,
+                    "optionsMarket": options_market,
+                    "marketRegime": market_regime,
+                },
                 "newsAnalysisLimit": analysis_limit,
+                "researchAnalysisLimit": analysis_limit,
                 "universeScannedCount": len(fundamental_rows),
                 "actionableNow": [],
                 "waitPullback": [],
                 "avoid": [],
+                "referenceOnly": [],
                 "all": [],
                 "summary": {
                     "actionableCount": 0,
                     "waitPullbackCount": 0,
                     "avoidCount": 0,
-                    "cashPct": 100.0,
+                    "referenceOnlyCount": 0,
                 },
                 "timingsSec": {
                     **timings,
@@ -1087,6 +1736,10 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
             return payload
         news_analysis = analyzed
     timings["codexAnalysisSec"] = round(time.perf_counter() - ai_started, 3)
+
+    short_started = time.perf_counter()
+    short_volume_by_symbol = _DATA_COLLECTOR.collect_short_volume_batch(candidate_symbols)
+    timings["shortVolumeSec"] = round(time.perf_counter() - short_started, 3)
 
     scan_started = time.perf_counter()
     cached_chart_rows = None if force_refresh else _load_cached_chart_rows(ttl_minutes)
@@ -1103,12 +1756,11 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
     timings["chartRowsSec"] = round(time.perf_counter() - scan_started, 3)
 
     chart_rows_by_symbol = {_s(row.get("symbol")).upper(): row for row in scanned_rows if _s(row.get("symbol"))}
-    fundamental_by_symbol = {_s(row.get("symbol")).upper(): row for row in fundamental_rows if _s(row.get("symbol"))}
 
     eval_started = time.perf_counter()
     evaluated: list[dict[str, Any]] = []
     for symbol in candidate_symbols:
-        fundamental = fundamental_by_symbol.get(symbol)
+        fundamental = fundamental_by_symbol.get(symbol.upper())
         if not isinstance(fundamental, dict):
             continue
         chart_row = chart_rows_by_symbol.get(symbol, {})
@@ -1121,12 +1773,111 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
                 chart_row=chart_row,
                 bundle=bundle,
                 news=news,
+                short_volume=short_volume_by_symbol.get(symbol),
                 selected_symbols=selected_symbols,
                 executed_weights_pct=executed_weights_pct,
             )
         )
     timings["evaluateSec"] = round(time.perf_counter() - eval_started, 3)
 
+    final_started = time.perf_counter()
+    final_synthesis = _apply_final_synthesis(evaluated, market_bundle)
+    timings["finalSynthesisSec"] = round(time.perf_counter() - final_started, 3)
+    if isinstance(final_synthesis, dict) and final_synthesis.get("error"):
+        payload = {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "available": False,
+            "reason": "codex_final_synthesis_failed",
+            "detail": f"{_s(final_synthesis.get('error'))} | model={_s(final_synthesis.get('model') or ai.model)} | reasoning={_s(final_synthesis.get('reasoningEffort') or ai.reasoning_effort)}",
+            "aiModel": ai.model,
+            "aiReasoningEffort": ai.reasoning_effort,
+            "marketStatus": {
+                "marketCondition": market_ctx,
+                "fearGreed": fear_greed,
+                "macro": macro_ctx,
+                "optionsMarket": options_market,
+                "marketRegime": market_regime,
+            },
+            "newsAnalysisLimit": analysis_limit,
+            "researchAnalysisLimit": analysis_limit,
+            "universeSymbolCount": len(universe_symbols),
+            "universeScannedCount": len(fundamental_rows),
+            "valueCandidateCount": len(candidate_symbols),
+            "chartScannedCount": len(scanned_rows),
+            "newsAnalyzedCount": len(news_analysis),
+            "shortVolumeAnalyzedCount": len(short_volume_by_symbol),
+            "selectedCount": len(selected_symbols),
+            "actionableNow": [],
+            "waitPullback": [],
+            "avoid": [],
+            "referenceOnly": evaluated,
+            "all": evaluated,
+            "summary": {
+                "actionableCount": 0,
+                "waitPullbackCount": 0,
+                "avoidCount": 0,
+                "referenceOnlyCount": len(evaluated),
+            },
+            "timingsSec": {
+                **timings,
+                "total": round(time.perf_counter() - started, 3),
+            },
+        }
+        _write_trade_cache(payload, analysis_limit)
+        return payload
+
+    risk_review_started = time.perf_counter()
+    risk_review = _apply_risk_review(evaluated, market_bundle)
+    timings["riskReviewSec"] = round(time.perf_counter() - risk_review_started, 3)
+    if isinstance(risk_review, dict) and risk_review.get("error"):
+        payload = {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "available": False,
+            "reason": "codex_risk_review_failed",
+            "detail": f"{_s(risk_review.get('error'))} | model={_s(risk_review.get('model') or ai.model)} | reasoning={_s(risk_review.get('reasoningEffort') or ai.reasoning_effort)}",
+            "aiModel": ai.model,
+            "aiReasoningEffort": ai.reasoning_effort,
+            "marketStatus": {
+                "marketCondition": market_ctx,
+                "fearGreed": fear_greed,
+                "macro": macro_ctx,
+                "optionsMarket": options_market,
+                "marketRegime": market_regime,
+            },
+            "newsAnalysisLimit": analysis_limit,
+            "researchAnalysisLimit": analysis_limit,
+            "universeSymbolCount": len(universe_symbols),
+            "universeScannedCount": len(fundamental_rows),
+            "valueCandidateCount": len(candidate_symbols),
+            "chartScannedCount": len(scanned_rows),
+            "newsAnalyzedCount": len(news_analysis),
+            "shortVolumeAnalyzedCount": len(short_volume_by_symbol),
+            "selectedCount": len(selected_symbols),
+            "actionableNow": [],
+            "waitPullback": [],
+            "avoid": [],
+            "referenceOnly": evaluated,
+            "all": evaluated,
+            "summary": {
+                "actionableCount": 0,
+                "waitPullbackCount": 0,
+                "avoidCount": 0,
+                "referenceOnlyCount": len(evaluated),
+            },
+            "timingsSec": {
+                **timings,
+                "total": round(time.perf_counter() - started, 3),
+            },
+        }
+        _write_trade_cache(payload, analysis_limit)
+        return payload
+    integrity_started = time.perf_counter()
+    integrity_audit = _apply_actionable_integrity_audit(evaluated, market_bundle)
+    timings["integrityAuditSec"] = round(time.perf_counter() - integrity_started, 3)
+    timings["integrityAuditAdjustedCount"] = int(integrity_audit.get("adjustedCount") or 0)
+    profile_started = time.perf_counter()
+    action_profile_summary = _apply_action_profiles(evaluated)
+    timings["actionProfileSec"] = round(time.perf_counter() - profile_started, 3)
     evaluated.sort(key=_value_rank_key)
     for idx, row in enumerate(evaluated, start=1):
         row["finalRank"] = idx
@@ -1134,12 +1885,12 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
     actionable = [row for row in evaluated if _s(row.get("actionBucket")) == "actionable_now"]
     wait_pullback = [row for row in evaluated if _s(row.get("actionBucket")) == "wait_pullback"]
     avoid = [row for row in evaluated if _s(row.get("actionBucket")) == "avoid"]
-    cash_pct = round(max(0.0, 100.0 - sum(_f(row.get("portfolioWeightPct"), 0.0) for row in actionable)), 2)
+    reference_only = [row for row in evaluated if _s(row.get("actionBucket")) == "reference_only"]
     payload = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "available": True,
         "schemaVersion": TRADE_CACHE_SCHEMA_VERSION,
-        "analysisMode": "raw-evidence",
+        "analysisMode": "ai-evidence",
         "aiModel": ai.model,
         "aiReasoningEffort": ai.reasoning_effort,
         "rebalanceSourceFile": str(rebalance_path) if rebalance_path is not None else "",
@@ -1147,26 +1898,37 @@ def analyze_rebalance_universe(force_refresh: bool = False, news_limit: int | No
         "marketStatus": {
             "marketCondition": market_ctx,
             "fearGreed": fear_greed,
+            "macro": macro_ctx,
+            "optionsMarket": options_market,
+            "marketRegime": market_regime,
         },
         "newsAnalysisLimit": analysis_limit,
+        "researchAnalysisLimit": analysis_limit,
         "universeSymbolCount": len(universe_symbols),
         "universeScannedCount": len(fundamental_rows),
         "valueCandidateCount": len(candidate_symbols),
+        "researchSelection": selected_research,
+        "finalSynthesis": final_synthesis,
+        "riskReview": risk_review,
+        "integrityAudit": integrity_audit,
+        "actionProfileSummary": action_profile_summary,
         "universeNewsScannedCount": len(candidate_symbols),
         "newsCandidateCount": int(timings.get("newsCandidateCount", 0)),
         "chartScannedCount": len(scanned_rows),
         "newsAnalyzedCount": len(news_analysis),
+        "shortVolumeAnalyzedCount": len(short_volume_by_symbol),
         "selectedCount": len(selected_symbols),
         "actionableNow": actionable,
         "waitPullback": wait_pullback,
         "avoid": avoid,
+        "referenceOnly": reference_only,
         "all": evaluated,
         "chartLeaders": scanned_rows[:20],
         "summary": {
             "actionableCount": len(actionable),
             "waitPullbackCount": len(wait_pullback),
             "avoidCount": len(avoid),
-            "cashPct": cash_pct,
+            "referenceOnlyCount": len(reference_only),
             "topActionableSymbol": _s(actionable[0].get("symbol")) if actionable else "",
         },
         "timingsSec": {
@@ -1195,6 +1957,10 @@ def analyze_current_charts(force_refresh: bool = False) -> dict[str, Any]:
     selected_symbols = {_s(symbol).upper() for symbol in (rebalance.get("final_selected_symbols") or []) if _s(symbol)}
     executed_weights_pct = rebalance.get("executed_weights_pct") if isinstance(rebalance.get("executed_weights_pct"), dict) else {}
 
+    context_started = time.perf_counter()
+    market_bundle = _DATA_COLLECTOR.collect_market_context()
+    context_sec = round(time.perf_counter() - context_started, 3)
+
     scan_started = time.perf_counter()
     scanned_rows = _scan_full_universe(rebalance_hints)
     scan_sec = round(time.perf_counter() - scan_started, 3)
@@ -1221,7 +1987,6 @@ def analyze_current_charts(force_refresh: bool = False) -> dict[str, Any]:
     overextended: list[dict[str, Any]] = []
     avoid = [row for row in evaluated if _s(row.get("tradeVerdict")) == "avoid"]
     latest_dates = [_s(row.get("latestCloseAsOf")) for row in evaluated if _s(row.get("latestCloseAsOf"))]
-    cash_pct = 100.0
 
     payload = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1231,6 +1996,7 @@ def analyze_current_charts(force_refresh: bool = False) -> dict[str, Any]:
         "schemaVersion": CHART_SCHEMA_VERSION,
         "rebalanceSourceFile": str(rebalance_path) if rebalance_path is not None else "",
         "rebalanceGeneratedAt": _s(rebalance.get("generated_at")),
+        "marketStatus": market_bundle,
         "universeSymbolCount": len(_load_all_us_symbols()),
         "universeScannedCount": len(scanned_rows),
         "latestCloseMin": min(latest_dates) if latest_dates else "",
@@ -1252,10 +2018,10 @@ def analyze_current_charts(force_refresh: bool = False) -> dict[str, Any]:
             "waitPullbackCount": len(wait_pullback),
             "avoidCount": len(avoid),
             "overextendedCount": len(overextended),
-            "cashPct": cash_pct,
             "topActionableSymbol": _s(strict_buyable[0].get("symbol")) if strict_buyable else "",
         },
         "timingsSec": {
+            "marketContextSec": context_sec,
             "chartScanSec": scan_sec,
             "evaluateSec": eval_sec,
             "total": round(time.perf_counter() - started, 3),
@@ -1295,6 +2061,7 @@ def _bucket_rows(payload: dict[str, Any], bucket: str) -> list[dict[str, Any]]:
         "actionable": "actionableNow",
         "wait": "waitPullback",
         "avoid": "avoid",
+        "reference": "referenceOnly",
     }
     rows = payload.get(key_map.get(bucket, "")) if isinstance(payload, dict) else []
     return rows if isinstance(rows, list) else []
@@ -1322,34 +2089,89 @@ def _timing_line(payload: dict[str, Any]) -> str:
     return f"처리 {_f(total):.2f}s{cache_note}"
 
 
+def _market_extra_line(payload: dict[str, Any], *, include_regime: bool = True) -> str:
+    market_status = payload.get("marketStatus") if isinstance(payload.get("marketStatus"), dict) else {}
+    options_market = market_status.get("optionsMarket") if isinstance(market_status.get("optionsMarket"), dict) else {}
+    macro = market_status.get("macro") if isinstance(market_status.get("macro"), dict) else {}
+    market_regime = market_status.get("marketRegime") if isinstance(market_status.get("marketRegime"), dict) else {}
+    ratios = options_market.get("ratios") if isinstance(options_market.get("ratios"), dict) else {}
+    series = macro.get("series") if isinstance(macro.get("series"), dict) else {}
+    parts: list[str] = []
+    regime_label = _s(market_regime.get("regimeLabel"))
+    if include_regime and regime_label:
+        parts.append(f"Regime {regime_label}")
+    if ratios.get("total_put_call_ratio") is not None:
+        parts.append(f"P/C {_f(ratios.get('total_put_call_ratio')):.2f}")
+    if ratios.get("equity_put_call_ratio") is not None:
+        parts.append(f"Equity P/C {_f(ratios.get('equity_put_call_ratio')):.2f}")
+    vix = series.get("VIXCLS") if isinstance(series.get("VIXCLS"), dict) else {}
+    dgs10 = series.get("DGS10") if isinstance(series.get("DGS10"), dict) else {}
+    spread = series.get("T10Y2Y") if isinstance(series.get("T10Y2Y"), dict) else {}
+    if vix.get("value") is not None:
+        parts.append(f"VIX {_f(vix.get('value')):.2f}")
+    if dgs10.get("value") is not None:
+        parts.append(f"10Y {_f(dgs10.get('value')):.2f}%")
+    if spread.get("value") is not None:
+        parts.append(f"10Y-2Y {_f(spread.get('value')):.2f}%")
+    return " | ".join(parts)
+
+
+def _market_header_line(payload: dict[str, Any], market_condition: dict[str, Any], fear_greed: dict[str, Any]) -> str:
+    market_status = payload.get("marketStatus") if isinstance(payload.get("marketStatus"), dict) else {}
+    market_regime = market_status.get("marketRegime") if isinstance(market_status.get("marketRegime"), dict) else {}
+    regime_label = _s(market_regime.get("regimeLabel"))
+    parts: list[str] = []
+    message = _s(market_condition.get("message"))
+    if message:
+        parts.append(f"시장(MA) {message}")
+    if regime_label:
+        parts.append(f"체제 {regime_label}")
+    parts.append(f"공포탐욕 {fear_greed.get('score', '-')}")
+    return " | ".join(parts)
+
+
 def _one_line_row(row: dict[str, Any]) -> str:
     symbol = escape(_s(row.get("symbol")))
     price = _format_price(row.get("latestClosePrice"))
+    profile = escape(_s(row.get("actionProfileLabel")))
+    profile_suffix = f" | {profile}" if profile else ""
     if _s(row.get("valueState")):
         p_fcf = _format_multiple(row.get("pFcf"))
         fpe = _format_multiple(row.get("forwardPe"))
         fcf_yield = _format_pct(row.get("fcfYieldPct"))
         roe = _format_pct(row.get("roePct"))
         weight = _format_pct(row.get("portfolioWeightPct"))
-        return f"<b>{symbol}</b>  {price} | P/FCF {p_fcf} | Fwd PER {fpe} | FCF yield {fcf_yield} | ROE {roe} | 비중 {weight}"
+        rs63 = row.get("relativeStrength63dPct")
+        short_pct = row.get("shortVolumePct")
+        extra = []
+        if rs63 is not None:
+            extra.append(f"RS63 {_format_pct(rs63)}")
+        if short_pct is not None:
+            extra.append(f"ShortVol {_format_pct(short_pct)}")
+        suffix = f" | {' | '.join(extra)}" if extra else ""
+        return f"<b>{symbol}</b>  {price} | P/FCF {p_fcf} | Fwd PER {fpe} | FCF yield {fcf_yield} | ROE {roe} | 비중 {weight}{profile_suffix}{suffix}"
     entry = _format_price(row.get("averageEntryPrice"))
     stop = _format_price(row.get("closeStopPrice"))
     tp1 = _format_price(row.get("tp1Price"))
     weight = _format_pct(row.get("portfolioWeightPct"))
-    return f"<b>{symbol}</b>  {price} | 진입 {entry} | 손절 {stop} | 1차 {tp1} | 비중 {weight}"
+    return f"<b>{symbol}</b>  {price} | 진입 {entry} | 손절 {stop} | 1차 {tp1} | 비중 {weight}{profile_suffix}"
 
 
 def _compact_row(row: dict[str, Any]) -> str:
     symbol = escape(_s(row.get("symbol")))
     price = _format_price(row.get("latestClosePrice"))
+    profile = escape(_s(row.get("actionProfileLabel")))
+    profile_suffix = f" | {profile}" if profile else ""
     if _s(row.get("valueState")):
+        rs63 = row.get("relativeStrength63dPct")
+        rs_text = f" | RS63 {_format_pct(rs63)}" if rs63 is not None else ""
         return (
             f"<b>{symbol}</b>  {price} | P/FCF {_format_multiple(row.get('pFcf'))} | "
-            f"Fwd PER {_format_multiple(row.get('forwardPe'))} | FCF {_format_pct(row.get('fcfYieldPct'))}"
+            f"Fwd PER {_format_multiple(row.get('forwardPe'))} | FCF {_format_pct(row.get('fcfYieldPct'))}{profile_suffix}{rs_text}"
         )
     entry = _format_price(row.get("averageEntryPrice"))
     tp1 = _format_price(row.get("tp1Price"))
-    return f"<b>{symbol}</b>  {price} | 진입 {entry} | 1차 {tp1}"
+    return f"<b>{symbol}</b>  {price} | 진입 {entry} | 1차 {tp1}{profile_suffix}"
 
 
 def _decision_line(row: dict[str, Any]) -> str:
@@ -1369,9 +2191,14 @@ def _decision_line(row: dict[str, Any]) -> str:
 
 def _decision_reason_text(row: dict[str, Any]) -> str:
     reasons = row.get("decisionReasons") if isinstance(row.get("decisionReasons"), list) else []
+    quality_flags = _data_quality_flags(row)
+    quality_note = "가격검증 " + ", ".join(quality_flags[:3]) if quality_flags else ""
     if reasons:
-        return " / ".join(_s(item) for item in reasons[:4] if _s(item))
-    return _s(row.get("actionReason") or row.get("newsHeadline") or row.get("tradeReason"))
+        parts = [_s(item) for item in reasons[:4] if _s(item)]
+        if quality_note:
+            parts.append(quality_note)
+        return " / ".join(parts)
+    return " / ".join(part for part in [_s(row.get("actionReason") or row.get("newsHeadline") or row.get("tradeReason")), quality_note] if part)
 
 
 def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> str:
@@ -1379,7 +2206,7 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         return (
             f"<b>분석 불가</b>\n"
             f"이유: <code>{escape(_s(payload.get('reason') or 'unknown'))}</code>\n"
-            f"{escape(_s(payload.get('detail') or 'Codex 기반 뉴스 해석이 필요합니다.'))}"
+            f"{escape(_s(payload.get('detail') or 'Codex 기반 후보 선정/최종 종합이 필요합니다.'))}"
         )
 
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
@@ -1388,12 +2215,18 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
     actionable = _bucket_rows(payload, "actionable")
     wait_pullback = _bucket_rows(payload, "wait")
     avoid = _bucket_rows(payload, "avoid")
-    raw_mode = _s(payload.get("analysisMode")) in {"valuation-first", "raw-evidence"}
+    reference_only = _bucket_rows(payload, "reference")
+    raw_mode = _s(payload.get("analysisMode")) in {"valuation-first", "raw-evidence", "ai-evidence"}
+    decision_summary = (
+        f"편입 {summary.get('actionableCount', 0)} | 대기 {summary.get('waitPullbackCount', 0)} | 제외 {summary.get('avoidCount', 0)} | 참고 {summary.get('referenceOnlyCount', len(reference_only))}"
+        if raw_mode
+        else f"편입 {summary.get('actionableCount', 0)} | 대기 {summary.get('waitPullbackCount', 0)} | 제외 {summary.get('avoidCount', 0)}"
+    )
 
     header = [
         "<b>Autostock Evidence Desk</b>" if raw_mode else "<b>Autostock Trade Desk</b>",
         f"<code>{escape(_fmt_asof(payload.get('generatedAt')))}</code>",
-        f"시장 {_s(market_condition.get('message'))} | 공포탐욕 {fear_greed.get('score', '-')}",
+        _market_header_line(payload, market_condition, fear_greed),
         (
             f"원자료 스캔 {payload.get('universeScannedCount', '-')} | 후보 {payload.get('valueCandidateCount', '-')} | 뉴스 요약 {payload.get('newsAnalyzedCount', '-')}"
             if raw_mode
@@ -1401,28 +2234,43 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         ),
         f"가격 검증 {payload.get('chartScannedCount', payload.get('universeScannedCount', '-'))}",
         f"모델 {escape(_s(payload.get('aiModel') or ai.model))} / {escape(_s(payload.get('aiReasoningEffort') or ai.reasoning_effort))}",
-        f"자동편입 {summary.get('actionableCount', 0)} | 검토 {summary.get('waitPullbackCount', 0)} | 자동제외 {summary.get('avoidCount', 0)} | 현금 {_format_pct(summary.get('cashPct'))}",
+        decision_summary,
     ]
     timing = _timing_line(payload)
     if timing:
         header.append(timing)
+    market_extra = _market_extra_line(payload, include_regime=False)
+    if market_extra:
+        header.append(market_extra)
     header.append("")
 
     if view == "summary":
         lines = header[:]
-        lines.append("<b>자동 편입 후보</b>" if raw_mode else "<b>지금 진입 가능</b>")
+        lines.append("<b>편입 후보</b>" if raw_mode else "<b>지금 진입 가능</b>")
         if actionable:
             lines.extend(_compact_row(row) for row in actionable[:3])
         else:
             lines.append("없음")
         lines.append("")
-        lines.append("<b>수동 검토 후보</b>" if raw_mode else "<b>눌림 대기</b>")
-        if wait_pullback:
-            lines.extend(_compact_row(row) for row in wait_pullback[:5])
+        if raw_mode:
+            lines.append("<b>대기 후보</b>")
+            if wait_pullback:
+                for row in wait_pullback[:5]:
+                    lines.append(_compact_row(row))
+                    if _s(row.get("actionReason")):
+                        lines.append(escape(_s(row.get("actionReason"))))
+            else:
+                lines.append("없음")
+            if reference_only:
+                lines.append(f"참고 원자료 {len(reference_only)}개")
         else:
-            lines.append("없음")
+            lines.append("<b>눌림 대기</b>")
+            if wait_pullback:
+                lines.extend(_compact_row(row) for row in wait_pullback[:5])
+            else:
+                lines.append("없음")
         lines.append("")
-        lines.append("<b>자동 제외</b>" if raw_mode else "<b>추격 금지</b>")
+        lines.append("<b>제외</b>" if raw_mode else "<b>추격 금지</b>")
         if avoid:
             lines.extend(f"{escape(_s(row.get('symbol')))}  {_s(row.get('actionReason') or row.get('tradeReason'))}" for row in avoid[:3])
         else:
@@ -1430,7 +2278,7 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         return "\n".join(lines)
 
     if view == "actionable":
-        lines = header + ["<b>자동 편입 후보</b>" if raw_mode else "<b>즉시 매수 후보</b>"]
+        lines = header + ["<b>편입 후보</b>" if raw_mode else "<b>즉시 매수 후보</b>"]
         if actionable:
             for row in actionable[:8]:
                 lines.append(_one_line_row(row))
@@ -1442,9 +2290,10 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         return "\n".join(lines)
 
     if view == "wait":
-        lines = header + ["<b>수동 검토 후보</b>" if raw_mode else "<b>눌림 대기 후보</b>"]
-        if wait_pullback:
-            for row in wait_pullback[:10]:
+        rows = [*wait_pullback, *reference_only] if raw_mode else wait_pullback
+        lines = header + ["<b>대기/참고 원자료</b>" if raw_mode else "<b>눌림 대기 후보</b>"]
+        if rows:
+            for row in rows[:10]:
                 lines.append(_one_line_row(row))
                 lines.append(_decision_line(row))
                 lines.append(escape(_decision_reason_text(row)))
@@ -1454,7 +2303,7 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         return "\n".join(lines)
 
     if view == "avoid":
-        lines = header + ["<b>자동 제외</b>" if raw_mode else "<b>지금 제외</b>"]
+        lines = header + ["<b>제외</b>" if raw_mode else "<b>지금 제외</b>"]
         if avoid:
             for row in avoid[:10]:
                 label = f"{escape(_s(row.get('valueState')))}" if _s(row.get("valueState")) else f"{escape(_s(row.get('newsSignal')))} / {escape(_s(row.get('newsStrength')))}"
@@ -1467,29 +2316,36 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
         return "\n".join(lines)
 
     if view == "portfolio":
-        lines = header + ["<b>포트폴리오</b>" if raw_mode else "<b>추천 포트폴리오</b>", f"현금 {_format_pct(summary.get('cashPct'))}"]
+        lines = header + ["<b>포트폴리오</b>" if raw_mode else "<b>추천 포트폴리오</b>"]
         if actionable:
             for row in actionable[:10]:
                 if _s(row.get("valueState")):
                     lines.append(
                         f"{escape(_s(row.get('symbol')))}  {_format_pct(row.get('portfolioWeightPct'))} | "
+                        f"{escape(_s(row.get('actionProfileLabel')))} | "
                         f"P/FCF {_format_multiple(row.get('pFcf'))} | Fwd PER {_format_multiple(row.get('forwardPe'))} | FCF yield {_format_pct(row.get('fcfYieldPct'))}"
                     )
                 else:
                     lines.append(
-                        f"{escape(_s(row.get('symbol')))}  {_format_pct(row.get('portfolioWeightPct'))}  | 진입 {_format_price(row.get('averageEntryPrice'))} | 손절 {_format_price(row.get('closeStopPrice'))}"
+                        f"{escape(_s(row.get('symbol')))}  {_format_pct(row.get('portfolioWeightPct'))} | "
+                        f"{escape(_s(row.get('actionProfileLabel')))} | 진입 {_format_price(row.get('averageEntryPrice'))} | 손절 {_format_price(row.get('closeStopPrice'))}"
                     )
                 if _s(row.get("actionReason")):
                     lines.append(f"이유: {escape(_s(row.get('actionReason')))}")
         else:
-            lines.append("자동 점수/임계값 기반 편입은 제거했습니다.")
-            for row in wait_pullback[:5]:
-                if _s(row.get("valueState")):
-                    lines.append(f"{escape(_s(row.get('symbol')))}  관찰 | {escape(_s(row.get('actionReason')))}")
-                else:
-                    lines.append(
-                        f"{escape(_s(row.get('symbol')))}  대기  | 진입 {_format_price(row.get('averageEntryPrice'))} | 손절 {_format_price(row.get('closeStopPrice'))}"
-                    )
+            if raw_mode:
+                lines.append("Codex 최종 종합에서 현재 편입 후보가 없습니다.")
+                if reference_only:
+                    lines.append(f"참고 원자료 {len(reference_only)}개는 포트폴리오 비중 0%입니다.")
+            else:
+                lines.append("점수/임계값 기반 편입은 제거했습니다.")
+                for row in wait_pullback[:5]:
+                    if _s(row.get("valueState")):
+                        lines.append(f"{escape(_s(row.get('symbol')))}  관찰 | {escape(_s(row.get('actionReason')))}")
+                    else:
+                        lines.append(
+                            f"{escape(_s(row.get('symbol')))}  대기  | 진입 {_format_price(row.get('averageEntryPrice'))} | 손절 {_format_price(row.get('closeStopPrice'))}"
+                        )
         return "\n".join(lines)
 
     return "\n".join(header)
@@ -1497,14 +2353,16 @@ def render_trade_view_html(payload: dict[str, Any], view: str = "summary") -> st
 
 def _chart_reason(row: dict[str, Any]) -> str:
     reasons = row.get("chartGateReasons") if isinstance(row.get("chartGateReasons"), list) else []
+    quality_flags = _data_quality_flags(row)
+    quality_text = f" | 가격검증 {escape(', '.join(quality_flags[:3]))}" if quality_flags else ""
     if reasons:
-        return " | ".join(escape(_s(item)) for item in reasons[:6])
+        return " | ".join(escape(_s(item)) for item in reasons[:6]) + quality_text
     return (
         f"차트 {escape(_s(row.get('chartState')))} | "
         f"TP1 여력 {_f(row.get('rewardToTp1Pct')):.2f}% | "
         f"손절 리스크 {_f(row.get('riskToStopPct')):.2f}% | "
         f"RSI {_f(row.get('rsi')):.1f} | "
-        f"거래량 {_format_volume_ratio(row.get('volumeRatio'))}"
+        f"거래량 {_format_volume_ratio(row.get('volumeRatio'))}{quality_text}"
     )
 
 
@@ -1532,11 +2390,13 @@ def render_chart_view_html(payload: dict[str, Any], view: str = "summary") -> st
         f"<code>{escape(_fmt_asof(payload.get('generatedAt')))}</code>",
         f"기준가 {escape(latest_label)} | 차트 스캔 {payload.get('universeScannedCount', '-')}",
         f"즉시 {summary.get('strictBuyableCount', 0)} | 가격준비 {summary.get('priceReadyCount', 0)} | 관찰 {summary.get('buyableCount', 0)} | 추격금지 {summary.get('overextendedCount', 0)}",
-        f"권장 현금 {_format_pct(summary.get('cashPct'))}",
     ]
     timing = _timing_line(payload)
     if timing:
         header.append(timing)
+    market_extra = _market_extra_line(payload)
+    if market_extra:
+        header.append(market_extra)
     header.append("")
 
     if view == "summary":
@@ -1607,9 +2467,8 @@ def render_chart_view_html(payload: dict[str, Any], view: str = "summary") -> st
                 lines.append(
                     f"{escape(_s(row.get('symbol')))}  {_format_pct(row.get('portfolioWeightPct'))} | 진입 {_format_price(row.get('averageEntryPrice'))} | 손절 {_format_price(row.get('closeStopPrice'))} | 1차 {_format_price(row.get('tp1Price'))}"
                 )
-            lines.append(f"현금 {_format_pct(summary.get('cashPct'))}")
         else:
-            lines.append("차트 단독으로 편입하지 않습니다. 뉴스/실적 촉매 확인 전 현금 대기가 기본입니다.")
+            lines.append("차트 단독으로 편입하지 않습니다. 뉴스/실적 촉매 확인 전 관찰이 기본입니다.")
             for row in (price_ready or buyable)[:5]:
                 lines.append(
                     f"{escape(_s(row.get('symbol')))}  관찰 | 진입 {_format_price(row.get('averageEntryPrice'))} | 손절 {_format_price(row.get('closeStopPrice'))}"

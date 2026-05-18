@@ -1,4 +1,6 @@
 .env
+.claude/
+.omx/
 __pycache__/
 *.pyc
 .venv/
